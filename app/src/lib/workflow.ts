@@ -83,5 +83,5 @@ export type WorkflowEvent =
   | { type: 'text'; text: string }
   | { type: 'done'; summary: string; tokens: number }
   | { type: 'error'; message: string }
-  /** The server saved the answer as a revision; approvals now have ids. */
-  | { type: 'saved'; revisionId: string; approvals: { index: number; id: string }[] };
+  /** The server committed the answer as a revision (numbered by the server); approvals now have ids. */
+  | { type: 'saved'; revisionId: string; revision?: number; approvals: { index: number; id: string }[] };

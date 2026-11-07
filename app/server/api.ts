@@ -27,7 +27,6 @@
  *   GET  /api/hexa/manual/template Octane import template (.xlsx)
  *   GET  /api/hexa/manual/export   manual tests as an Octane import CSV
  *   POST /api/hexa/manual/import   upload manual tests (Octane .xlsx or .csv)
- *   POST /api/hexa/manual/from-uat approved UAT cases become manual tests
  *   POST /api/hexa/results/upload  upload JUnit XML results
  *   POST /api/hexa/results         CI pushes JUnit results (Bearer HEXA_INGEST_TOKEN; body names the app)
  *   POST /api/hexa/runs/sync       pull results of PR merge-commit runs from GitHub Actions (needs GITHUB_TOKEN)
@@ -38,10 +37,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from '../src/lib/answerReducer';
 import { CAPABILITIES } from '../src/lib/intent';
-import type { UatArtifact } from '../src/lib/types';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
-import { componentId, STATUSES, type HorizonDb, type Role, type StoredStory } from './db';
+import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type Role, type StoredStory } from './db';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
 import { ScanError, startRepoScan } from './hexa';
@@ -140,8 +138,8 @@ export interface ApiOptions {
 }
 
 /** The UAT analyst's proposed cases become manual tests in Hexa, linked to the story and its criteria. */
-function addUatCases(db: HorizonDb, appId: string, story: StoredStory, artifact: { proposedCases: { id: string; title: string; criterion: string; steps: string[] }[] }, user: { id: string; name: string }) {
-  const tests = artifact.proposedCases.slice(0, 50).map((c) => ({
+function addUatCases(db: HorizonDb, appId: string, story: StoredStory, cases: NonNullable<ApprovalPayload['cases']>, user: { id: string; name: string }) {
+  const tests = cases.slice(0, 50).map((c) => ({
     externalId: c.id,
     name: c.title.slice(0, 300),
     description: `UAT case for ${story.key}${c.criterion ? ` ${c.criterion}` : ''}, proposed by the UAT analyst and approved in Horizon.`,
@@ -272,6 +270,19 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       if (url === '/api/run' && req.method === 'POST') {
         const body = parseRunRequest(await readJson(req));
+        // The ids the browser sends must belong together, to this application, and to this person,
+        // before anything runs or is written. A chat of another application is not disclosed (404).
+        if (body.chatId || body.messageId || body.answerId) {
+          if (!body.chatId || !body.messageId || !body.answerId) throw new HttpError(400, 'chatId, messageId and answerId go together.');
+          if (body.messageId === body.answerId) throw new HttpError(400, 'messageId and answerId must differ.');
+          const chat = db.getChat(body.chatId);
+          if (chat && chat.applicationId !== appId) throw new HttpError(404, 'This chat does not exist in this application.');
+          if (chat && chat.createdBy !== user.id) throw new HttpError(403, 'Only the person who started this chat can add to it.');
+          const m = db.messageChat(body.messageId);
+          if (m && (m.chatId !== body.chatId || m.role !== 'user')) throw new HttpError(409, 'messageId belongs to another chat or answer.');
+          const a = db.messageChat(body.answerId);
+          if (a && (a.chatId !== body.chatId || a.role !== 'assistant')) throw new HttpError(409, 'answerId belongs to another chat or message.');
+        }
         const abort = new AbortController();
         res.on('close', () => abort.abort());
         const write = sse(res);
@@ -284,6 +295,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         // Stories come from the database, never from the browser; only this application's.
         const run: RunRequest = {
           ...body,
+          // Revisions are numbered by the server; the browser's number is never trusted.
+          revision: body.answerId ? db.nextRevision(body.answerId) : 1,
           scope: { appName: member.name, appId, workspace: body.scope.workspace || member.workspaces[0] || '' },
           syncedTickets: db.listStories(appId).map(asTicket),
           knownComponents: member.components.map((c) => c.name),
@@ -301,12 +314,12 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         }
         if (body.chatId && body.messageId && body.answerId) {
           const final = failure || abort.signal.aborted ? finishAnswer(answer, abort.signal.aborted, failure) : answer;
+          // Committed before the browser hears "saved"; a client that stopped still gets its revision stored.
           const saved = db.saveAnswer({
             app: appId,
             chatId: body.chatId,
             answerId: body.answerId,
             userMessageId: body.messageId,
-            revision: body.revision ?? 1,
             workflowRunId,
             userId: user.id,
             status: final.status,
@@ -315,7 +328,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             citations: final.citations,
             artifact: final.artifact ?? null,
           });
-          if (!abort.signal.aborted) write({ type: 'saved', revisionId: saved.revisionId, approvals: saved.approvals });
+          if (!abort.signal.aborted) write({ type: 'saved', revisionId: saved.revisionId, revision: saved.revision, approvals: saved.approvals });
         }
         return res.end();
       }
@@ -346,30 +359,39 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       const approvalMatch = /^\/api\/approvals\/([A-Za-z0-9_-]{1,96})\/decision$/.exec(url);
       if (approvalMatch && req.method === 'POST') {
-        const a = db.getApproval(approvalMatch[1]);
-        if (!a || a.app !== appId) return send(res, 404, { error: 'This approval does not exist in this application.' });
+        const found = db.getApproval(approvalMatch[1]);
+        if (!found || found.app !== appId) return send(res, 404, { error: 'This approval does not exist in this application.' });
         const b = (await readJson(req)) as Record<string, unknown>;
         const decision = b.decision === 'approved' || b.decision === 'declined' ? b.decision : null;
         if (!decision) throw new HttpError(400, 'decision must be approved or declined.');
-        if (a.status !== 'pending') throw new HttpError(409, `This was already ${a.status}.`);
+        const view = (a: NonNullable<typeof found>) => ({ id: a.id, status: a.status, decidedAt: a.decidedAt ?? undefined, decidedBy: a.decidedByName ?? undefined, outcome: a.outcome ?? undefined, revisionId: a.revisionId, supersededBy: a.supersededBy });
+        // The same decision delivered again is answered with what was recorded; a different one is a conflict.
+        const settled = (a: NonNullable<typeof found>) => {
+          if (a.status === decision) return send(res, 200, { approval: view(a), replay: true });
+          throw new HttpError(409, a.status === 'expired' ? 'This approval was superseded by a newer revision of the answer.' : `This was already ${a.status}.`);
+        };
+        if (found.status !== 'pending') return settled(found);
         if (decision === 'approved') {
           // Server-side rules: the answer is rated first, and only an owner or a component manager approves.
-          if (!db.hasRating(a.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+          if (!db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
           requireRole(['app_owner', 'component_manager'], 'approve a change');
         }
-        let outcome: { ok: boolean; text: string } | undefined;
-        if (decision === 'approved' && a.action === 'add_uat_cases' && a.target.artifactId) {
-          const artifact = db.getArtifact(a.chatId, a.target.artifactId);
-          const story = a.target.storyKey ? db.getStory(a.target.storyKey) : undefined;
-          if (artifact?.kind === 'uat' && story && story.applicationId === appId) {
-            const r = addUatCases(db, appId, story, artifact as UatArtifact, user);
-            const n = r.created + r.updated;
-            outcome = { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
-          } else outcome = { ok: false, text: 'The UAT report this approval refers to is no longer available.' };
-        }
-        const decided = db.decideApproval(a.id, decision, user.id, outcome);
-        if (!decided) throw new HttpError(409, 'This was already decided.');
-        return send(res, 200, { approval: { id: a.id, ...decided } });
+        // The action runs from the payload frozen with the approval, inside the decision's transaction.
+        const execute =
+          decision === 'approved' && found.action === 'add_uat_cases'
+            ? (payload: ApprovalPayload) => {
+                const story = payload.storyKey ? db.getStory(payload.storyKey) : undefined;
+                if (!story || story.applicationId !== appId) throw new HttpError(409, 'The story this approval refers to is no longer in this application.');
+                if (!payload.cases?.length) throw new HttpError(409, 'This approval has no test cases to add.');
+                const r = addUatCases(db, appId, story, payload.cases, user);
+                const n = r.created + r.updated;
+                return { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
+              }
+            : undefined;
+        const result = db.decideApproval(found.id, decision, user.id, execute);
+        if (result.kind === 'missing') return send(res, 404, { error: 'This approval does not exist in this application.' });
+        if (result.kind === 'already') return settled(result.approval);
+        return send(res, 200, { approval: view(result.approval) });
       }
 
       if (url === '/api/hexa/tests' && req.method === 'GET') {
@@ -447,16 +469,6 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         if (!data.length) throw new HttpError(400, 'Choose a file to upload.');
         const purpose = b.purpose === 'uat' || b.purpose === 'regression' ? b.purpose : null;
         return send(res, 200, await importManual(db, appId, { filename: String(b.filename ?? 'upload'), data }, purpose, user.id));
-      }
-
-      // UAT cases a person approved on a UAT analysis become manual tests, in Octane shape.
-      if (url === '/api/hexa/manual/from-uat' && req.method === 'POST') {
-        const b = (await readJson(req)) as { storyKey?: unknown; cases?: unknown };
-        const story = isStr(b.storyKey) ? db.getStory(b.storyKey) : undefined;
-        if (!story || story.applicationId !== appId) throw new HttpError(400, 'Unknown story.');
-        const cases = (Array.isArray(b.cases) ? b.cases : []).slice(0, 50).filter((c): c is { id: string; title: string; criterion: string; steps: string[] } => isStr(c?.id) && isStr(c?.title));
-        if (cases.length === 0) throw new HttpError(400, 'No cases to add.');
-        return send(res, 200, addUatCases(db, appId, story, { proposedCases: cases.map((c) => ({ ...c, criterion: String(c.criterion ?? ''), steps: strArr(c.steps) })) }, user));
       }
 
       if (url === '/api/hexa/results/upload' && req.method === 'POST') {
@@ -599,6 +611,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       return send(res, 404, { error: 'Not found.' });
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      if (e instanceof OwnershipError) return send(res, 409, { error: e.message });
       if (e instanceof StoryError) return send(res, e.policy ? 422 : 400, { error: e.message, policy: e.policy?.id ?? null });
       if (e instanceof IngestError) return send(res, 400, { error: e.message });
       if (e instanceof GitHubError) return send(res, 502, { error: e.message });

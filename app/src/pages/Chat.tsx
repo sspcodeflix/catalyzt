@@ -3,7 +3,9 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-
 
 import { AssistantTurn } from '../components/chat/AssistantTurn';
 import { Composer, type ComposerSubmit } from '../components/Composer';
-import { createChat, isAnswering, sendMessage, stopAnswer, useChat } from '../lib/chatStore';
+import { Icon } from '../components/Icon';
+import { createChat, isAnswering, loadChat, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
+import { useSession } from '../lib/session';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 
 /**
@@ -21,6 +23,7 @@ function ChatView({ chatId }: { chatId: string }) {
   const navigate = useNavigate();
   const first = (location.state as { first?: ComposerSubmit } | null)?.first;
   const created = useRef(false);
+  const { userId, me, loaded } = useSession();
 
   // A new chat from the home page carries its first message in router state.
   useEffect(() => {
@@ -32,7 +35,15 @@ function ChatView({ chatId }: { chatId: string }) {
   }, [chatId, first, location.pathname, navigate]);
 
   const chat = useChat(chatId);
+  const load = useChatLoad(chatId);
+  // Anything else (a reload, a deep link, a recent) comes from the server.
+  useEffect(() => {
+    if (!chat && !first && loaded) void loadChat(chatId);
+  }, [chatId, chat, first, loaded]);
+
   const panelOpen = location.pathname.includes('/artifact/');
+  const readOnly = !!chat?.createdBy && chat.createdBy !== userId;
+  const starter = readOnly ? (me?.people.find((p) => p.id === chat?.createdBy)?.name ?? 'someone else') : null;
 
   const send = (msg: ComposerSubmit) => sendMessage(chatId, msg);
 
@@ -40,7 +51,7 @@ function ChatView({ chatId }: { chatId: string }) {
     <div className={`body${panelOpen ? ' split' : ''}`}>
       <div className="chatcol">
         <div className="thread">
-          {!chat && !first && <p className="muted">This chat will load from the API once it is connected.</p>}
+          {!chat && !first && <ChatState load={load} onRetry={() => void loadChat(chatId, true)} />}
           {chat?.messages.map((m) =>
             m.role === 'user' ? (
               <Fragment key={m.id}>
@@ -83,7 +94,7 @@ function ChatView({ chatId }: { chatId: string }) {
             ),
           )}
         </div>
-        {chat && (
+        {chat && !readOnly && (
           <div className="composerwrap">
             <Composer
               key={chat.id}
@@ -95,8 +106,59 @@ function ChatView({ chatId }: { chatId: string }) {
             />
           </div>
         )}
+        {chat && readOnly && (
+          <div className="composerwrap">
+            <p className="callout" role="status">
+              <Icon name="lock" small />
+              <span>Started by {starter}. You can read this chat; only they can add to it.</span>
+            </p>
+          </div>
+        )}
       </div>
       <Outlet />
     </div>
   );
+}
+
+/** Loading, missing, denied and failed are told apart, and nothing from another application is shown. */
+function ChatState({ load, onRetry }: { load: ChatLoad | undefined; onRetry: () => void }) {
+  switch (load?.state) {
+    case 'missing':
+      return (
+        <section className="emptystate" role="status" aria-label="Chat not found">
+          <b>This chat doesn't exist in this application</b>
+          <span>Check the link, or switch to the application it belongs to with the switcher in the sidebar.</span>
+          <Link to="/" className="btn">
+            Back to home
+          </Link>
+        </section>
+      );
+    case 'denied':
+      return (
+        <section className="emptystate" role="status" aria-label="No access">
+          <b>You don't have access to this chat</b>
+          <span>{load.error}</span>
+          <Link to="/" className="btn">
+            Back to home
+          </Link>
+        </section>
+      );
+    case 'error':
+      return (
+        <section className="emptystate" role="alert" aria-label="Could not load the chat">
+          <b>Could not load this chat</b>
+          <span>{load.error}</span>
+          <button type="button" className="btn" onClick={onRetry}>
+            <Icon name="retry" small />
+            Try again
+          </button>
+        </section>
+      );
+    default:
+      return (
+        <p className="muted" aria-busy="true">
+          Loading this chat…
+        </p>
+      );
+  }
 }

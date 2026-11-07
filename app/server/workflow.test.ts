@@ -124,6 +124,24 @@ describe('router', () => {
   });
 });
 
+describe('explicit capability (F13)', () => {
+  it('keeps an authoring request about a UAT ticket on the Authoring agent, with the ticket as evidence', async () => {
+    const db = fixtureDb();
+    const f = stubDeepSeek({ ...ok, capability: 'authoring', test_type: 'uat', tickets: ['ABCD-1001'] }, ['Here are the tests. ']);
+    const { agents } = await run(req(db, 'Write UAT tests for ABCD-1001', { agent: 'authoring', testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'] }), cfg, db);
+    expect(agents.map((a) => a.agent)).toEqual(['Input guard', 'Router', 'Authoring agent', 'Output guard']);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('Partial refunds for card payments');
+  });
+
+  it('sends the same ticket to the UAT analyst when no capability was chosen', async () => {
+    const db = fixtureDb();
+    stubDeepSeek({ ...ok, capability: 'analysis', test_type: 'uat', tickets: ['ABCD-1001'] });
+    const { agents } = await run(req(db, 'Is ABCD-1001 ready for UAT?', { tickets: ['ABCD-1001'] }), cfg, db);
+    expect(agents.map((a) => a.agent)).toEqual(['Input guard', 'Router', 'UAT analyst']);
+  });
+});
+
 describe('sub-agents', () => {
   it('UAT analyst reads coverage from Hexa, without the model, and files proposed cases', async () => {
     const db = fixtureDb();

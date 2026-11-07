@@ -68,6 +68,15 @@ function readSaved(): Pick<SessionState, 'userId' | 'appId' | 'workspace'> {
 }
 
 let state: SessionState = { ...readSaved(), me: null, loaded: false, error: null };
+/**
+ * Counts changes of who or which application. Every store captures it before a request and
+ * ignores the response when it moved on, so a slow answer for the old scope can never land in
+ * the new one.
+ */
+let epoch = 0;
+export const sessionEpoch = () => epoch;
+/** "<user>/<application>": the key everything cached in the browser belongs to. */
+export const scopeKey = () => `${state.userId ?? ''}/${state.appId ?? ''}`;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 const subscribe = (l: () => void) => {
@@ -109,16 +118,24 @@ let loading: Promise<void> | null = null;
 /** Loads who the user is and which apps they belong to; picks a default app when none is chosen. */
 export function loadSession(force = false): Promise<void> {
   if (loading && !force) return loading;
+  const mine = epoch;
   loading = (async () => {
     try {
       const res = await http('/api/me');
+      // A newer sign-in or application choice started while this one was in flight: it wins.
+      if (mine !== epoch) return;
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Request failed (${res.status})`);
       const me = (await res.json()) as Me;
+      if (mine !== epoch) return;
       const appId = me.app?.id ?? null;
       const workspace = appId === state.appId && state.workspace ? state.workspace : (me.app?.workspaces[0] ?? null);
+      // The server may have resolved a different person or application than the saved one (for example
+      // after the workspace changed); that counts as a scope change for every store.
+      if (me.user.id !== state.userId || appId !== state.appId) epoch++;
       state = { ...state, userId: me.user.id, appId, workspace, me, loaded: true, error: null };
       save();
     } catch (e) {
+      if (mine !== epoch) return;
       state = { ...state, loaded: true, error: (e as Error).message };
     }
     emit();
@@ -128,6 +145,7 @@ export function loadSession(force = false): Promise<void> {
 }
 
 export function signInAs(userId: string) {
+  epoch++;
   state = { ...state, userId, appId: null, workspace: null, me: null, loaded: false };
   save();
   emit();
@@ -136,6 +154,7 @@ export function signInAs(userId: string) {
 
 export function selectApp(appId: string) {
   if (appId === state.appId) return Promise.resolve();
+  epoch++;
   state = { ...state, appId, workspace: null };
   save();
   emit();

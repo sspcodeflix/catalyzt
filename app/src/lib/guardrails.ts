@@ -88,12 +88,14 @@ export const MAX_INPUT = 8000;
 
 export type GuardResult = { allowed: true } | { allowed: false; policy: Policy; /** What matched, for the audit log only. */ match: string };
 
+/** Secrets pasted into a message: common key formats, private key blocks and "password = …" pairs. */
+const SECRET_IN =
+  /(-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bxox[abpr]-[A-Za-z0-9-]{10,}\b|\bsk-[A-Za-z0-9_-]{20,}\b|\b(password|passwd|pwd|secret|api[_-]?key|token)\s*[:=]\s*\S{6,})/i;
+
+/** True when the text contains something that looks like a secret. Nothing containing one may be stored or sent to a model. */
+export const containsSecret = (text: string) => SECRET_IN.test(text);
+
 const RULES: [PolicyId, RegExp][] = [
-  // Secrets pasted into the message: common key formats and private key blocks.
-  [
-    'secret-in-input',
-    /(-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bxox[abpr]-[A-Za-z0-9-]{10,}\b|\bsk-[A-Za-z0-9_-]{20,}\b|\b(password|passwd|pwd|secret|api[_-]?key|token)\s*[:=]\s*\S{6,})/i,
-  ],
   // Asking Horizon to reveal or hand over credentials.
   [
     'credentials',
@@ -131,6 +133,12 @@ const RULES: [PolicyId, RegExp][] = [
  * where a feature can legitimately mention exporting or deleting data.
  */
 export function checkInput(text: string, only?: PolicyId[]): GuardResult {
+  // A secret is checked first, before the length: an overlong message that also carries a secret
+  // must be treated as a secret, so that nothing of it is kept.
+  if (!only || only.includes('secret-in-input')) {
+    const m = SECRET_IN.exec(text);
+    if (m) return { allowed: false, policy: POLICIES['secret-in-input'], match: m[0].slice(0, 80) };
+  }
   if (text.length > MAX_INPUT) return { allowed: false, policy: POLICIES['too-long'], match: `${text.length} chars` };
   for (const [id, re] of RULES) {
     if (only && !only.includes(id)) continue;

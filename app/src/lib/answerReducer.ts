@@ -25,6 +25,8 @@ export interface AnswerState {
   tokens: number;
   /** Set once the server has saved the revision. */
   revisionId?: string;
+  /** The revision number the server gave the saved answer. */
+  revision?: number;
 }
 
 export const initialAnswer = (): AnswerState => ({
@@ -90,6 +92,7 @@ export function applyEvent(s: AnswerState, ev: WorkflowEvent): AnswerState {
       return {
         ...s,
         revisionId: ev.revisionId,
+        revision: ev.revision ?? s.revision,
         rest: s.rest.map((b, i) => {
           if (b.kind !== 'approval') return b;
           const id = ev.approvals.find((a) => a.index === i)?.id;

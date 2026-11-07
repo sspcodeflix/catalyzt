@@ -4,7 +4,7 @@
  */
 import { useSyncExternalStore } from 'react';
 
-import { http } from './session';
+import { http, sessionEpoch } from './session';
 
 export interface AgentActivity {
   id: string;
@@ -42,17 +42,28 @@ async function poll() {
   timer = null;
   if (listeners.size === 0) return;
   if (document.visibilityState === 'visible') {
+    const epoch = sessionEpoch();
     try {
       const r = await http('/api/agents');
       if (!r.ok) throw new Error(`Request failed (${r.status})`);
       const b = (await r.json()) as { agents: AgentActivity[]; at: string };
-      state = { agents: b.agents, loaded: true, error: null, at: b.at };
+      // A response for the previous person or application is dropped; the next poll uses the new one.
+      if (epoch === sessionEpoch()) state = { agents: b.agents, loaded: true, error: null, at: b.at };
     } catch (e) {
-      state = { ...state, loaded: true, error: (e as Error).message };
+      if (epoch === sessionEpoch()) state = { ...state, loaded: true, error: (e as Error).message };
     }
     listeners.forEach((l) => l());
   }
   if (listeners.size > 0) timer = setTimeout(poll, POLL_MS);
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('hz:session', () => {
+    state = { agents: [], loaded: false, error: null, at: null };
+    usage = null;
+    listeners.forEach((l) => l());
+    usageListeners.forEach((l) => l());
+  });
 }
 
 function subscribe(l: () => void) {
@@ -97,10 +108,12 @@ async function pollUsage() {
   usageTimer = null;
   if (usageListeners.size === 0) return;
   if (document.visibilityState === 'visible') {
+    const epoch = sessionEpoch();
     try {
       const r = await http('/api/usage');
       if (r.ok) {
-        usage = (await r.json()) as Usage;
+        const b = (await r.json()) as Usage;
+        if (epoch === sessionEpoch()) usage = b;
         usageListeners.forEach((l) => l());
       }
     } catch {

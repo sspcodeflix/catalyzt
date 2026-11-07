@@ -63,7 +63,8 @@ export interface Approval {
   facts: { label: string; value: string; mono?: boolean }[];
   credentialNote: string;
   actionLabel: string;
-  status: 'pending' | 'approved' | 'declined';
+  /** `expired`: a newer revision of the answer superseded this approval. */
+  status: 'pending' | 'approved' | 'declined' | 'expired';
   /** Set once the server has stored the approval; decisions go through it. */
   id?: string;
   decidedAt?: string;
@@ -233,4 +234,6 @@ export interface Chat {
   testType: TestType | null;
   messages: Message[];
   artifacts: Record<string, Artifact>;
+  /** Who started the chat (from the server). Only they can add to it; teammates can read it. */
+  createdBy?: string;
 }

@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from 'react';
 
-import { http } from './session';
+import { http, sessionEpoch } from './session';
 import type { CriterionStatus, JiraSync, Refined, StoryDraft, StoryStatus, Ticket, UatState } from './types';
 import { summariseCoverage } from './uat';
 
@@ -48,9 +48,14 @@ function apply(b: { stories: ServerStory[]; filter: ServerFilter }) {
   emit();
 }
 
+/** A response that belongs to an earlier person or application is not applied. */
+class StaleScope extends Error {}
+
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
+  const epoch = sessionEpoch();
   const res = await http(url, { ...init, headers: { 'Content-Type': 'application/json', ...((init?.headers as Record<string, string> | undefined) ?? {}) } });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (epoch !== sessionEpoch()) throw new StaleScope('The application changed while this request was running.');
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
   return body;
 }
@@ -61,6 +66,7 @@ export function loadStories(): Promise<void> {
   loading ??= call<{ stories: ServerStory[]; filter: ServerFilter }>('/api/stories')
     .then(apply)
     .catch((e: Error) => {
+      if (e instanceof StaleScope) return;
       loading = null;
       sync = { ...sync, loaded: true, error: e.message };
       emit();
@@ -109,6 +115,7 @@ export async function syncNow() {
   try {
     apply(await call('/api/jira/sync', { method: 'POST' }));
   } catch (e) {
+    if (e instanceof StaleScope) return;
     sync = { ...sync, syncing: false, error: (e as Error).message };
     emit();
   }

@@ -12,6 +12,7 @@ export const FIXTURE: Workspace = {
   people: [
     { id: 'u-ram', name: 'Ram Kumar', initials: 'RK', email: 'ram@example.com', app: 'ABCD', role: 'app_owner' },
     { id: 'u-sourav', name: 'Sourav', initials: 'SV', email: 'sourav@example.com', app: 'ABCD', role: 'component_manager' },
+    { id: 'u-devi', name: 'Devi', initials: 'DV', email: 'devi@example.com', app: 'ABCD', role: 'member' },
     { id: 'u-nabih', name: 'Nabih Ben Lagha', initials: 'NB', email: 'nabih@example.com', app: 'IBGM', role: 'app_owner' },
   ],
   teams: [

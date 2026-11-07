@@ -37,8 +37,10 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
       cardLabel: 'UAT report',
       ticketKey: t.key,
       criteria,
-      proposedCases: missing.map((c, i) => ({
-        id: `UAT-${t.key.split('-')[1]}-${i + 1}`,
+      // The id carries the full story key and the criterion, so ABCD-1001 and IBGM-1001 never share
+      // one, and the same gap gets the same id in every analysis.
+      proposedCases: missing.map((c) => ({
+        id: `UAT-${t.key}-${c.id}`,
         title: c.text,
         criterion: c.id,
         steps: ['Sign in to the test environment as a test user', `Check: ${c.text.charAt(0).toLowerCase()}${c.text.slice(1)}`, 'Record the result and a screenshot'],
@@ -101,8 +103,9 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
               approval: {
                 title: `Add ${plural(gaps, 'UAT test case', 'UAT test cases')} to ${t.key}?`,
                 facts: [
+                  { label: 'Application', value: t.applicationId ?? t.key.split('-')[0], mono: true },
                   { label: 'Ticket', value: t.key, mono: true },
-                  { label: 'Test cases', value: artifact.proposedCases.map((c) => c.id).join(', '), mono: true },
+                  { label: 'Test cases', value: artifact.proposedCases.map((c) => `${c.id} · ${c.title}`).join('\n'), mono: true },
                   { label: 'Where', value: 'Hexa, as manual tests linked to the story and criteria, for the UAT tester' },
                   { label: 'Then', value: 'Nothing else changes. The tester runs them and records results.' },
                 ],

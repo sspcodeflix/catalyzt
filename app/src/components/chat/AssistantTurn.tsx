@@ -1,11 +1,12 @@
 import { useState } from 'react';
 
-import { canRetry, decideApproval, rateAnswer, retryAnswer } from '../../lib/chatStore';
+import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
 import type { AssistantMessage, Chat } from '../../lib/types';
 import { HorizonMark } from '../HorizonMark';
 import { Icon } from '../Icon';
 import { ApprovalCard } from './ApprovalCard';
 import { ArtifactCard } from './ArtifactCard';
+import { FeedbackForm } from './FeedbackForm';
 import { Prose } from './Prose';
 import { RunSummary } from './RunSummary';
 import { StarRating } from './StarRating';
@@ -19,6 +20,14 @@ interface AssistantTurnProps {
 /** Prose first, then the card, then the rating, approvals and follow-up suggestions. */
 export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false);
+  // A rating below 4 stars waits for the feedback form before it is sent.
+  const [pendingStars, setPendingStars] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+  const [patterns, setPatterns] = useState<FeedbackPattern[]>([]);
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [decideErrors, setDecideErrors] = useState<Record<string, string>>({});
+
   const status = message.status ?? 'done';
   const live = status === 'working' || status === 'streaming';
   const finished = status === 'done';
@@ -31,6 +40,39 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
       setTimeout(() => setCopied(false), 1500);
     } catch {
       /* clipboard blocked: nothing to do */
+    }
+  };
+
+  const submitRating = async (stars: number, feedback?: { reasons: string[]; comment: string }) => {
+    setSaving(true);
+    setRateError(null);
+    try {
+      const r = await rateAnswer(chat.id, message.id, stars, feedback);
+      setPatterns(r.patterns);
+      setPendingStars(null);
+    } catch (e) {
+      setRateError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const onRate = (stars: number) => {
+    if (stars >= 4) void submitRating(stars);
+    else {
+      setPendingStars(stars);
+      setRateError(null);
+    }
+  };
+
+  const decide = async (approvalId: string, decision: 'approved' | 'declined') => {
+    setDeciding(approvalId);
+    try {
+      await decideApproval(chat.id, message.id, approvalId, decision);
+      setDecideErrors(({ [approvalId]: _gone, ...rest }) => rest);
+    } catch (e) {
+      setDecideErrors((x) => ({ ...x, [approvalId]: (e as Error).message }));
+    } finally {
+      setDeciding(null);
     }
   };
 
@@ -48,15 +90,23 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
         const a = chat.artifacts[b.artifactId];
         return a ? <ArtifactCard key={i} chatId={chat.id} artifact={a} /> : null;
       }
-      case 'approval':
+      case 'approval': {
+        const a = b.approval;
+        const lockReason = !a.id ? 'Waiting for the answer to be saved' : message.rating === null ? 'Rate the answer to approve' : null;
         return (
           <ApprovalCard
             key={i}
-            approval={b.approval}
-            locked={message.rating === null}
-            onDecide={(d) => decideApproval(chat.id, message.id, d)}
+            approval={a}
+            revision={message.revision}
+            lockReason={lockReason}
+            busy={deciding === a.id}
+            error={a.id ? decideErrors[a.id] : undefined}
+            onDecide={(d) => {
+              if (a.id) void decide(a.id, d);
+            }}
           />
         );
+      }
       case 'rejected':
         return (
           <section key={i} className="rejected" role="alert" aria-label="Request rejected">
@@ -80,6 +130,8 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
         );
     }
   };
+
+  const ratingText = saving ? 'Saving…' : message.rating ? `Rated ${message.rating} of 5` : !message.revisionId ? 'Not saved, so it cannot be rated' : 'Rate this answer';
 
   return (
     <div className="turn">
@@ -113,7 +165,7 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
               type="button"
               className="icon"
               aria-label="Retry"
-              title={canRetry(message.id) ? 'Run this again as a new revision' : 'This answer cannot be retried'}
+              title={canRetry(message.id) ? 'Run this again as a new revision' : 'This answer cannot be retried here'}
               disabled={!canRetry(message.id)}
               onClick={() => retryAnswer(chat.id, message.id)}
             >
@@ -121,17 +173,33 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
             </button>
             {finished && (
               <>
-                <StarRating value={message.rating} onRate={(s) => rateAnswer(chat.id, message.id, s)} />
-                <span aria-live="polite">{message.rating ? `Rated ${message.rating} of 5` : 'Rate this answer'}</span>
+                <StarRating value={pendingStars ?? message.rating} onRate={onRate} disabled={saving || !message.revisionId} />
+                <span aria-live="polite">{ratingText}</span>
+                {rateError && pendingStars === null && (
+                  <span className="errtext" role="alert">
+                    {rateError}
+                  </span>
+                )}
               </>
             )}
             {message.revision > 1 && <span className="muted rev">Revision {message.revision}</span>}
             {message.intent && (
-              <span className="muted rev" title={`Confidence ${Math.round(message.intent.confidence * 100)}%`}>
+              <span className="muted rev" title={`Confidence ${Math.round(message.intent.confidence * 100)}%: how sure the router was about what you asked, not whether the answer is right`}>
                 Routed by {message.intent.source === 'model' ? 'DeepSeek' : 'rules'}
               </span>
             )}
           </div>
+        )}
+        {pendingStars !== null && (
+          <FeedbackForm stars={pendingStars} capability={message.capability} busy={saving} error={rateError} onSubmit={(reasons, comment) => void submitRating(pendingStars, { reasons, comment })} onCancel={() => setPendingStars(null)} />
+        )}
+        {patterns.length > 0 && (
+          <p className="callout" role="status">
+            <Icon name="people" small />
+            <span>
+              Others gave the same reason recently: {patterns.map((p) => `${p.reason} (${p.count} in 7 days)`).join(', ')}.
+            </span>
+          </p>
         )}
         {!live && after.map(renderBlock)}
       </div>

@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { checkInput, policyFromModel, redactSecrets, streamSafeLength, type Policy } from '../src/lib/guardrails';
+import { checkInput, containsSecret, policyFromModel, redactSecrets, streamSafeLength, type Policy } from '../src/lib/guardrails';
 import { validateIntent, type Intent, type IntentRequest } from '../src/lib/intent';
 import { rulesIntent } from '../src/lib/routing';
 import { testTypeLabel } from '../src/lib/testType';
@@ -158,9 +158,14 @@ export async function runWorkflow(
   const started = performance.now();
   const total = () => `${secs(started)} s`;
 
-  // Record the chat and message so the run links to them.
+  // The input guard runs before anything is kept. A message that carries a secret is stored without
+  // its text and never gives the chat its title, so no secret reaches the database or a model.
+  const g = checkInput(req.text);
+  const secret = containsSecret(req.text) || (!g.allowed && g.policy.id === 'secret-in-input');
   if (db && req.chatId && req.messageId) {
-    db.upsertChat({ id: req.chatId, title: req.chatTitle ?? req.text.slice(0, 80), agent: req.agent, workspace: req.scope.workspace, userId }, app);
+    const wanted = (req.chatTitle ?? req.text).slice(0, 80);
+    const title = secret || containsSecret(wanted) ? 'Message removed' : redactSecrets(wanted);
+    db.upsertChat({ id: req.chatId, title, agent: req.agent, workspace: req.scope.workspace, userId }, app);
     db.addUserMessage({
       id: req.messageId,
       chatId: req.chatId,
@@ -169,6 +174,7 @@ export async function runWorkflow(
       testTypeSource: req.testTypeSource,
       userId,
       items: [...req.tickets.map((t) => ({ type: 'story', ref: t })), ...req.components.map((c) => ({ type: 'component', ref: c }))],
+      removedReason: secret ? 'secret-in-input' : null,
     });
   }
 
@@ -190,7 +196,6 @@ export async function runWorkflow(
     // 1. Input guard: rules, no model, before anything else.
     const guard = root.spawn('Input guard', 'guard', 'Check the request against the policies');
     const check = guard.step('rule', 'Checking the request against the policies');
-    const g = checkInput(req.text);
     if (!g.allowed) {
       check({ label: `Rejected: ${g.policy.title}`, failed: true });
       guard.finish('rejected', { result: `Rejected: ${g.policy.title}` });
@@ -270,8 +275,11 @@ export async function runWorkflow(
       return end('done', `Needs your input · ${total()}`);
     }
 
-    // 3b. UAT analyst: tools over Jira and test evidence, no model needed for the facts.
-    const ticket = intent.testType === 'uat' ? intent.tickets.map((k) => req.syncedTickets.find((t) => t.key === k)).find(Boolean) : undefined;
+    // 3b. UAT analyst: tools over Jira and test evidence, no model needed for the facts. When the
+    //     person chose another capability themselves (say, authoring tests for the story), that
+    //     choice stands and the specialist gets the ticket as evidence instead.
+    const analysisWanted = req.agent === 'auto' || req.agent === 'analysis';
+    const ticket = intent.testType === 'uat' && analysisWanted ? intent.tickets.map((k) => req.syncedTickets.find((t) => t.key === k)).find(Boolean) : undefined;
     if (ticket) {
       router.finish('done', { result: `Assigned to the UAT analyst: ${ticket.key}`, ...routerUsage });
       const uat = root.spawn('UAT analyst', 'tool_agent', `Check whether ${ticket.key} is ready for UAT`);

@@ -603,4 +603,28 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE huddle_links ADD COLUMN label TEXT NOT NULL DEFAULT '';
   ALTER TABLE huddle_links ADD COLUMN href TEXT;
   `,
+  // 7: approvals bind to one immutable revision and carry the exact action payload they were shown
+  //    with; outcomes and supersession are explicit; artifacts are stored per revision ("<revision>/<local id>")
+  //    so a later revision can never change what an earlier approval would execute. Proposed UAT cases
+  //    with the old per-story-number ids (which collided across applications) are retired; the next
+  //    analysis recreates them under ids that include the full story key and criterion.
+  `
+  ALTER TABLE approvals ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE approvals ADD COLUMN outcome TEXT;
+  ALTER TABLE approvals ADD COLUMN executed_at TEXT;
+  ALTER TABLE approvals ADD COLUMN superseded_by TEXT REFERENCES answer_revisions(id);
+  CREATE INDEX approvals_revision ON approvals (revision_id, status);
+
+  ALTER TABLE artifacts ADD COLUMN local_id TEXT NOT NULL DEFAULT '';
+  UPDATE artifacts SET local_id = substr(id, length(chat_id) + 2);
+  UPDATE artifacts SET id = revision_id || '/' || local_id WHERE revision_id IS NOT NULL;
+  CREATE INDEX artifacts_revision ON artifacts (revision_id);
+  CREATE INDEX chats_owner ON chats (application_id, created_by, updated_at);
+
+  INSERT INTO audit_log (at, actor_type, actor_ref, action, entity_type, entity_ref, detail)
+    SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'system', 'migration 7', 'hexa.proposal_retired', 'test_case', id,
+           json_object('application', application_id, 'reason', 'proposal ids now include the story key and criterion; run the UAT analysis again to recreate it')
+    FROM test_cases WHERE kind = 'proposed' AND id LIKE 'UAT-%';
+  UPDATE test_cases SET status = 'removed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE kind = 'proposed' AND id LIKE 'UAT-%';
+  `,
 ];

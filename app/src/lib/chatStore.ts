@@ -1,14 +1,16 @@
 /**
- * In-memory chat store. It stands in for the API: each exported action maps to one endpoint,
- * and the rules that matter for safety (the rating gate on approvals) are enforced here, not
- * only in the UI, the way the server must enforce them.
+ * Chats in the browser. The server is the record: every answer is stored there as a revision, and
+ * ratings and approval decisions are server calls that the browser only reflects. This store keeps
+ * the chats open in this session, renders answers as they stream (through the same reducer the
+ * server stores with), and loads chats it does not have from GET /api/chats/:id.
  */
 import { useSyncExternalStore } from 'react';
 
+import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from './answerReducer';
 import { runWorkflow } from './llm';
-import { http } from './session';
+import { http, sessionEpoch } from './session';
 import { getTicket, recordUatAnalysis } from './ticketStore';
-import type { Agent, AgentView, AssistantMessage, Block, Chat, RunStep, Scope, TestType, UserMessage } from './types';
+import type { Agent, Approval, Artifact, AssistantMessage, Chat, Message, Scope, TestType, UserMessage } from './types';
 
 const chats = new Map<string, Chat>();
 const listeners = new Set<() => void>();
@@ -45,9 +47,10 @@ export const useChatList = () => useSyncExternalStore(subscribe, () => chatList)
 let recent: { id: string; title: string; updatedAt: string }[] = [];
 export const useRecentChats = () => useSyncExternalStore(subscribe, () => recent);
 export async function refreshRecents() {
+  const epoch = sessionEpoch();
   try {
     const r = await http('/api/chats');
-    if (r.ok) {
+    if (r.ok && epoch === sessionEpoch()) {
       recent = ((await r.json()) as { chats: typeof recent }).chats;
       emit();
     }
@@ -60,6 +63,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('hz:session', () => {
     for (const c of running.values()) c.abort();
     chats.clear();
+    loads.clear();
     requests.clear();
     recent = [];
     emit();
@@ -69,6 +73,66 @@ if (typeof window !== 'undefined') {
 
 export function useChat(chatId: string | undefined): Chat | undefined {
   return useSyncExternalStore(subscribe, () => (chatId ? chats.get(chatId) : undefined));
+}
+
+/* ---------- Loading a chat from the server ---------- */
+
+/** How loading a chat went, for chats this session did not start. */
+export type ChatLoad = { state: 'loading' } | { state: 'ready' } | { state: 'missing' } | { state: 'denied'; error: string } | { state: 'error'; error: string };
+const loads = new Map<string, ChatLoad>();
+export const useChatLoad = (chatId: string | undefined) => useSyncExternalStore(subscribe, () => (chatId ? loads.get(chatId) : undefined));
+
+interface ServerChat {
+  id: string;
+  applicationId: string;
+  title: string;
+  agent: string;
+  scope: Scope;
+  testType: TestType | null;
+  createdBy: string;
+  messages: Message[];
+  artifacts: Record<string, Artifact>;
+}
+
+/** Loads a chat that is not in memory: missing, denied and failed are distinct, and nothing foreign is shown. */
+export async function loadChat(chatId: string, force = false): Promise<void> {
+  if (!force && (chats.has(chatId) || loads.get(chatId)?.state === 'loading')) return;
+  const epoch = sessionEpoch();
+  loads.set(chatId, { state: 'loading' });
+  emit();
+  try {
+    const res = await http(`/api/chats/${encodeURIComponent(chatId)}`);
+    if (epoch !== sessionEpoch()) return;
+    if (res.status === 404) {
+      loads.set(chatId, { state: 'missing' });
+    } else if (res.status === 403) {
+      const b = (await res.json().catch(() => ({}))) as { error?: string };
+      loads.set(chatId, { state: 'denied', error: b.error ?? 'You do not have access to this chat.' });
+    } else if (!res.ok) {
+      const b = (await res.json().catch(() => ({}))) as { error?: string };
+      loads.set(chatId, { state: 'error', error: b.error ?? `Request failed (${res.status}).` });
+    } else {
+      const { chat } = (await res.json()) as { chat: ServerChat };
+      if (epoch !== sessionEpoch()) return;
+      chats.set(chatId, {
+        id: chat.id,
+        title: chat.title,
+        agent: (chat.agent || 'auto') as Agent,
+        scope: chat.scope,
+        testType: chat.testType,
+        messages: chat.messages,
+        artifacts: chat.artifacts,
+        createdBy: chat.createdBy,
+      });
+      loads.set(chatId, { state: 'ready' });
+      // A UAT report in the chat marks its story as analysed for this session.
+      for (const a of Object.values(chat.artifacts)) if (a.kind === 'uat') recordUatAnalysis(a.ticketKey, chatId, a.criteria.map((c) => c.status));
+    }
+  } catch (e) {
+    if (epoch !== sessionEpoch()) return;
+    loads.set(chatId, { state: 'error', error: (e as Error).message });
+  }
+  emit();
 }
 
 export interface NewMessage {
@@ -94,6 +158,7 @@ export function createChat(chatId: string, first: NewMessage) {
     messages: [],
     artifacts: {},
   });
+  loads.set(chatId, { state: 'ready' });
   sendMessage(chatId, first);
 }
 
@@ -125,7 +190,7 @@ const requests = new Map<string, { msg: NewMessage; userId: string }>();
 /** One running answer per chat. */
 const running = new Map<string, AbortController>();
 
-/** Seeded answers have no request behind them, so they can't be retried. */
+/** Answers loaded from the server have no request in this session, so they can't be retried here. */
 export const canRetry = (answerId: string) => !!requests.get(answerId)?.msg.text;
 
 export const isAnswering = (chat: Chat | undefined) =>
@@ -158,7 +223,7 @@ export function sendMessage(chatId: string, msg: NewMessage) {
   void runAnswer(chatId, answerId);
 }
 
-/** Runs the same request again as a new revision, which needs its own rating. */
+/** Runs the same request again. The server numbers the new revision, which needs its own rating. */
 export function retryAnswer(chatId: string, answerId: string) {
   const answer = chats.get(chatId)?.messages.find((m) => m.id === answerId);
   if (!answer || answer.role !== 'assistant' || !requests.has(answerId)) return;
@@ -201,42 +266,41 @@ function historyBefore(chat: Chat, userId: string) {
 }
 
 /**
- * Sends the request through the server's agent workflow (guards, router, one sub-agent) and
- * fills in the answer from its events. See server/workflow.ts.
+ * Sends the request through the server's agent workflow and fills in the answer from its events,
+ * with the reducer the server also stores with. The stream is read to its end: `done` closes the
+ * answer on screen, and the `saved` event that follows carries the revision and approval ids that
+ * ratings and decisions need.
  */
 async function runAnswer(chatId: string, answerId: string) {
   const req = requests.get(answerId)!;
   const { msg } = req;
   const ctrl = new AbortController();
   running.set(chatId, ctrl);
+  const epoch = sessionEpoch();
   const set = (fn: (m: AssistantMessage) => AssistantMessage) => {
-    if (chats.has(chatId)) updateAnswer(chatId, answerId, fn);
+    if (chats.has(chatId) && epoch === sessionEpoch()) updateAnswer(chatId, answerId, fn);
   };
 
-  let steps: RunStep[] = [];
-  let agents: AgentView[] = [];
-  let summary = 'Working';
-  let text = '';
-  let streamed = false;
+  let answer = initialAnswer();
   let pending = false;
-  let finished = false;
-  // Blocks that come after the prose (cards, approvals, follow-ups), from a structured answer.
-  let rest: Block[] = [];
-
+  let done = false;
   const render = () =>
     set((m) => ({
       ...m,
-      blocks: [{ kind: 'run', summary, steps, agents }, ...(streamed || text ? [{ kind: 'prose' as const, text }] : []), ...rest],
+      blocks: answerBlocks(answer),
+      citations: answer.citations,
+      status: answer.status === 'streaming' && m.status === 'working' ? 'streaming' : m.status,
     }));
-  // Stream updates are batched to one per animation frame; `finished` stops a late one overwriting the final state.
+  // Stream updates are batched to one per animation frame; `done` stops a late one overwriting the final state.
   const schedule = () => {
     if (pending) return;
     pending = true;
     requestAnimationFrame(() => {
       pending = false;
-      if (!finished) render();
+      if (!done) render();
     });
   };
+  const current = chats.get(chatId)?.messages.find((m) => m.id === answerId);
 
   try {
     for await (const ev of runWorkflow(
@@ -254,47 +318,29 @@ async function runAnswer(chatId: string, answerId: string) {
         chatId,
         chatTitle: chats.get(chatId)?.title,
         messageId: req.userId,
-        revision: chats.get(chatId)?.messages.find((m) => m.id === answerId)?.role === 'assistant'
-          ? (chats.get(chatId)!.messages.find((m) => m.id === answerId) as AssistantMessage).revision
-          : 1,
+        answerId,
+        revision: current?.role === 'assistant' ? current.revision : 1,
       },
       ctrl.signal,
     )) {
+      answer = applyEvent(answer, ev);
       switch (ev.type) {
-        case 'agent': {
-          const prev = agents.find((a) => a.id === ev.id);
-          const a: AgentView = { id: ev.id, parentId: ev.parentId, agent: ev.agent, kind: ev.kind, task: ev.task, state: ev.state, model: ev.model, result: ev.result, tokens: ev.tokens, seconds: ev.seconds, steps: prev?.steps ?? [] };
-          agents = prev ? agents.map((x) => (x.id === ev.id ? a : x)) : [...agents, a];
-          // A flat list of steps, labelled with their agent, for the collapsed summary and older views.
-          steps = agents.filter((x) => x.parentId).map((x) => ({ id: x.id, agent: x.agent, label: x.result ?? x.task, seconds: x.seconds, state: x.state === 'running' ? 'running' : x.state === 'done' ? 'done' : 'failed', noModel: !x.model }));
-          render();
-          break;
-        }
-        case 'step': {
-          const st = { id: ev.id, kind: ev.kind, label: ev.label, detail: ev.detail, state: ev.state, seconds: ev.seconds };
-          agents = agents.map((a) => (a.id !== ev.agentId ? a : { ...a, steps: a.steps.some((x) => x.id === ev.id) ? a.steps.map((x) => (x.id === ev.id ? st : x)) : [...a.steps, st] }));
-          render();
-          break;
-        }
         case 'intent': {
           const intent = ev.intent;
           // Show how the request was read on the user's message too.
-          update(chatId, (c) => ({
-            ...c,
-            testType: intent.testType ?? c.testType,
-            messages: c.messages.map((m) =>
-              m.id === req.userId && m.role === 'user'
-                ? { ...m, testType: intent.testType, tickets: intent.tickets, components: intent.components }
-                : m,
-            ),
-          }));
+          if (chats.has(chatId) && epoch === sessionEpoch()) {
+            update(chatId, (c) => ({
+              ...c,
+              testType: intent.testType ?? c.testType,
+              messages: c.messages.map((m) => (m.id === req.userId && m.role === 'user' ? { ...m, testType: intent.testType, tickets: intent.tickets, components: intent.components } : m)),
+            }));
+          }
           set((m) => ({ ...m, intent, capability: intent.capability }));
           break;
         }
         case 'rejected':
-          rest = [{ kind: 'rejected', title: ev.policy.title, text: ev.policy.message, by: ev.by }];
           // A message rejected for containing a secret is not kept, so the secret is not left on screen.
-          if (ev.policy.id === 'secret-in-input') {
+          if (ev.policy.id === 'secret-in-input' && chats.has(chatId) && epoch === sessionEpoch()) {
             update(chatId, (c) => ({
               ...c,
               title: c.messages.length <= 2 ? 'Message removed' : c.title,
@@ -302,14 +348,10 @@ async function runAnswer(chatId: string, answerId: string) {
             }));
             requests.set(answerId, { ...req, msg: { ...msg, text: '' } });
           }
-          render();
           break;
         case 'answer': {
-          const prose = ev.blocks.filter((b) => b.kind === 'prose').map((b) => (b.kind === 'prose' ? b.text : '')).join('\n\n');
-          text = prose;
-          rest = ev.blocks.filter((b) => b.kind !== 'prose');
           const { artifact, uatTicket } = ev;
-          if (artifact) {
+          if (artifact && chats.has(chatId) && epoch === sessionEpoch()) {
             update(chatId, (c) => ({
               ...c,
               title: uatTicket && c.messages.length <= 2 ? titleFor(msg.text, [uatTicket]) : c.title,
@@ -317,88 +359,69 @@ async function runAnswer(chatId: string, answerId: string) {
             }));
           }
           if (uatTicket && artifact?.kind === 'uat') recordUatAnalysis(uatTicket, chatId, artifact.criteria.map((c) => c.status));
-          set((m) => ({ ...m, citations: ev.citations }));
-          render();
           break;
         }
         case 'text':
-          if (!streamed) {
-            streamed = true;
-            set((m) => ({ ...m, status: 'streaming' }));
-          }
-          text += ev.text;
           schedule();
-          break;
+          continue;
         case 'done':
-          void refreshRecents();
-          summary = ev.tokens > 0 ? `${ev.summary} · ${ev.tokens.toLocaleString()} tokens` : ev.summary;
-          finished = true;
+          done = true;
           render();
           set((m) => ({ ...m, status: 'done' }));
-          return;
+          void refreshRecents();
+          continue;
+        case 'saved':
+          set((m) => ({ ...m, blocks: answerBlocks(answer), revisionId: ev.revisionId, revision: ev.revision ?? m.revision }));
+          continue;
         case 'error':
           throw new Error(ev.message);
       }
+      render();
     }
-    throw new Error('The connection closed before the answer finished.');
+    if (!done) throw new Error('The connection closed before the answer finished.');
   } catch (e) {
-    finished = true;
-    const stopped = ctrl.signal.aborted;
-    steps = steps.map((s) => (s.state === 'running' ? { ...s, state: stopped ? 'done' : 'failed', label: stopped ? `${s.label} (stopped)` : s.label } : s));
-    agents = agents.map((a) => (a.state === 'running' ? { ...a, state: stopped ? 'stopped' : 'failed', steps: a.steps.map((x) => (x.state === 'running' ? { ...x, state: 'failed' } : x)) } : a));
-    summary = stopped ? 'Stopped' : 'Failed';
-    render();
-    set((m) => ({ ...m, status: stopped ? 'stopped' : 'error', error: stopped ? undefined : (e as Error).message }));
+    // After `done` the answer stands; a broken connection then only means `saved` may not have arrived.
+    if (done) return;
+    done = true;
+    answer = finishAnswer(answer, ctrl.signal.aborted, (e as Error).message);
+    set((m) => ({ ...m, blocks: answerBlocks(answer), citations: answer.citations, status: answer.status, error: answer.error }));
   } finally {
     if (running.get(chatId) === ctrl) running.delete(chatId);
   }
 }
 
-export function rateAnswer(chatId: string, messageId: string, stars: number) {
-  const m = chats.get(chatId)?.messages.find((x) => x.id === messageId);
-  if (m?.role === 'assistant' && m.status && m.status !== 'done') throw new Error('Wait for the answer to finish');
-  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error('Rating must be 1 to 5');
-  updateAnswer(chatId, messageId, (m) => ({ ...m, rating: stars }));
+/* ---------- Ratings and decisions: the server decides, the browser reflects ---------- */
+
+async function post<T>(url: string, body: unknown): Promise<T> {
+  const res = await http(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(out.error ?? `Request failed (${res.status}).`);
+  return out;
 }
 
-export function decideApproval(chatId: string, messageId: string, decision: 'approved' | 'declined') {
-  const answer = chats.get(chatId)?.messages.find((m) => m.id === messageId);
-  if (!answer || answer.role !== 'assistant') throw new Error('Unknown answer');
-  // Server-side rule: an approval cannot be acted on until the answer it belongs to is rated.
-  if (decision === 'approved' && answer.rating === null) throw new Error('Rate the answer before approving');
+export interface FeedbackPattern {
+  capability: string;
+  reason: string;
+  count: number;
+}
+
+/** Rates a saved revision. Below 4 stars the server requires a reason and what was expected. */
+export async function rateAnswer(chatId: string, messageId: string, stars: number, feedback: { reasons: string[]; comment: string } = { reasons: [], comment: '' }): Promise<{ patterns: FeedbackPattern[] }> {
+  const m = chats.get(chatId)?.messages.find((x) => x.id === messageId);
+  if (!m || m.role !== 'assistant') throw new Error('Unknown answer');
+  if (m.status && m.status !== 'done') throw new Error('Wait for the answer to finish');
+  if (!m.revisionId) throw new Error('This answer was not saved, so it cannot be rated.');
+  const r = await post<{ ok: true; patterns?: FeedbackPattern[] }>(`/api/answers/${encodeURIComponent(m.revisionId)}/rating`, { stars, ...feedback });
+  updateAnswer(chatId, messageId, (x) => ({ ...x, rating: stars }));
+  return { patterns: r.patterns ?? [] };
+}
+
+/** Decides an approval on the server (rating gate and roles are checked there) and reflects the recorded state. */
+export async function decideApproval(chatId: string, messageId: string, approvalId: string, decision: 'approved' | 'declined'): Promise<Approval['status']> {
+  const r = await post<{ approval: { status: Approval['status']; decidedAt?: string; decidedBy?: string; outcome?: Approval['outcome'] } }>(`/api/approvals/${encodeURIComponent(approvalId)}/decision`, { decision });
   updateAnswer(chatId, messageId, (m) => ({
     ...m,
-    blocks: m.blocks.map((b) =>
-      b.kind === 'approval' && b.approval.status === 'pending'
-        ? { ...b, approval: { ...b.approval, status: decision, decidedAt: new Date().toISOString() } }
-        : b,
-    ),
+    blocks: m.blocks.map((b) => (b.kind === 'approval' && b.approval.id === approvalId ? { ...b, approval: { ...b.approval, status: r.approval.status, decidedAt: r.approval.decidedAt, decidedBy: r.approval.decidedBy, outcome: r.approval.outcome } } : b)),
   }));
-  if (decision === 'approved') void carryOut(chatId, messageId);
-}
-
-/** Carries out approvals Horizon can act on itself, and records the outcome on the card. */
-async function carryOut(chatId: string, messageId: string) {
-  const chat = chats.get(chatId);
-  const answer = chat?.messages.find((m) => m.id === messageId);
-  if (!chat || answer?.role !== 'assistant') return;
-  const block = answer.blocks.find((b) => b.kind === 'approval');
-  if (block?.kind !== 'approval' || block.approval.action !== 'add_uat_cases' || !block.approval.artifactId) return;
-  const artifact = chat.artifacts[block.approval.artifactId];
-  if (artifact?.kind !== 'uat') return;
-  const setOutcome = (outcome: { ok: boolean; text: string }) =>
-    updateAnswer(chatId, messageId, (m) => ({ ...m, blocks: m.blocks.map((b) => (b.kind === 'approval' ? { ...b, approval: { ...b.approval, outcome } } : b)) }));
-  try {
-    const res = await http('/api/hexa/manual/from-uat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyKey: artifact.ticketKey, cases: artifact.proposedCases }),
-    });
-    const body = (await res.json()) as { created?: number; updated?: number; error?: string };
-    if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
-    const n = (body.created ?? 0) + (body.updated ?? 0);
-    setOutcome({ ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${artifact.ticketKey}` });
-  } catch (e) {
-    setOutcome({ ok: false, text: `Could not add the cases to Hexa: ${(e as Error).message}` });
-  }
+  return r.approval.status;
 }

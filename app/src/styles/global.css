@@ -467,3 +467,19 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
 .mebtn:hover { background: var(--hz-hover); }
 .mename { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-sep { height: 1px; background: var(--hz-divider); margin: 6px 0; }
+
+/* ---------- Feedback below 4 stars, chat loading states, approval facts ---------- */
+.feedback { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; max-width: 560px; font-size: 13.5px; }
+.feedback .fb-head { display: flex; flex-direction: column; gap: 2px; }
+.feedback .fb-head .muted { font-size: 12.5px; }
+.feedback fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.feedback legend { font-weight: 500; padding: 0; margin-bottom: 4px; }
+.feedback textarea { width: 100%; box-sizing: border-box; min-height: 72px; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--hz-border-strong); border-radius: var(--hz-radius-md); background: var(--hz-surface); color: var(--hz-text); font: inherit; font-size: 14px; resize: vertical; }
+.feedback textarea:focus { outline: 0; border-color: var(--hz-ink); }
+.fb-hints { margin: 0; padding: 10px 12px 10px 28px; border-radius: var(--hz-radius-md); background: var(--hz-warn-tint); color: var(--hz-warn-text); font-size: 13px; }
+.msgactions .errtext { margin-left: 6px; }
+.emptystate { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 18px 20px; border: 1px solid var(--hz-border); border-radius: var(--hz-radius-xl); background: var(--hz-surface); max-width: 520px; }
+.emptystate b { font-weight: 600; }
+.emptystate span { color: var(--hz-text-secondary); font-size: 13.5px; }
+.emptystate .btn { margin-top: 8px; }
+.approve .fact dd.multi { white-space: pre-line; }

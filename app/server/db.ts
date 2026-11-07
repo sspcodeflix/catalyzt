@@ -208,6 +208,24 @@ function migrate(db: Database.Database) {
 /** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
 export const componentId = (app: string, name: string) => `${app}/${name}`;
 
+/** A write that would cross an application or chat boundary. The API turns it into a 404 or 409. */
+export class OwnershipError extends Error {}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'declined' | 'expired';
+/** What an approved add_uat_cases action does, frozen when the approval was shown. */
+export interface ApprovalPayload {
+  storyKey?: string;
+  artifactId?: string;
+  cases?: { id: string; title: string; criterion: string; steps: string[] }[];
+}
+export interface ApprovalOutcome {
+  ok: boolean;
+  text: string;
+}
+
+/** Stable id for a manual or proposed test from its Octane unique_id within an application. */
+const manualId = (app: string, externalId: string) => `MT-${createHash('sha1').update(`${app}|${externalId}`).digest('hex').slice(0, 10).toUpperCase()}`;
+
 /** Stable id for a scanned test, so a re-scan updates it instead of adding a duplicate. */
 function testId(app: string, repo: string, path: string, suite: string | null, title: string) {
   return `TC-${createHash('sha1').update(`${app}|${repo}|${path}|${suite ?? ''}|${title}`).digest('hex').slice(0, 10).toUpperCase()}`;
@@ -219,7 +237,11 @@ export type HorizonDb = ReturnType<typeof openDb>;
 export function openDb(path: string) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  // WAL: readers never block the one writer. synchronous=NORMAL is durable against an application crash
+  // (the WAL is synced at every checkpoint); a bounded busy timeout instead of an immediate SQLITE_BUSY.
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
   migrate(db);
 
@@ -332,6 +354,38 @@ export function openDb(path: string) {
     }
   }
 
+  function getChat(id: string) {
+    const r = db.prepare('SELECT id, application_id, title, agent, created_by FROM chats WHERE id = ?').get(id) as Row | undefined;
+    return r ? { id, applicationId: String(r.application_id), title: String(r.title), agent: String(r.agent), createdBy: String(r.created_by) } : undefined;
+  }
+
+  function getApproval(id: string) {
+    const r = db
+      .prepare(
+        `SELECT a.*, ar.revision, m.chat_id, c.application_id FROM approvals a JOIN answer_revisions ar ON ar.id = a.revision_id
+         JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id WHERE a.id = ?`,
+      )
+      .get(id) as Row | undefined;
+    if (!r) return undefined;
+    const decidedBy = (r.decided_by as string) ?? null;
+    return {
+      id,
+      revisionId: String(r.revision_id),
+      revision: Number(r.revision),
+      action: String(r.action),
+      target: json<{ artifactId?: string | null; storyKey?: string | null }>(r.target, {}),
+      payload: json<ApprovalPayload>(r.payload, {}),
+      status: r.status as ApprovalStatus,
+      chatId: String(r.chat_id),
+      app: String(r.application_id),
+      decidedBy,
+      decidedByName: decidedBy ? (getUser(decidedBy)?.name ?? decidedBy) : null,
+      decidedAt: (r.decided_at as string) ?? null,
+      outcome: json<ApprovalOutcome | null>(r.outcome, null),
+      supersededBy: (r.superseded_by as string) ?? null,
+    };
+  }
+
   function audit(actorType: 'user' | 'agent' | 'system', actorRef: string, action: string, entityType: string, entityRef: string, detail: object = {}) {
     db.prepare('INSERT INTO audit_log (at, actor_type, actor_ref, action, entity_type, entity_ref, detail) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       now(),
@@ -429,8 +483,12 @@ export function openDb(path: string) {
     },
 
     /* ---------- Chats (recorded with each request so agent runs link to them) ---------- */
+    /** Creates the chat, or touches it. A chat never changes application or owner: that is an OwnershipError. */
     upsertChat(c: { id: string; title: string; agent: string; workspace: string; userId: string }, app: string) {
       const t = now();
+      const existing = getChat(c.id);
+      if (existing && existing.applicationId !== app) throw new OwnershipError(`Chat ${c.id} belongs to another application.`);
+      if (existing && existing.createdBy !== c.userId) throw new OwnershipError(`Chat ${c.id} was started by someone else.`);
       const ws = db.prepare('SELECT id FROM workspaces WHERE application_id = ? AND name = ?').get(app, c.workspace) as { id: string } | undefined;
       db.prepare(
         `INSERT INTO chats (id, application_id, workspace_id, title, agent, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -445,31 +503,48 @@ export function openDb(path: string) {
         updatedAt: String(r.updated_at),
       }));
     },
-    getChat(id: string) {
-      const r = db.prepare('SELECT id, application_id, title, agent, created_by FROM chats WHERE id = ?').get(id) as Row | undefined;
-      return r ? { id, applicationId: String(r.application_id), title: String(r.title), agent: String(r.agent), createdBy: String(r.created_by) } : undefined;
-    },
-    addUserMessage(m: { id: string; chatId: string; text: string; testType: string | null; testTypeSource: string | null; userId: string; items: { type: string; ref: string }[] }) {
-      const exists = db.prepare('SELECT 1 FROM messages WHERE id = ?').get(m.id);
-      if (exists) return;
+    getChat,
+    /**
+     * Stores the user's message once (a retry of the same message is not a new turn). A message
+     * already stored in another chat, or stored as an answer, is an OwnershipError. `removedReason`
+     * stores the row without its text, for a message a guard rejected before anything was kept.
+     */
+    addUserMessage(m: { id: string; chatId: string; text: string; testType: string | null; testTypeSource: string | null; userId: string; items: { type: string; ref: string }[]; removedReason?: string | null }) {
+      const exists = db.prepare('SELECT chat_id, role FROM messages WHERE id = ?').get(m.id) as Row | undefined;
+      if (exists) {
+        if (exists.chat_id !== m.chatId || exists.role !== 'user') throw new OwnershipError(`Message ${m.id} is not a message of chat ${m.chatId}.`);
+        return;
+      }
+      if (!getChat(m.chatId)) throw new OwnershipError(`Chat ${m.chatId} does not exist.`);
       const { seq } = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM messages WHERE chat_id = ?').get(m.chatId) as { seq: number };
-      db.prepare('INSERT INTO messages (id, chat_id, seq, role, text, test_type, test_type_source, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      db.prepare('INSERT INTO messages (id, chat_id, seq, role, text, test_type, test_type_source, removed_reason, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
         m.id,
         m.chatId,
         seq,
         'user',
-        m.text,
+        m.removedReason ? '' : m.text,
         m.testType,
         m.testTypeSource,
+        m.removedReason ?? null,
         m.userId,
         now(),
       );
+      if (m.removedReason) return;
       const it = db.prepare('INSERT OR IGNORE INTO message_items (message_id, item_type, item_ref) VALUES (?, ?, ?)');
       for (const i of m.items) it.run(m.id, i.type, i.ref);
     },
     /** A guard removed the message: keep the row, drop the text. */
     removeMessageText(id: string, reason: string) {
       db.prepare("UPDATE messages SET text = '', removed_reason = ? WHERE id = ?").run(reason, id);
+    },
+    /** The chat a message belongs to and its role, for ownership checks before a run. */
+    messageChat(id: string) {
+      const r = db.prepare('SELECT chat_id, role FROM messages WHERE id = ?').get(id) as Row | undefined;
+      return r ? { chatId: String(r.chat_id), role: String(r.role) as 'user' | 'assistant' } : undefined;
+    },
+    /** The revision the next answer to this message will get. saveAnswer allocates it again inside its transaction. */
+    nextRevision(answerId: string) {
+      return (db.prepare('SELECT COALESCE(MAX(revision), 0) + 1 AS n FROM answer_revisions WHERE message_id = ?').get(answerId) as { n: number }).n;
     },
 
     /* ---------- Workflow, agents, steps, guards ---------- */
@@ -763,20 +838,24 @@ export function openDb(path: string) {
       return db.transaction(() => {
         const t = now();
         const uploadId = createHash('sha1').update(`${o.app}|${o.filename}|${t}|${Math.random()}`).digest('hex').slice(0, 16);
-        const find = db.prepare('SELECT id FROM test_cases WHERE application_id = ? AND external_id = ?');
+        const find = db.prepare('SELECT id, kind FROM test_cases WHERE application_id = ? AND external_id = ?');
         const storyExists = db.prepare('SELECT 1 FROM stories WHERE key = ? AND application_id = ?');
         const problems = [...o.problems];
         let created = 0;
         let updated = 0;
         for (const x of tests) {
-          const existing = find.get(o.app, x.externalId) as { id: string } | undefined;
-          const id = existing?.id ?? `MT-${createHash('sha1').update(`${o.app}|${x.externalId}`).digest('hex').slice(0, 10).toUpperCase()}`;
+          const existing = find.get(o.app, x.externalId) as { id: string; kind: string } | undefined;
+          const id = existing?.id ?? manualId(o.app, x.externalId);
           const purpose = x.purpose ?? o.purposeDefault;
           if (existing) {
+            // A proposed UAT case with this id becomes the manual test: the proposal is accepted in place,
+            // keeping its id and links, so it is counted as created rather than updated.
             db.prepare(
-              `UPDATE test_cases SET title = ?, description = ?, test_type = ?, purpose = ?, phase = ?, owner = ?, designer = ?, product_areas = ?, application_modules = ?, user_tags = ?, estimated_minutes = ?, status = 'active', upload_id = ?, updated_at = ? WHERE id = ?`,
-            ).run(x.name, x.description, x.testType, purpose, x.phase, x.owner, x.designer, x.productAreas, x.applicationModules, x.userTags, x.estimatedMinutes, uploadId, t, id);
-            updated++;
+              `UPDATE test_cases SET title = ?, description = ?, test_type = ?, purpose = ?, phase = ?, owner = ?, designer = ?, product_areas = ?, application_modules = ?, user_tags = ?, estimated_minutes = ?, status = 'active', upload_id = ?, updated_at = ?,
+                 origin = CASE WHEN kind = 'proposed' THEN ? ELSE origin END, kind = 'manual' WHERE id = ?`,
+            ).run(x.name, x.description, x.testType, purpose, x.phase, x.owner, x.designer, x.productAreas, x.applicationModules, x.userTags, x.estimatedMinutes, uploadId, t, o.origin, id);
+            if (existing.kind === 'proposed') created++;
+            else updated++;
           } else {
             db.prepare(
               `INSERT INTO test_cases (id, application_id, title, kind, purpose, origin, external_id, description, test_type, phase, owner, designer, product_areas, application_modules, user_tags, estimated_minutes, upload_id, created_by, created_at, updated_at)
@@ -985,14 +1064,15 @@ export function openDb(path: string) {
     /**
      * What Hexa knows about each acceptance criterion of a story: covered when a linked automated
      * test passed in its latest run; failing when the latest run failed; not run when linked tests
-     * (automated without a result, or manual) exist; no test otherwise.
+     * (automated without a result, or manual) exist; no test otherwise. Proposed UAT cases are
+     * drafts, not tests, so they never count as coverage.
      */
     coverageFor(storyKey: string): CriterionCoverage[] {
       const story = getStory(storyKey);
       if (!story) return [];
       const linked = db.prepare(
         `SELECT t.id, t.title, t.kind, t.last_result FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id
-         WHERE l.entity_type = 'criterion' AND l.entity_ref = ? AND t.status = 'active' ORDER BY t.kind, t.title`,
+         WHERE l.entity_type = 'criterion' AND l.entity_ref = ? AND t.status = 'active' AND t.kind != 'proposed' ORDER BY t.kind, t.title`,
       );
       return story.acceptanceCriteria.map((_, i) => {
         const tests = (linked.all(`${storyKey}#AC${i + 1}`) as Row[]).map((r) => ({ id: String(r.id), title: String(r.title), kind: String(r.kind), lastResult: (r.last_result as string) ?? null }));
@@ -1057,40 +1137,57 @@ export function openDb(path: string) {
       }));
     },
 
-    /** UAT cases the UAT analyst proposed for a story's gaps, kept in Hexa as proposed until someone adds them. */
-    upsertProposedCases(storyKey: string, cases: { id: string; title: string; criterion: string }[], userId: string) {
+    /**
+     * UAT cases the UAT analyst proposed for a story's gaps, kept in Hexa as proposed until someone
+     * approves them. The case id (UAT-<story key>-<criterion>) is the Octane unique_id, so the row id
+     * is the same one the accepted manual test gets, and approval converts the row in place. A row
+     * already accepted is never touched by a later proposal.
+     */
+    upsertProposedCases(storyKey: string, cases: { id: string; title: string; criterion: string; steps?: string[] }[], userId: string) {
       const t = now();
       const story = getStory(storyKey);
-      if (!story) return;
-      db.transaction(() => {
+      if (!story) return [];
+      return db.transaction(() => {
         const up = db.prepare(
-          `INSERT INTO test_cases (id, application_id, title, kind, purpose, origin, status, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, 'proposed', 'uat', 'uat_analyst', 'active', ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`,
+          `INSERT INTO test_cases (id, application_id, title, kind, purpose, origin, status, external_id, test_type, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, 'proposed', 'uat', 'uat_analyst', 'active', ?, 'Acceptance', ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET title = excluded.title, status = 'active', updated_at = excluded.updated_at WHERE test_cases.kind = 'proposed'`,
         );
+        const kind = db.prepare('SELECT kind FROM test_cases WHERE id = ?');
         const link = db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)');
+        const st = db.prepare('INSERT INTO test_steps (test_case_id, seq, step_type, description) VALUES (?, ?, ?, ?)');
+        const ids: string[] = [];
         for (const c of cases) {
-          up.run(c.id, story.applicationId, c.title, userId, t, t);
-          link.run(c.id, 'story', storyKey);
-          link.run(c.id, 'criterion', `${storyKey}#${c.criterion}`);
-          for (const comp of story.components) link.run(c.id, 'component', componentId(story.applicationId, comp));
+          const id = manualId(story.applicationId, c.id);
+          up.run(id, story.applicationId, c.title, c.id, userId, t, t);
+          if ((kind.get(id) as { kind: string } | undefined)?.kind !== 'proposed') continue;
+          ids.push(id);
+          link.run(id, 'story', storyKey);
+          link.run(id, 'criterion', `${storyKey}#${c.criterion}`);
+          for (const comp of story.components) link.run(id, 'component', componentId(story.applicationId, comp));
+          if (c.steps?.length) {
+            db.prepare('DELETE FROM test_steps WHERE test_case_id = ?').run(id);
+            c.steps.forEach((s, i) => st.run(id, i + 1, i === c.steps!.length - 1 || /^check\b/i.test(s) ? 'validation' : 'simple', s));
+          }
         }
+        return ids;
       })();
     },
 
     /* ---------- Answers, ratings, approvals ---------- */
 
     /**
-     * Saves the final answer to a user message as a revision, with its citations, artifact and
-     * approvals. Approvals get ids here, and the stored blocks carry them, so the browser and
-     * the database agree on what can be approved.
+     * Saves the final answer to a user message as a new, immutable revision, with its citations,
+     * artifact and approvals. The revision number is allocated here, inside the transaction, so two
+     * runs for the same answer never share one. Each approval freezes the exact payload it was shown
+     * with, and the artifact is stored under this revision. Earlier pending approvals of the same
+     * answer are superseded: only the revision the person can see is actionable.
      */
     saveAnswer(a: {
       app: string;
       chatId: string;
       answerId: string;
       userMessageId: string;
-      revision: number;
       workflowRunId: string | null;
       userId: string;
       status: string;
@@ -1101,11 +1198,17 @@ export function openDb(path: string) {
     }) {
       return db.transaction(() => {
         const t = now();
-        if (!db.prepare('SELECT 1 FROM messages WHERE id = ?').get(a.answerId)) {
+        const chat = getChat(a.chatId);
+        if (!chat) throw new OwnershipError(`Chat ${a.chatId} does not exist.`);
+        if (chat.applicationId !== a.app) throw new OwnershipError(`Chat ${a.chatId} belongs to another application.`);
+        const existing = db.prepare('SELECT chat_id, role FROM messages WHERE id = ?').get(a.answerId) as Row | undefined;
+        if (existing && (existing.chat_id !== a.chatId || existing.role !== 'assistant')) throw new OwnershipError(`Message ${a.answerId} is not an answer in chat ${a.chatId}.`);
+        if (!existing) {
           const { seq } = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM messages WHERE chat_id = ?').get(a.chatId) as { seq: number };
           db.prepare("INSERT INTO messages (id, chat_id, seq, role, text, created_by, created_at) VALUES (?, ?, ?, 'assistant', '', ?, ?)").run(a.answerId, a.chatId, seq, a.userId, t);
         }
-        const revisionId = `${a.answerId}-r${a.revision}`;
+        const { revision } = db.prepare('SELECT COALESCE(MAX(revision), 0) + 1 AS revision FROM answer_revisions WHERE message_id = ?').get(a.answerId) as { revision: number };
+        const revisionId = `${a.answerId}-r${revision}`;
         const approvals: { index: number; id: string }[] = [];
         const blocks = a.blocks.map((b, i) => {
           if (b.kind !== 'approval') return b;
@@ -1113,28 +1216,46 @@ export function openDb(path: string) {
           approvals.push({ index: i, id });
           return { ...b, approval: { ...b.approval, id } };
         });
-        db.prepare(
-          `INSERT INTO answer_revisions (id, message_id, revision, status, intent, blocks, workflow_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET status = excluded.status, intent = excluded.intent, blocks = excluded.blocks, workflow_run_id = excluded.workflow_run_id`,
-        ).run(revisionId, a.answerId, a.revision, a.status, a.intent ? JSON.stringify(a.intent) : null, JSON.stringify(blocks), a.workflowRunId, t);
-        db.prepare('DELETE FROM citations WHERE revision_id = ?').run(revisionId);
+        db.prepare('INSERT INTO answer_revisions (id, message_id, revision, status, intent, blocks, workflow_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+          revisionId,
+          a.answerId,
+          revision,
+          a.status,
+          a.intent ? JSON.stringify(a.intent) : null,
+          JSON.stringify(blocks),
+          a.workflowRunId,
+          t,
+        );
         const cit = db.prepare('INSERT INTO citations (revision_id, n, source_type, source_ref, title, detail) VALUES (?, ?, ?, ?, ?, ?)');
         for (const c of a.citations) cit.run(revisionId, c.n, 'citation', String(c.n), c.title, c.detail);
         if (a.artifact) {
-          db.prepare(
-            `INSERT INTO artifacts (id, chat_id, revision_id, kind, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET revision_id = excluded.revision_id, title = excluded.title, body = excluded.body`,
-          ).run(`${a.chatId}/${a.artifact.id}`, a.chatId, revisionId, a.artifact.kind === 'uat' ? 'uat_report' : 'code', a.artifact.title, JSON.stringify(a.artifact), t);
+          db.prepare('INSERT INTO artifacts (id, chat_id, revision_id, local_id, kind, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+            `${revisionId}/${a.artifact.id}`,
+            a.chatId,
+            revisionId,
+            a.artifact.id,
+            a.artifact.kind === 'uat' ? 'uat_report' : 'code',
+            a.artifact.title,
+            JSON.stringify(a.artifact),
+            t,
+          );
         }
-        const ap = db.prepare("INSERT OR IGNORE INTO approvals (id, revision_id, action, target, facts, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)");
+        db.prepare(
+          `UPDATE approvals SET status = 'expired', superseded_by = ? WHERE status = 'pending'
+             AND revision_id IN (SELECT id FROM answer_revisions WHERE message_id = ? AND id != ?)`,
+        ).run(revisionId, a.answerId, revisionId);
+        const ap = db.prepare("INSERT INTO approvals (id, revision_id, action, target, facts, payload, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)");
         for (const { index, id } of approvals) {
           const b = blocks[index];
           if (b.kind !== 'approval') continue;
           const action = b.approval.action && ['open_pr', 'add_uat_cases', 'gitops_change'].includes(b.approval.action) ? b.approval.action : 'other';
-          ap.run(id, revisionId, action, JSON.stringify({ artifactId: b.approval.artifactId ?? null, storyKey: a.artifact?.kind === 'uat' ? a.artifact.ticketKey : null }), JSON.stringify(b.approval.facts), t);
+          const uat = a.artifact?.kind === 'uat' && b.approval.artifactId === a.artifact.id ? a.artifact : null;
+          const payload: ApprovalPayload = action === 'add_uat_cases' && uat ? { storyKey: uat.ticketKey, artifactId: uat.id, cases: uat.proposedCases } : {};
+          ap.run(id, revisionId, action, JSON.stringify({ artifactId: b.approval.artifactId ?? null, storyKey: uat?.ticketKey ?? null }), JSON.stringify(b.approval.facts), JSON.stringify(payload), t);
         }
+        if (a.workflowRunId) db.prepare('UPDATE workflow_runs SET revision = ? WHERE id = ?').run(revision, a.workflowRunId);
         db.prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(t, a.chatId);
-        return { revisionId, approvals };
+        return { revisionId, revision, approvals };
       })();
     },
 
@@ -1149,7 +1270,10 @@ export function openDb(path: string) {
       const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
       const cits = db.prepare('SELECT n, title, detail FROM citations WHERE revision_id = ? ORDER BY n');
       const rating = db.prepare('SELECT stars FROM ratings WHERE revision_id = ? AND user_id = ?');
-      const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, target FROM approvals WHERE revision_id = ?');
+      const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, outcome FROM approvals WHERE revision_id = ?');
+      const artifactRows = db.prepare('SELECT body FROM artifacts WHERE revision_id = ?');
+      // Artifacts of the revisions shown, keyed by their local id, so the latest revision wins.
+      const artifacts: Record<string, Artifact> = {};
       const messages: Message[] = rows.flatMap((m): Message[] => {
         if (m.role === 'user') {
           const its = items.all(m.id) as { type: string; ref: string }[];
@@ -1171,18 +1295,21 @@ export function openDb(path: string) {
           if (b.kind !== 'approval' || !b.approval.id) return b;
           const row = aps.find((x) => x.id === b.approval.id);
           if (!row) return b;
-          const target = json<{ outcome?: { ok: boolean; text: string } }>(row.target, {});
           return {
             ...b,
             approval: {
               ...b.approval,
-              status: row.status as 'pending' | 'approved' | 'declined',
+              status: row.status as ApprovalStatus,
               decidedAt: (row.decided_at as string) ?? undefined,
               decidedBy: row.decided_by ? getUser(String(row.decided_by))?.name : undefined,
-              outcome: target.outcome,
+              outcome: json<ApprovalOutcome | null>(row.outcome, null) ?? undefined,
             },
           };
         });
+        for (const art of artifactRows.all(r.id) as Row[]) {
+          const body = json<Artifact | null>(art.body, null);
+          if (body) artifacts[body.id] = body;
+        }
         const intent = json<Intent | undefined>(r.intent, undefined);
         return [
           {
@@ -1199,11 +1326,6 @@ export function openDb(path: string) {
           },
         ];
       });
-      const artifacts: Record<string, Artifact> = {};
-      for (const a of db.prepare('SELECT body FROM artifacts WHERE chat_id = ?').all(chatId) as Row[]) {
-        const body = json<Artifact | null>(a.body, null);
-        if (body) artifacts[body.id] = body;
-      }
       return {
         id: chatId,
         applicationId: String(c.application_id),
@@ -1248,35 +1370,31 @@ export function openDb(path: string) {
         .all(app, daysAgo(days), atLeast) as { capability: string; reason: string; count: number }[];
     },
 
-    getApproval(id: string) {
-      const r = db
-        .prepare(
-          `SELECT a.*, m.chat_id, c.application_id FROM approvals a JOIN answer_revisions ar ON ar.id = a.revision_id JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id WHERE a.id = ?`,
-        )
-        .get(id) as Row | undefined;
-      if (!r) return undefined;
-      return {
-        id,
-        revisionId: String(r.revision_id),
-        action: String(r.action),
-        target: json<{ artifactId?: string | null; storyKey?: string | null; outcome?: { ok: boolean; text: string } }>(r.target, {}),
-        status: r.status as 'pending' | 'approved' | 'declined' | 'expired',
-        chatId: String(r.chat_id),
-        app: String(r.application_id),
-        decidedBy: (r.decided_by as string) ?? null,
-        decidedAt: (r.decided_at as string) ?? null,
-      };
+    getApproval,
+    /**
+     * Decides a pending approval. For an approved local action, `execute` runs inside the same
+     * transaction as the status change and the audit row: either all of it is recorded or none of
+     * it is (a failed action leaves the approval pending, with no claim of success), and a second
+     * decision arriving at the same time finds the approval already decided and gets its outcome.
+     */
+    decideApproval(id: string, decision: 'approved' | 'declined', userId: string, execute?: (payload: ApprovalPayload) => ApprovalOutcome) {
+      return db.transaction(() => {
+        const a = getApproval(id);
+        if (!a) return { kind: 'missing' as const, approval: undefined };
+        if (a.status !== 'pending') return { kind: 'already' as const, approval: a };
+        const t = now();
+        const outcome = decision === 'approved' && execute ? execute(a.payload) : null;
+        const info = db
+          .prepare("UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, outcome = ?, executed_at = ? WHERE id = ? AND status = 'pending'")
+          .run(decision, userId, t, outcome ? JSON.stringify(outcome) : null, outcome ? t : null, id);
+        if (!info.changes) return { kind: 'already' as const, approval: getApproval(id)! };
+        audit('user', userId, `approval.${decision}`, 'approval', id, { revisionId: a.revisionId, outcome });
+        return { kind: 'decided' as const, approval: getApproval(id)! };
+      })();
     },
-    decideApproval(id: string, decision: 'approved' | 'declined', userId: string, outcome?: { ok: boolean; text: string }) {
-      const t = now();
-      const info = db
-        .prepare("UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, target = json_set(target, '$.outcome', json(?)) WHERE id = ? AND status = 'pending'")
-        .run(decision, userId, t, JSON.stringify(outcome ?? null), id);
-      if (info.changes) audit('user', userId, `approval.${decision}`, 'approval', id, outcome ?? {});
-      return info.changes > 0 ? { status: decision, decidedAt: t, decidedBy: getUser(userId)?.name ?? userId, outcome } : undefined;
-    },
-    getArtifact(chatId: string, localId: string): Artifact | undefined {
-      const r = db.prepare('SELECT body FROM artifacts WHERE id = ?').get(`${chatId}/${localId}`) as Row | undefined;
+    /** The artifact exactly as a revision stored it. */
+    getArtifact(revisionId: string, localId: string): Artifact | undefined {
+      const r = db.prepare('SELECT body FROM artifacts WHERE id = ?').get(`${revisionId}/${localId}`) as Row | undefined;
       return r ? json<Artifact | undefined>(r.body, undefined) : undefined;
     },
 
