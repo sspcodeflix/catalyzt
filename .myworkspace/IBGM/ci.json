@@ -1,0 +1,20 @@
+{
+  "_notes": [
+    "Local CI targets for Nabih's Portfolio (app/scripts/ci-runner.ts).",
+    "piggymetrics is Spring Boot 2.0.3 (Java 8 era), so it runs on a Maven image with Java 11. Only the service modules with tests are built; their Spring tests start an embedded MongoDB, which downloads a mongod binary on first run.",
+    "juice-shop is scanned through GitHub only (no clone), so it has no local CI target."
+  ],
+  "piggymetrics": {
+    "targets": [
+      {
+        "name": "maven",
+        "kind": "maven",
+        "path": ".",
+        "image": "maven:3-eclipse-temurin-11",
+        "timeoutMinutes": 30,
+        "run": "(mvn -B -ntp -fae test -pl account-service,auth-service,statistics-service,notification-service,gateway -am 2>&1 | tee /out/mvn.log; echo \"mvn exit $?\") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;",
+        "note": "account, auth, statistics, notification and gateway modules"
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "_notes": [
+    "Local CI targets for Jacques's Portfolio (app/scripts/ci-runner.ts).",
+    "petclinic (spring-petclinic-microservices, Java 17) runs every module's tests with Maven.",
+    "ghostfolio is an Nx monorepo with about 1.5 GB of dependencies; its target is marked heavy and runs only with --heavy or --target api-jest, for the api project."
+  ],
+  "petclinic": {
+    "targets": [{ "name": "maven", "kind": "maven", "path": ".", "timeoutMinutes": 30, "note": "all eight modules; surefire reports collected" }]
+  },
+  "ghostfolio": {
+    "targets": [
+      {
+        "name": "api-jest",
+        "kind": "node-jest",
+        "path": ".",
+        "heavy": true,
+        "timeoutMinutes": 45,
+        "run": "(npm ci --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_OUTPUT_NAME=jest.xml npx nx run api:test --ci --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo \"nx exit $?\")",
+        "note": "Nx: the api project only"
+      }
+    ]
+  }
+}

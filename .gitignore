@@ -11,3 +11,4 @@ app/data/
 .myworkspace/*/repos/
 .myworkspace/*/results/
 server-dist/
+.myworkspace/.ci-cache/

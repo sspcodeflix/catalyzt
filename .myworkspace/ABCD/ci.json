@@ -1,0 +1,25 @@
+{
+  "_notes": [
+    "Local CI targets for Ram's Portfolio (app/scripts/ci-runner.ts). Each target runs in Docker and posts JUnit results to Hexa.",
+    "microservices-demo: only productcatalogservice and shippingservice carry Go tests; the Node and Python services have none, adservice is Gradle and cartservice is .NET (not run here)."
+  ],
+  "ach": {
+    "targets": [
+      {
+        "name": "go",
+        "kind": "go",
+        "path": ".",
+        "image": "golang:1.26-bookworm",
+        "timeoutMinutes": 30,
+        "env": { "GOTOOLCHAIN": "auto" },
+        "note": "moov-io/ach: go test over the whole module (go.mod asks for Go 1.26)"
+      }
+    ]
+  },
+  "microservices-demo": {
+    "targets": [
+      { "name": "productcatalogservice", "kind": "go", "path": "src/productcatalogservice", "env": { "GOTOOLCHAIN": "auto" } },
+      { "name": "shippingservice", "kind": "go", "path": "src/shippingservice", "env": { "GOTOOLCHAIN": "auto" } }
+    ]
+  }
+}
