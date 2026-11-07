@@ -1,0 +1,309 @@
+[
+  {
+    "key": "IBGM-1001",
+    "summary": "Register a new account through POST /accounts/ and create the matching auth-service user",
+    "description": "AccountController.createNewAccount validates the User payload (username 3-20 characters, password 6-40) and AccountServiceImpl.create calls auth-service through AuthServiceClient before storing an Account with a default Saving. The gateway sign-up form in login.js posts to accounts/ and expects HTTP 400 when the name is already taken.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["account-service", "auth-service"],
+    "acceptanceCriteria": [
+      "POST /accounts/ with {\"username\":\"<new name>\",\"password\":\"<6+ characters>\"} returns HTTP 200 and a body whose name equals the username and whose saving is amount 0, currency USD, interest 0, deposit false, capitalization false.",
+      "Right after registration, POST /uaa/oauth/token (client browser, grant_type=password, scope=ui) with the same username and password returns an access_token.",
+      "Posting the same username a second time returns HTTP 400 and the sign-up form shows \"Sorry, account with the same name already exists.\"",
+      "A username shorter than 3 characters or a password shorter than 6 characters returns HTTP 400 and no document is created in the accounts collection of account-mongodb."
+    ],
+    "requirements": ["FR-0101"],
+    "assignee": "u-sayeer",
+    "purpose": "uat",
+    "updatedDaysAgo": 2
+  },
+  {
+    "key": "IBGM-1002",
+    "summary": "Save the current account with PUT /accounts/current and push a daily datapoint to statistics-service",
+    "description": "AccountServiceImpl.saveChanges replaces incomes, expenses, saving and note on the stored Account, refreshes lastSeen and calls StatisticsServiceClient.updateStatistics. Bean validation on Account, Item and Saving rejects incomplete payloads with HTTP 400 through ErrorHandler.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["account-service", "statistics-service"],
+    "acceptanceCriteria": [
+      "PUT /accounts/current with a Bearer token and a valid body (incomes, expenses, saving, note) returns HTTP 200, and a following GET /accounts/current returns the same incomes, expenses, saving and note.",
+      "After the save, lastSeen in GET /accounts/current is within one minute of the time of the save.",
+      "A body without saving, or with an item whose title is empty or longer than 20 characters, returns HTTP 400 and GET /accounts/current still shows the previous data.",
+      "Within one minute of the save, GET /statistics/current returns a datapoint with today's date containing one metric per saved income and expense title."
+    ],
+    "requirements": ["FR-0102", "FR-0103"],
+    "assignee": "u-sayeer",
+    "purpose": "uat",
+    "updatedDaysAgo": 5
+  },
+  {
+    "key": "IBGM-1003",
+    "summary": "StatisticsServiceClientFallback keeps PUT /accounts/current working when statistics-service is down",
+    "description": "Commit a8bf0f6 added feign.hystrix.enabled=true to shared/account-service.yml and a Hystrix fallback for StatisticsServiceClient that only logs the failure; commit 469455d added StatisticsServiceClientFallbackTest. Regression scope: an outage of statistics-service must not fail account saves.",
+    "type": "Task",
+    "status": "Done",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["account-service"],
+    "acceptanceCriteria": [
+      "With the statistics-service container stopped, PUT /accounts/current with a valid body returns HTTP 200 and the changes are visible in GET /accounts/current.",
+      "The account-service log contains \"Error during update statistics for account: <name>\" for that save and no stack trace is returned to the client.",
+      "After statistics-service is started again, the next PUT /accounts/current produces a datapoint in GET /statistics/current.",
+      "mvn test in account-service passes StatisticsServiceClientFallbackTest."
+    ],
+    "requirements": ["NFR-0301"],
+    "assignee": "u-sayeer",
+    "purpose": "regression",
+    "updatedDaysAgo": 21
+  },
+  {
+    "key": "IBGM-1004",
+    "summary": "Issue OAuth2 tokens for the browser client with the password grant and expose the principal on /uaa/users/current",
+    "description": "OAuth2AuthorizationConfig registers the in-memory client browser (grant password, scope ui) and three service clients with client_credentials and scope server; MongoUserDetailsService loads users from the users collection in auth-mongodb. Resource services call /uaa/users/current through CustomUserInfoTokenServices to resolve the caller and its scope.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["auth-service", "account-service"],
+    "acceptanceCriteria": [
+      "POST /uaa/oauth/token with header Authorization: Basic YnJvd3Nlcjo= and form fields grant_type=password, scope=ui, username and password of an existing user returns HTTP 200 with access_token, token_type \"bearer\" and scope \"ui\".",
+      "The same request with a wrong password returns HTTP 400 with error \"invalid_grant\" and no token.",
+      "GET /uaa/users/current with a valid Bearer token returns HTTP 200 and a JSON body whose name is the username; without a token it returns HTTP 401.",
+      "GET /accounts/{otherUser} with a ui-scope token returns HTTP 403, while GET /accounts/demo returns HTTP 200 without any token."
+    ],
+    "requirements": ["FR-0201"],
+    "assignee": "u-sayeer",
+    "purpose": "uat",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "IBGM-1005",
+    "summary": "POST /uaa/users for an existing username returns HTTP 500 instead of 400",
+    "description": "UserServiceImpl.create throws IllegalArgumentException(\"user already exists\") but auth-service has no @ControllerAdvice, so UserController answers with HTTP 500. When a user exists in auth-mongodb but not in account-mongodb, the Feign call from AccountServiceImpl.create fails and the sign-up form shows the generic \"An error during account creation\" message instead of the duplicate-name message.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["auth-service", "account-service"],
+    "acceptanceCriteria": [
+      "POST /uaa/users with a server-scope token for a username that already exists in the users collection returns HTTP 400 with a JSON error message, and no HTTP 500 appears in the auth-service log.",
+      "POST /uaa/users with a ui-scope token returns HTTP 403 and no user is created.",
+      "With a user present only in auth-mongodb, registering the same name through the gateway sign-up form shows \"Sorry, account with the same name already exists.\"",
+      "POST /uaa/users with a new valid user still returns HTTP 200 and the stored password in the users collection is a BCrypt hash, not the plain text."
+    ],
+    "requirements": ["FR-0101"],
+    "assignee": "u-sayeer",
+    "purpose": "uat",
+    "updatedDaysAgo": 0
+  },
+  {
+    "key": "IBGM-1006",
+    "summary": "Config server requires HTTP Basic with CONFIG_SERVICE_PASSWORD and keeps /actuator/health open for the Docker healthcheck",
+    "description": "config's SecurityConfig permits /actuator/** and requires basic auth for everything else, with the password taken from CONFIG_SERVICE_PASSWORD in application.yml; every service bootstrap.yml sends user/CONFIG_SERVICE_PASSWORD with fail-fast true. docker-compose.yml starts registry, gateway and the services only after config is reported healthy by the HEALTHCHECK on /actuator/health.",
+    "type": "Task",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["config"],
+    "acceptanceCriteria": [
+      "GET http://localhost:8888/actuator/health with no credentials returns HTTP 200 and {\"status\":\"UP\"}.",
+      "GET http://localhost:8888/notification-service/default with no credentials returns HTTP 401.",
+      "The same request with basic auth user / CONFIG_SERVICE_PASSWORD returns HTTP 200 and the JSON contains the remind.cron and backup.cron properties from shared/notification-service.yml.",
+      "Starting account-service with a wrong CONFIG_SERVICE_PASSWORD in its environment makes the container exit at startup (fail-fast) instead of running with default configuration."
+    ],
+    "requirements": ["NFR-0302"],
+    "assignee": "u-sayeer",
+    "purpose": "regression",
+    "updatedDaysAgo": 9
+  },
+  {
+    "key": "IBGM-1007",
+    "summary": "Eureka registry on :8761 lists every service by IP address and the gateway resolves its routes through it",
+    "description": "RegistryApplication runs @EnableEurekaServer with registerWithEureka and fetchRegistry false and waitTimeInMsWhenSyncEmpty 0; shared/application.yml points all clients to http://registry:8761/eureka/ with prefer-ip-address true. The gateway's /accounts, /statistics and /notifications routes use serviceId lookups, so a missing registration breaks routing.",
+    "type": "Task",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["registry", "gateway"],
+    "acceptanceCriteria": [
+      "http://localhost:8761 shows GATEWAY, AUTH-SERVICE, ACCOUNT-SERVICE, STATISTICS-SERVICE and NOTIFICATION-SERVICE with status UP within two minutes of docker-compose up.",
+      "Each instance link on the dashboard uses an IP address, not the container hostname.",
+      "GET http://localhost:8761/eureka/apps returns the same application names, and REGISTRY itself is not among them.",
+      "After docker-compose stop account-service, GET http://localhost/accounts/demo through the gateway returns an HTTP 5xx within 20 seconds; after docker-compose start account-service it returns HTTP 200 again once the dashboard shows the instance UP."
+    ],
+    "requirements": ["NFR-0303"],
+    "assignee": "u-sayeer",
+    "purpose": "regression",
+    "updatedDaysAgo": 13
+  },
+  {
+    "key": "IBGM-1008",
+    "summary": "PUT /statistics/{account} normalises every item to USD per day and overwrites the datapoint for the same day",
+    "description": "StatisticsServiceImpl.save converts each Item through ExchangeRatesService.convert and divides by TimePeriod.baseRatio (MONTH 30.4368, YEAR 365.2425, DAY 1), sums INCOMES_AMOUNT, EXPENSES_AMOUNT and SAVING_AMOUNT and stores the day's rates. The compound DataPointId(account, date) means a second save on the same day replaces the earlier datapoint.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["statistics-service"],
+    "acceptanceCriteria": [
+      "With rates.url pointed at a stub returning EUR 0.8 and RUB 80 per USD, saving an account with Salary 9100 USD per MONTH, Grocery 500 RUB per DAY and Vacation 3400 EUR per YEAR produces income metric Salary 298.9802 and expense metrics Grocery 6.25 and Vacation 11.6361 in GET /statistics/{account}.",
+      "The same datapoint has statistics INCOMES_AMOUNT 298.9802, EXPENSES_AMOUNT 17.8861 and SAVING_AMOUNT 1250 for a 1000 EUR saving.",
+      "Two PUT /statistics/{account} calls on the same day leave exactly one datapoint for that date, holding the values of the second call.",
+      "PUT /statistics/{account} with a ui-scope token returns HTTP 403, and GET /statistics/demo returns HTTP 200 without a token."
+    ],
+    "requirements": ["FR-0103"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 4
+  },
+  {
+    "key": "IBGM-1009",
+    "summary": "Statistics save fails with NullPointerException when exchangeratesapi.io is unreachable because ExchangeRatesClientFallback returns empty rates",
+    "description": "ExchangeRatesClientFallback returns an ExchangeRatesContainer with an empty rates map, and ExchangeRatesServiceImpl.getCurrentRates then builds ImmutableMap.of(EUR, null, ...), which throws. With rates.url still set to https://api.exchangeratesapi.io (the provider now requires an API key), every PUT /statistics/{account} answers HTTP 500 and account-service only logs the Hystrix fallback, so no datapoints are ever written.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["statistics-service", "account-service"],
+    "acceptanceCriteria": [
+      "With rates.url pointing at an unreachable host, PUT /statistics/{account} with a valid body returns HTTP 200 and the datapoint is stored with the last known rates or with USD-only values, not HTTP 500.",
+      "The statistics-service log shows a warning that the exchange rates provider is unavailable and no NullPointerException stack trace.",
+      "When the provider is reachable again, the next save stores the fresh rates and the log line \"exchange rates has been updated\" appears.",
+      "Saving from the gateway dashboard during the outage still shows the save animation and GET /statistics/current returns today's datapoint."
+    ],
+    "requirements": ["FR-0103", "NFR-0301"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 3
+  },
+  {
+    "key": "IBGM-1010",
+    "summary": "ExchangeRatesClient follows the exchangeratesapi.io /latest?base= contract and caches the day's rates in memory",
+    "description": "Commit 5c2880d (#34) dropped the symbols parameter from ExchangeRatesClient and moved rates.url to https://api.exchangeratesapi.io; commit 836a97f adjusted ExchangeRatesClientTest after the provider changed its payload. ExchangeRatesServiceImpl keeps the container until the date changes, so the provider is called at most once per day per instance.",
+    "type": "Task",
+    "status": "Done",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["statistics-service"],
+    "acceptanceCriteria": [
+      "mvn test in statistics-service passes ExchangeRatesServiceImplTest, including shouldNotRequestRatesWhenTodaysContainerAlreadyExists and shouldConvertCurrency (100 RUB at 80 per USD converts to 1.25 USD).",
+      "With rates.url pointed at a stub, the stub receives exactly one GET /latest?base=USD for any number of PUT /statistics/{account} calls on the same day.",
+      "The log line \"exchange rates has been updated\" appears once at the first save of the day and again only after midnight.",
+      "Datapoints saved that day contain a rates map with USD 1 and the EUR and RUB values returned by the stub."
+    ],
+    "requirements": ["FR-0103"],
+    "assignee": "u-karim",
+    "purpose": "regression",
+    "updatedDaysAgo": 27
+  },
+  {
+    "key": "IBGM-1011",
+    "summary": "Save and read notification settings for the current user through /notifications/recipients/current",
+    "description": "RecipientController stores a Recipient keyed by the principal's account name with a validated e-mail and a map of BACKUP and REMIND NotificationSettings; RecipientServiceImpl sets lastNotified to now when it is missing. The sign-up flow in login.js submits the e-mail with REMIND active and frequency MONTHLY.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["notification-service"],
+    "acceptanceCriteria": [
+      "PUT /notifications/recipients/current with a Bearer token and {\"email\":\"<valid>\",\"scheduledNotifications\":{\"REMIND\":{\"active\":true,\"frequency\":\"MONTHLY\"}}} returns HTTP 200 with accountName equal to the token's user and a REMIND.lastNotified within one minute of now.",
+      "GET /notifications/recipients/current with the same token returns the saved email, active flag and frequency.",
+      "A PUT with email \"not-an-email\", or with a settings entry missing active or frequency, returns HTTP 400 and the previous settings are unchanged.",
+      "In notification-mongodb the recipient document stores REMIND.frequency as the number 30, and reading it back through the API shows \"MONTHLY\".",
+      "Entering the e-mail on the sign-up screen and pressing Enter stores the same settings and moves on to the greeting page."
+    ],
+    "requirements": ["FR-0401"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 7
+  },
+  {
+    "key": "IBGM-1012",
+    "summary": "Send scheduled backup and reminder e-mails from backup.cron and remind.cron to recipients whose frequency has elapsed",
+    "description": "NotificationServiceImpl runs sendBackupNotifications and sendRemindNotifications on the cron expressions from shared/notification-service.yml, selects recipients with RecipientRepository.findReadyForBackup and findReadyForRemind, fetches the account JSON through AccountServiceClient (client_credentials) and sends it with EmailServiceImpl as backup.json. EmailServiceImpl is @RefreshScope, so subject and text can be changed through the config server and POST /notifications/refresh.",
+    "type": "Story",
+    "status": "In Progress",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["notification-service", "account-service"],
+    "acceptanceCriteria": [
+      "With spring.mail pointed at a test SMTP inbox and backup.cron set to run every minute, a recipient with BACKUP active, frequency WEEKLY and lastNotified 8 days ago receives an e-mail with subject \"PiggyMetrics account backup\" and an attachment named backup.json whose content equals GET /accounts/{account}.",
+      "A recipient with REMIND active, frequency WEEKLY and lastNotified yesterday receives nothing, and one with REMIND inactive and lastNotified 30 days ago receives nothing.",
+      "After a successful send, GET /notifications/recipients/current for that user shows lastNotified updated to the send time.",
+      "When the account-service call fails for one recipient, the other recipients in the same run still receive their e-mails and the failing one keeps its old lastNotified.",
+      "Changing remind.email.subject in shared/notification-service.yml and calling POST /notifications/refresh with a Bearer token makes the next reminder use the new subject without restarting the service."
+    ],
+    "requirements": ["FR-0402"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 6
+  },
+  {
+    "key": "IBGM-1013",
+    "summary": "Zuul gateway on :80 serves the UI and routes /uaa, /accounts, /statistics and /notifications with the Authorization header kept",
+    "description": "shared/gateway.yml maps /uaa/** to http://auth-service:5000 by URL and the other three prefixes by serviceId with stripPrefix false and empty sensitiveHeaders, sets zuul.ignoredServices to '*' and 20 second Ribbon, Hystrix and Zuul timeouts. docker-compose.yml publishes the gateway's port 4000 as 80.",
+    "type": "Task",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["gateway"],
+    "acceptanceCriteria": [
+      "GET http://localhost/ returns the PiggyMetrics index.html and the login form loads with its CSS and images, with no 404 in the browser console.",
+      "POST http://localhost/uaa/oauth/token with the browser client credentials returns the same token response as calling auth-service directly on port 5000.",
+      "GET http://localhost/accounts/current, /statistics/current and /notifications/recipients/current with a Bearer token return HTTP 200; without the header they return HTTP 401, proving the header is forwarded.",
+      "GET http://localhost/registry/ and http://localhost/monitoring/ return HTTP 404 because unlisted services are ignored.",
+      "A backend response slower than 20 seconds results in an HTTP 5xx error from the gateway within about 20 seconds rather than an open connection."
+    ],
+    "requirements": ["FR-0501"],
+    "assignee": "u-karim",
+    "purpose": "regression",
+    "updatedDaysAgo": 11
+  },
+  {
+    "key": "IBGM-1014",
+    "summary": "Dashboard shows 0 for USD and EUR items because launch.js loads rates from exchangeratesapi.io without an API key",
+    "description": "launch.js initialises global.usd and global.eur to 0 and fills them from a browser-side $.getJSON to https://api.exchangeratesapi.io/latest?base=RUB&symbols=EUR,USD with no error handler; the provider now rejects keyless calls, so dashboard.js getConverted multiplies every USD and EUR amount by 0. Incomes, expenses and the savings circle show zero or NaN while RUB items are still correct.",
+    "type": "Bug",
+    "status": "To Do",
+    "fixVersion": "spring.version.2.1.0",
+    "components": ["gateway"],
+    "acceptanceCriteria": [
+      "Opening the demo account (Rent 1300 USD per MONTH, Vacation 3500 EUR per YEAR) shows non-zero monthly values for both items on the dashboard and the totals are consistent with the account.",
+      "When the rates provider is unreachable from the browser, the dashboard still renders using the rates stored in the latest datapoint from GET /statistics/current, and the page makes no request to exchangeratesapi.io.",
+      "Switching the savings currency between RUB, USD and EUR on the settings page recomputes the savings amount to a non-zero, non-NaN value.",
+      "The browser console shows no failed cross-origin request to exchangeratesapi.io after the page loads."
+    ],
+    "requirements": ["FR-0502"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 16
+  },
+  {
+    "key": "IBGM-1015",
+    "summary": "Customer login on the Juice Shop portal issues a token and rejects wrong credentials",
+    "description": "The login page at /#/login posts e-mail and password to /rest/user/login and keeps the returned JWT for the session; a wrong password must not reveal whether the e-mail exists. Written from the publicly documented Juice Shop behaviour; the repository is scan-only and was not checked against a clone.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "spring.version.2.0.4",
+    "components": ["customer-portal"],
+    "acceptanceCriteria": [
+      "Logging in at /#/login with a registered e-mail and the correct password returns HTTP 200 from POST /rest/user/login with an authentication.token, and the header shows the account menu instead of the Login button.",
+      "A wrong password returns HTTP 401 and the page shows \"Invalid email or password.\" with no indication of which field was wrong.",
+      "With an empty e-mail or password the Log in button stays disabled and no request is sent.",
+      "After clicking Logout, GET /rest/user/whoami returns an empty user object and the header shows the Login button again."
+    ],
+    "requirements": ["FR-0601"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 8
+  },
+  {
+    "key": "IBGM-1016",
+    "summary": "Shopping basket on the Juice Shop portal adds, re-counts and removes products with a correct total",
+    "description": "From the product grid a logged-in customer adds items to the basket through POST /api/BasketItems; /#/basket lists them from GET /rest/basket/{bid} with quantity controls and a running total. Written from the publicly documented Juice Shop behaviour; the repository is scan-only and was not checked against a clone.",
+    "type": "Story",
+    "status": "To Do",
+    "fixVersion": "spring.version.2.1.0",
+    "components": ["customer-portal"],
+    "acceptanceCriteria": [
+      "Clicking \"Add to Basket\" on a product shows the confirmation snackbar and the basket badge in the header increases by one.",
+      "Adding the same product again increases that line's quantity instead of creating a second line.",
+      "On /#/basket, increasing a quantity updates the line price and the total equals the sum of quantity times unit price over all lines.",
+      "Removing a line with the trash icon deletes it, and after the last line is removed the page shows an empty basket and the Checkout button is disabled."
+    ],
+    "requirements": ["FR-0602"],
+    "assignee": "u-karim",
+    "purpose": "uat",
+    "updatedDaysAgo": 24
+  }
+]
