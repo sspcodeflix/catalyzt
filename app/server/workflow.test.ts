@@ -260,7 +260,7 @@ describe('Hexa facts in answers (S03)', () => {
     expect(stream).toContain('Target build for acme/shop: PR #41');
     const cites = (events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>).citations;
     expect(cites).toEqual([{ n: 1, title: 'Hexa · checkoutservice', detail: 'checkoutservice · tests and latest results', href: '/hexa?tab=automated&q=checkoutservice' }]);
-    expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.map((s) => s.label)).toEqual(['Reading App Context', 'Reading Hexa', 'Writing the answer']);
+    expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.map((s) => s.label)).toEqual(['Reading App Context', 'Reading Hexa', 'Wrote the answer']);
   });
 
   it('a story named in a regression question gets its readiness per criterion', async () => {
