@@ -42,6 +42,10 @@ export interface RunRequest {
   syncedTickets: Ticket[];
   /** The application's component names, read by the server; attaching one means regression. */
   knownComponents?: string[];
+  /** Ids of uploaded files the browser attached to this message. */
+  attachmentIds?: string[];
+  /** The same files, resolved by the server: their text when readable, otherwise why not. */
+  attachments?: { id: string; filename: string; text: string | null; note: string | null }[];
 }
 
 export type AgentKind = 'orchestrator' | 'guard' | 'router' | 'specialist' | 'tool_agent' | 'refiner';
@@ -81,6 +85,8 @@ export type WorkflowEvent =
   | { type: 'answer'; blocks: Block[]; citations: Citation[]; artifact?: Artifact; uatTicket?: string }
   /** Streamed answer text, already checked by the output guard. */
   | { type: 'text'; text: string }
+  /** The sources a streamed answer may cite as [n], sent before the text starts. */
+  | { type: 'citations'; citations: Citation[] }
   | { type: 'done'; summary: string; tokens: number }
   | { type: 'error'; message: string }
   /** The server committed the answer as a revision (numbered by the server); approvals now have ids. */

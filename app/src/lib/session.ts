@@ -75,6 +75,12 @@ let state: SessionState = { ...readSaved(), me: null, loaded: false, error: null
  */
 let epoch = 0;
 export const sessionEpoch = () => epoch;
+/** Thrown by stores when a response arrives for a person or application that is no longer selected. */
+export class StaleScopeError extends Error {
+  constructor() {
+    super('The application changed while this request was running.');
+  }
+}
 /** "<user>/<application>": the key everything cached in the browser belongs to. */
 export const scopeKey = () => `${state.userId ?? ''}/${state.appId ?? ''}`;
 const listeners = new Set<() => void>();

@@ -1,11 +1,12 @@
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
+import { uploadAttachment } from '../lib/attachments';
 import { agentLabel, capabilities, scopeLabel } from '../lib/data';
 import { useSession } from '../lib/session';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 import { useTickets } from '../lib/ticketStore';
-import type { Agent, Scope, TestType } from '../lib/types';
+import type { Agent, AttachmentRef, Scope, TestType } from '../lib/types';
 import { Icon } from './Icon';
 
 export interface ComposerSubmit {
@@ -17,7 +18,20 @@ export interface ComposerSubmit {
   testTypeSource: 'user' | 'rules' | null;
   tickets: string[];
   components: string[];
+  /** Files the server has stored for this message. */
+  attachments?: AttachmentRef[];
 }
+
+/** A file in the composer: uploading, stored on the server (readable or not), or refused. */
+interface AttachedFile {
+  key: string;
+  name: string;
+  state: 'uploading' | 'ready' | 'stored' | 'failed';
+  id?: string;
+  note?: string | null;
+}
+
+const FILE_STATE: Record<AttachedFile['state'], string> = { uploading: 'uploading…', ready: '', stored: 'kept, not readable', failed: 'not attached' };
 
 interface ComposerProps {
   placeholder?: string;
@@ -63,7 +77,7 @@ export function Composer({
   const [tickets, setTickets] = useState<string[]>([]);
   const [comps, setComps] = useState<string[]>([]);
   const [override, setOverride] = useState<TestType | null>(null);
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<AttachedFile[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const synced = useTickets();
 
@@ -72,7 +86,21 @@ export function Composer({
   const needsChoice = detection.ambiguous && !override;
   const showType = testType !== null || detection.ambiguous;
 
-  const canSend = text.trim().length > 0 && !needsChoice && !busy && !!app;
+  const uploading = files.some((f) => f.state === 'uploading');
+  const canSend = text.trim().length > 0 && !needsChoice && !busy && !!app && !uploading;
+
+  // Each file goes to the server as soon as it is chosen; its chip shows what the server said.
+  const attach = (picked: File[]) => {
+    const added = picked.map((f): AttachedFile => ({ key: `${f.name}-${f.size}-${crypto.randomUUID().slice(0, 8)}`, name: f.name, state: 'uploading' }));
+    setFiles((cur) => [...cur, ...added]);
+    picked.forEach((f, i) => {
+      const key = added[i].key;
+      uploadAttachment(f).then(
+        (a) => setFiles((cur) => cur.map((x) => (x.key === key ? { ...x, state: a.status === 'ready' ? 'ready' : 'stored', id: a.id, note: a.note } : x))),
+        (e: Error) => setFiles((cur) => cur.map((x) => (x.key === key ? { ...x, state: 'failed', note: e.message } : x))),
+      );
+    });
+  };
 
   const reset = () => {
     setText('');
@@ -93,6 +121,8 @@ export function Composer({
       testTypeSource: override ? 'user' : testType ? 'rules' : null,
       tickets: detection.tickets,
       components: comps,
+      // Only files the server holds go with the message; a refused upload is never sent.
+      attachments: files.filter((f): f is AttachedFile & { id: string } => !!f.id && f.state !== 'failed').map((f) => ({ id: f.id, filename: f.name, status: f.state === 'ready' ? 'ready' : 'stored' })),
     });
     reset();
   };
@@ -104,9 +134,17 @@ export function Composer({
 
   const add = (list: string[], set: (v: string[]) => void, v: string) => !list.includes(v) && set([...list, v]);
   const chips = [
-    ...tickets.map((k) => ({ key: `t-${k}`, icon: 'doc' as const, label: k, remove: () => setTickets(tickets.filter((x) => x !== k)) })),
-    ...comps.map((c) => ({ key: `c-${c}`, icon: 'codeic' as const, label: c, remove: () => setComps(comps.filter((x) => x !== c)) })),
-    ...files.map((f) => ({ key: `f-${f}`, icon: 'clip' as const, label: f, remove: () => setFiles(files.filter((x) => x !== f)) })),
+    ...tickets.map((k) => ({ key: `t-${k}`, icon: 'doc' as const, label: k, state: '', title: undefined as string | undefined, cls: '', remove: () => setTickets(tickets.filter((x) => x !== k)) })),
+    ...comps.map((c) => ({ key: `c-${c}`, icon: 'codeic' as const, label: c, state: '', title: undefined as string | undefined, cls: '', remove: () => setComps(comps.filter((x) => x !== c)) })),
+    ...files.map((f) => ({
+      key: `f-${f.key}`,
+      icon: 'clip' as const,
+      label: f.name,
+      state: FILE_STATE[f.state],
+      title: f.note ?? undefined,
+      cls: f.state === 'ready' ? '' : ` ${f.state}`,
+      remove: () => setFiles(files.filter((x) => x.key !== f.key)),
+    })),
   ];
 
   return (
@@ -114,9 +152,10 @@ export function Composer({
       {chips.length > 0 && (
         <div className="items">
           {chips.map((c) => (
-            <span key={c.key} className="itemchip">
+            <span key={c.key} className={`itemchip${c.cls}`} title={c.title} aria-busy={c.state === 'uploading…' || undefined}>
               <Icon name={c.icon} small />
               {c.label}
+              {c.state && <em className="muted"> · {c.state}</em>}
               <button type="button" className="chipx" aria-label={`Remove ${c.label}`} onClick={c.remove}>
                 <Icon name="close" small />
               </button>
@@ -233,8 +272,7 @@ export function Composer({
           multiple
           hidden
           onChange={(e) => {
-            const names = [...(e.target.files ?? [])].map((f) => f.name);
-            setFiles([...new Set([...files, ...names])]);
+            attach([...(e.target.files ?? [])]);
             e.target.value = '';
           }}
         />
@@ -270,7 +308,7 @@ export function Composer({
           <button
             type="submit"
             className="send"
-            aria-label={needsChoice ? 'Send (choose UAT or regression first)' : 'Send'}
+            aria-label={needsChoice ? 'Send (choose UAT or regression first)' : uploading ? 'Send (waiting for files to upload)' : 'Send'}
             disabled={!canSend}
           >
             <Icon name="send" />

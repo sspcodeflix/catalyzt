@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import { createApi, ingestTokensFromEnv } from './server/api';
 import { bootstrap, type Boot } from './server/bootstrap';
 import { configFromEnv } from './server/deepseek';
+import { LocalBlobStore } from './server/storage';
 
 /**
  * Serves /api from the Vite dev and preview servers. Env vars without the VITE_ prefix (like
@@ -24,6 +25,7 @@ function horizonApi(env: Record<string, string>): Plugin {
     githubToken: env.GITHUB_TOKEN?.trim() || undefined,
     ingestToken: env.HEXA_INGEST_TOKEN?.trim() || undefined,
     ingestTokens: ingestTokensFromEnv(env),
+    files: new LocalBlobStore(env.HORIZON_FILES_DIR?.trim() || 'data/attachments'),
     getWorkspace: () => getBoot().workspace,
   });
   return {

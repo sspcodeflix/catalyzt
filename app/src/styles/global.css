@@ -483,3 +483,7 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
 .emptystate span { color: var(--hz-text-secondary); font-size: 13.5px; }
 .emptystate .btn { margin-top: 8px; }
 .approve .fact dd.multi { white-space: pre-line; }
+.itemchip em { font-style: normal; font-weight: 400; }
+.itemchip.uploading { opacity: .7; }
+.itemchip.stored { border: 1px dashed var(--hz-border-strong); background: transparent; }
+.itemchip.failed { background: var(--hz-crit-tint); color: var(--hz-crit-text); }

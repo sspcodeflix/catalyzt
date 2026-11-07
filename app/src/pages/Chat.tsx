@@ -55,7 +55,7 @@ function ChatView({ chatId }: { chatId: string }) {
           {chat?.messages.map((m) =>
             m.role === 'user' ? (
               <Fragment key={m.id}>
-                {Boolean(m.testType || m.tickets?.length || m.components?.length) && (
+                {Boolean(m.testType || m.tickets?.length || m.components?.length || m.attachments?.length) && (
                   <div className="msgtags" aria-label="How Horizon read this request">
                     {m.testType && <span className="pill info">{testTypeLabel(m.testType)}</span>}
                     {m.tickets?.map((t) => (
@@ -66,6 +66,13 @@ function ChatView({ chatId }: { chatId: string }) {
                     {m.components?.map((c) => (
                       <span key={c} className="pill mono">
                         {c}
+                      </span>
+                    ))}
+                    {m.attachments?.map((a) => (
+                      <span key={a.id} className="pill" title={a.status === 'stored' ? 'Kept, but Horizon could not read this file' : undefined}>
+                        <Icon name="clip" small />
+                        {a.filename}
+                        {a.status === 'stored' ? ' · not readable' : ''}
                       </span>
                     ))}
                   </div>

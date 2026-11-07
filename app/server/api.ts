@@ -39,7 +39,9 @@ import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from '../src/li
 import { CAPABILITIES } from '../src/lib/intent';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
+import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
 import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type Role, type StoredStory } from './db';
+import { LocalBlobStore, type BlobStore } from './storage';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
 import { ScanError, startRepoScan } from './hexa';
@@ -108,6 +110,7 @@ function parseRunRequest(b: unknown): Omit<RunRequest, 'syncedTickets'> {
     chatTitle: isStr(r.chatTitle) ? r.chatTitle.slice(0, 200) : undefined,
     messageId: id(r.messageId),
     answerId: id(r.answerId),
+    attachmentIds: strArr(r.attachmentIds).map(id).filter((x): x is string => !!x),
     revision: Number.isInteger(r.revision) ? (r.revision as number) : 1,
     // The guard enforces the length limit with a clear message, so only cap far above it here.
     text: r.text.slice(0, 20_000),
@@ -137,6 +140,8 @@ export interface ApiOptions {
   ingestToken?: string;
   /** HEXA_INGEST_TOKEN_<APP>: an application with its own token accepts only that one. */
   ingestTokens?: Record<string, string>;
+  /** Where attachment bytes live. Defaults to data/attachments on local disk. */
+  files?: BlobStore;
   getWorkspace?: () => Workspace | null;
 }
 
@@ -174,6 +179,7 @@ function addUatCases(db: HorizonDb, appId: string, story: StoredStory, cases: No
 /** Creates the /api middleware. */
 export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => HorizonDb, opts: ApiOptions = {}) {
   const githubToken = opts.githubToken;
+  const files = opts.files ?? new LocalBlobStore('data/attachments');
 
   return async function api(req: IncomingMessage, res: ServerResponse, next: Next) {
     const full = new URL(req.url ?? '/', 'http://x');
@@ -306,6 +312,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           const a = db.messageChat(body.answerId);
           if (a && (a.chatId !== body.chatId || a.role !== 'assistant')) throw new HttpError(409, 'answerId belongs to another chat or message.');
         }
+        // Attached files must be this person's, in this application, and not another chat's.
+        const attachments = body.attachmentIds?.length ? attachmentsForRun(db, appId, user.id, body.attachmentIds, body.chatId) : [];
         const abort = new AbortController();
         res.on('close', () => abort.abort());
         const write = sse(res);
@@ -323,6 +331,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           scope: { appName: member.name, appId, workspace: body.scope.workspace || member.workspaces[0] || '' },
           syncedTickets: db.listStories(appId).map(asTicket),
           knownComponents: member.components.map((c) => c.name),
+          attachments,
         };
         let workflowRunId: string | null = null;
         let failure: string | undefined;
@@ -354,6 +363,31 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           if (!abort.signal.aborted) write({ type: 'saved', revisionId: saved.revisionId, revision: saved.revision, approvals: saved.approvals });
         }
         return res.end();
+      }
+
+      // Uploads: bytes to the blob store, metadata and readable text to the database.
+      if (url === '/api/attachments' && req.method === 'POST') {
+        const b = (await readJson(req, MAX_UPLOAD)) as Record<string, unknown>;
+        const list = (Array.isArray(b.files) ? b.files : []).slice(0, 20).map((f: Record<string, unknown>) => ({
+          filename: String(f.filename ?? 'file'),
+          data: Buffer.from(String(f.contentBase64 ?? ''), 'base64'),
+        }));
+        const chatId = id(b.chatId) ?? null;
+        return send(res, 200, await addAttachments(db, files, member, user, list, chatId));
+      }
+      const attachmentMatch = /^\/api\/attachments\/([A-Za-z0-9_-]{1,64})$/.exec(url);
+      if (attachmentMatch && req.method === 'GET') {
+        const a = db.getAttachment(attachmentMatch[1]);
+        if (!a || a.applicationId !== appId) return send(res, 404, { error: 'This attachment does not exist in this application.' });
+        if (full.searchParams.get('download') !== '1') return send(res, 200, { attachment: { ...a, storageKey: undefined } });
+        const data = await files.get(a.storageKey);
+        if (!data) return send(res, 410, { error: 'The file is no longer in storage.' });
+        res.statusCode = 200;
+        res.setHeader('Content-Type', a.mime);
+        res.setHeader('Content-Length', String(data.length));
+        res.setHeader('Content-Disposition', `attachment; filename="${a.filename.replace(/"/g, '')}"`);
+        res.setHeader('Cache-Control', 'private, no-store');
+        return res.end(data);
       }
 
       const chatMatch = /^\/api\/chats\/([A-Za-z0-9_-]{1,64})$/.exec(url);
@@ -635,6 +669,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       return send(res, 404, { error: 'Not found.' });
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+      if (e instanceof AttachmentError) return send(res, e.status, { error: e.message });
       if (e instanceof OwnershipError) return send(res, 409, { error: e.message });
       if (e instanceof StoryError) return send(res, e.policy ? 422 : 400, { error: e.message, policy: e.policy?.id ?? null });
       if (e instanceof IngestError) return send(res, 400, { error: e.message });

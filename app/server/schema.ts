@@ -639,4 +639,29 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE repo_scans ADD COLUMN files_failed INTEGER;
   ALTER TABLE repo_scans ADD COLUMN complete INTEGER;
   `,
+  // 9: attachments. The bytes live in the blob store under storage_key; SQLite holds the metadata,
+  //    who uploaded it, which chat it belongs to once used, and the text Horizon could read.
+  `
+  CREATE TABLE attachments (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+    filename TEXT NOT NULL,
+    mime TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    storage_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('ready', 'stored', 'failed')),
+    note TEXT,
+    text_chars INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX attachments_owner ON attachments (application_id, created_by, created_at);
+  CREATE INDEX attachments_chat ON attachments (chat_id);
+  CREATE TABLE attachment_text (
+    attachment_id TEXT PRIMARY KEY REFERENCES attachments(id) ON DELETE CASCADE,
+    text TEXT NOT NULL
+  );
+  `,
 ];

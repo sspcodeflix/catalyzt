@@ -1,5 +1,5 @@
 /** Hexa API types and calls shared by the Hexa page and its panels. */
-import { http } from './session';
+import { http, sessionEpoch, StaleScopeError } from './session';
 
 export interface TestRow {
   id: string;
@@ -137,9 +137,12 @@ export interface TestDetail {
   }[];
 }
 
+/** Calls the API for the current person and application; a response for an earlier one is a StaleScopeError, which pages ignore. */
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const epoch = sessionEpoch();
   const res = await http(url, init?.body ? { ...init, headers: { 'Content-Type': 'application/json', ...((init.headers as Record<string, string> | undefined) ?? {}) } } : init);
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
   return body;
 }

@@ -173,10 +173,13 @@ export async function runWorkflow(
       testType: req.testType,
       testTypeSource: req.testTypeSource,
       userId,
-      items: [...req.tickets.map((t) => ({ type: 'story', ref: t })), ...req.components.map((c) => ({ type: 'component', ref: c }))],
+      items: [...req.tickets.map((t) => ({ type: 'story', ref: t })), ...req.components.map((c) => ({ type: 'component', ref: c })), ...(req.attachments ?? []).map((a) => ({ type: 'file', ref: a.id }))],
       removedReason: secret ? 'secret-in-input' : null,
     });
+    // Files used here belong to this chat from now on.
+    for (const a of req.attachments ?? []) db.bindAttachment(a.id, req.chatId);
   }
+  const attachments = req.attachments ?? [];
 
   const rec = new Recorder(emit, db, userId);
   db?.startWorkflow({ id: rec.workflowRunId, app, chatId: req.chatId ?? null, messageId: req.messageId ?? null, revision: req.revision ?? 1, userId });
@@ -292,6 +295,10 @@ export async function runWorkflow(
         const done = uat.step(s.noModel ? 'tool' : 'model', s.label, tools[i]);
         done({ detail: s.detail });
       });
+      if (attachments.length) {
+        const skip = uat.step('tool', `Attached files not used`, 'attachments.skip');
+        skip({ detail: `The UAT analyst reads Jira and Hexa only; ${attachments.length} attached file${attachments.length > 1 ? 's were' : ' was'} not used.` });
+      }
       // Proposed UAT cases go into Hexa, so the inventory shows what is planned as well as what exists.
       if (artifact.proposedCases.length) {
         const hexa = uat.step('tool', 'Adding proposed UAT cases to Hexa', 'hexa.add_proposed');
@@ -307,17 +314,29 @@ export async function runWorkflow(
     const name = SPECIALIST[intent.capability];
     router.finish('done', { result: `Assigned to the ${name}`, ...routerUsage });
     const specialist = root.spawn(name, 'specialist', intent.action, cfg?.chatModel);
+
+    // Attached files the specialist can read become numbered sources; the rest are named as unreadable.
+    const readable = attachments.filter((a) => a.text);
+    const sources = readable.map((a, i) => ({ n: i + 1, title: a.filename, text: a.text! }));
+    if (attachments.length) {
+      const read = specialist.step('tool', `Reading ${attachments.length} attached file${attachments.length > 1 ? 's' : ''}`, 'attachments.read');
+      const unreadable = attachments.filter((a) => !a.text);
+      read({ detail: [`${readable.length} readable`, ...unreadable.map((a) => `${a.filename}: ${a.note ?? 'not readable'}`)].join(' · ') });
+      emit({ type: 'citations', citations: sources.map((s) => ({ n: s.n, title: s.title, detail: 'Attached file' })) });
+    }
+
     if (!cfg) {
       const s = specialist.step('rule', 'Routing only');
       const kind = intent.testType ? ` as ${testTypeLabel(intent.testType).toLowerCase()}` : '';
       const comps = intent.components.length ? ` covering ${intent.components.join(', ')}` : '';
+      const files = sources.length ? ` It would read ${sources.length} attached file${sources.length > 1 ? 's' : ''} (${sources.map((x) => `[${x.n}]`).join(', ')}).` : '';
       emit({
         type: 'answer',
-        citations: [],
+        citations: sources.map((x) => ({ n: x.n, title: x.title, detail: 'Attached file' })),
         blocks: [
           {
             kind: 'prose',
-            text: `DeepSeek is not configured, so Horizon can only route this request: the ${name} would handle it${kind} for ${req.scope.appName}${comps}. Add \`DEEPSEEK_API_KEY\` to \`app/.env\` and restart to get answers.`,
+            text: `DeepSeek is not configured, so Horizon can only route this request: the ${name} would handle it${kind} for ${req.scope.appName}${comps}.${files} Add \`DEEPSEEK_API_KEY\` to \`app/.env\` and restart to get answers.`,
           },
         ],
       });
@@ -334,7 +353,7 @@ export async function runWorkflow(
     let thinking = false;
     const t0 = performance.now();
     try {
-      for await (const ev of streamChat(cfg, chatMessages({ text: req.text, intent, scope: req.scope, history: req.history, tickets }), signal)) {
+      for await (const ev of streamChat(cfg, chatMessages({ text: req.text, intent, scope: req.scope, history: req.history, tickets, sources }), signal)) {
         if (ev.type === 'reasoning') thinking = true;
         else if (ev.type === 'usage') usage = { promptTokens: ev.promptTokens, completionTokens: ev.completionTokens };
         else if (ev.type === 'text') {

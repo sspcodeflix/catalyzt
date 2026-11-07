@@ -5,13 +5,17 @@
  *   decisions · F14 repeat analysis and superseded approvals.
  * No model is configured, so every run goes through the rules router; the UAT analyst needs none.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Block, UatArtifact } from '../src/lib/types';
 import type { WorkflowEvent } from '../src/lib/workflow';
 import { RunRefused, startApi, type TestApi } from './api-harness';
-import type { HorizonDb } from './db';
-import { fixtureDb, seedRefundTests } from './fixture';
+import { openDb, seedWorkspace, type HorizonDb } from './db';
+import { FIXTURE, fixtureDb, seedRefundTests } from './fixture';
+import { LocalBlobStore, MemoryBlobStore } from './storage';
 
 type Saved = Extract<WorkflowEvent, { type: 'saved' }>;
 type Answer = Extract<WorkflowEvent, { type: 'answer' }>;
@@ -337,6 +341,113 @@ describe('F17: CI results reach the right application, once per run attempt', ()
     // The server answers 413 as soon as the limit is crossed; a client still writing may see the connection close instead.
     expect([413, 'closed']).toContain(status);
     expect(runs()).toBe(0);
+  });
+});
+
+describe('F15: attachments are stored, scoped, and readable only when they really are', () => {
+  const b64 = (s: string) => Buffer.from(s).toString('base64');
+  const NOTES = '# Refund notes\nPartial refunds need a reason and are allowed for 45 days.';
+  interface Att {
+    id: string;
+    filename: string;
+    status: string;
+    note: string | null;
+    textChars: number;
+  }
+  const upload = async (client: ReturnType<TestApi['as']>, files: { filename: string; contentBase64: string }[], chatId?: string) => {
+    const res = await client.post('/api/attachments', { files, chatId });
+    return { status: res.status, body: (await res.json()) as { attachments: Att[]; errors: string[]; error?: string } };
+  };
+
+  it('keeps text readable, other formats as stored with the reason, and refuses empty or oversized files', async () => {
+    const store = new MemoryBlobStore();
+    const own = await startApi(db, null, { files: store });
+    try {
+      const sourav = own.as('u-sourav', 'ABCD');
+      const { status, body } = await upload(sourav, [
+        { filename: 'notes.md', contentBase64: b64(NOTES) },
+        { filename: 'spec.pdf', contentBase64: b64('%PDF-1.4 ...') },
+        { filename: 'empty.txt', contentBase64: '' },
+        { filename: 'big.log', contentBase64: b64('x'.repeat(8 * 1024 * 1024 + 1)) },
+        { filename: 'binary.txt', contentBase64: Buffer.from([0x41, 0x00, 0x42, 0x00, 0x43]).toString('base64') },
+      ]);
+      expect(status).toBe(200);
+      expect(body.attachments.map((a) => [a.filename, a.status])).toEqual([
+        ['notes.md', 'ready'],
+        ['spec.pdf', 'stored'],
+        ['binary.txt', 'stored'],
+      ]);
+      expect(body.attachments[0].textChars).toBe(NOTES.length);
+      expect(body.attachments[1].note).toMatch(/not available in this build/);
+      expect(body.attachments[2].note).toMatch(/not text/);
+      expect(body.errors).toEqual(['empty.txt: the file is empty.', 'big.log is over the 8 MB limit.']);
+      expect(store.blobs.size).toBe(3);
+      // Metadata never includes the storage key; the bytes come back exactly.
+      const meta = (await (await sourav.get(`/api/attachments/${body.attachments[0].id}`)).json()) as { attachment: Record<string, unknown> };
+      expect(meta.attachment).toMatchObject({ filename: 'notes.md', status: 'ready', mime: 'text/markdown' });
+      expect(meta.attachment.storageKey).toBeUndefined();
+      const dl = await sourav.get(`/api/attachments/${body.attachments[0].id}?download=1`);
+      expect(dl.headers.get('content-type')).toBe('text/markdown');
+      expect(await dl.text()).toBe(NOTES);
+      // Another application never learns the id exists.
+      expect((await own.as('u-nabih', 'IBGM').get(`/api/attachments/${body.attachments[0].id}`)).status).toBe(404);
+    } finally {
+      await own.close();
+    }
+  });
+
+  it('a run records the file on the message and binds it to the chat; other chats, people and applications cannot use it', async () => {
+    const own = await startApi(db, null, { files: new MemoryBlobStore() });
+    try {
+      const sourav = own.as('u-sourav', 'ABCD');
+      const { body } = await upload(sourav, [{ filename: 'notes.md', contentBase64: b64(NOTES) }]);
+      const id = body.attachments[0].id;
+      const events = await sourav.run(uatRun('ABCD-1001', ids('1'), { attachmentIds: [id] }));
+      expect(saved(events)).toBeTruthy();
+      // The UAT analyst says it did not use the file.
+      expect(events.some((e) => e.type === 'step' && e.label === 'Attached files not used')).toBe(true);
+      const chat = (await (await sourav.get('/api/chats/c1')).json()) as { chat: { messages: { role: string; attachments?: { id: string; filename: string; status: string }[] }[] } };
+      expect(chat.chat.messages[0].attachments).toEqual([{ id, filename: 'notes.md', status: 'ready' }]);
+      expect(db.getAttachment(id)?.chatId).toBe('c1');
+      // Bound to c1: another chat of the same person cannot pull it in.
+      await expect(sourav.run(uatRun('ABCD-1001', ids('2'), { attachmentIds: [id] }))).rejects.toMatchObject({ status: 409 });
+      expect(db.getChat('c2')).toBeUndefined();
+      // A teammate cannot use it (403), another application does not see it (404).
+      await expect(own.as('u-ram', 'ABCD').run(uatRun('ABCD-1001', ids('3'), { attachmentIds: [id] }))).rejects.toMatchObject({ status: 403 });
+      await expect(own.as('u-nabih', 'IBGM').run(uatRun('IBGM-1001', ids('4'), { attachmentIds: [id] }))).rejects.toMatchObject({ status: 404 });
+      expect(db.raw.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 2 });
+      // Uploading straight into someone else's chat is refused too.
+      expect((await upload(own.as('u-ram', 'ABCD'), [{ filename: 'x.txt', contentBase64: b64('hello world') }], 'c1')).status).toBe(403);
+    } finally {
+      await own.close();
+    }
+  });
+
+  it('survives a restart: metadata, text and bytes are back from disk, still scoped to the application', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hz-att-'));
+    const path = join(dir, 'horizon.db');
+    const db1 = openDb(path);
+    seedWorkspace(db1, FIXTURE);
+    const first = await startApi(db1, null, { files: new LocalBlobStore(join(dir, 'files')) });
+    let id: string;
+    try {
+      const { body } = await upload(first.as('u-sourav', 'ABCD'), [{ filename: 'notes.md', contentBase64: b64(NOTES) }]);
+      id = body.attachments[0].id;
+    } finally {
+      await first.close();
+      db1.raw.close();
+    }
+    const db2 = openDb(path);
+    const second = await startApi(db2, null, { files: new LocalBlobStore(join(dir, 'files')) });
+    try {
+      expect(db2.getAttachment(id!)).toMatchObject({ filename: 'notes.md', status: 'ready', textChars: NOTES.length });
+      expect(db2.attachmentText(id!)).toBe(NOTES);
+      expect(await (await second.as('u-sourav', 'ABCD').get(`/api/attachments/${id!}?download=1`)).text()).toBe(NOTES);
+      expect((await second.as('u-nabih', 'IBGM').get(`/api/attachments/${id!}?download=1`)).status).toBe(404);
+    } finally {
+      await second.close();
+      db2.raw.close();
+    }
   });
 });
 

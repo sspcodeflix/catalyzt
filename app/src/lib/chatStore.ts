@@ -10,7 +10,7 @@ import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from './answerR
 import { runWorkflow } from './llm';
 import { http, sessionEpoch } from './session';
 import { getTicket, recordUatAnalysis } from './ticketStore';
-import type { Agent, Approval, Artifact, AssistantMessage, Chat, Message, Scope, TestType, UserMessage } from './types';
+import type { Agent, Approval, Artifact, AssistantMessage, AttachmentRef, Chat, Message, Scope, TestType, UserMessage } from './types';
 
 const chats = new Map<string, Chat>();
 const listeners = new Set<() => void>();
@@ -145,6 +145,7 @@ export interface NewMessage {
   testTypeSource?: 'user' | 'rules' | null;
   tickets: string[];
   components: string[];
+  attachments?: AttachmentRef[];
 }
 
 export function createChat(chatId: string, first: NewMessage) {
@@ -210,6 +211,7 @@ export function sendMessage(chatId: string, msg: NewMessage) {
     testType: msg.testType,
     tickets: msg.tickets,
     components: msg.components,
+    attachments: msg.attachments,
   };
   const answerId = crypto.randomUUID();
   requests.set(answerId, { msg, userId: user.id });
@@ -319,6 +321,7 @@ async function runAnswer(chatId: string, answerId: string) {
         chatTitle: chats.get(chatId)?.title,
         messageId: req.userId,
         answerId,
+        attachmentIds: msg.attachments?.map((a) => a.id),
         revision: current?.role === 'assistant' ? current.revision : 1,
       },
       ctrl.signal,

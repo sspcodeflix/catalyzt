@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from 'react';
 
-import { http, sessionEpoch } from './session';
+import { http, sessionEpoch, StaleScopeError } from './session';
 import type { CriterionStatus, JiraSync, Refined, StoryDraft, StoryStatus, Ticket, UatState } from './types';
 import { summariseCoverage } from './uat';
 
@@ -48,14 +48,14 @@ function apply(b: { stories: ServerStory[]; filter: ServerFilter }) {
   emit();
 }
 
-/** A response that belongs to an earlier person or application is not applied. */
-class StaleScope extends Error {}
+const StaleScope = StaleScopeError;
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const epoch = sessionEpoch();
   const res = await http(url, { ...init, headers: { 'Content-Type': 'application/json', ...((init?.headers as Record<string, string> | undefined) ?? {}) } });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (epoch !== sessionEpoch()) throw new StaleScope('The application changed while this request was running.');
+  // A response that belongs to an earlier person or application is not applied.
+  if (epoch !== sessionEpoch()) throw new StaleScope();
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
   return body;
 }

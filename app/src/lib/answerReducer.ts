@@ -84,6 +84,8 @@ export function applyEvent(s: AnswerState, ev: WorkflowEvent): AnswerState {
       };
     case 'text':
       return { ...s, streamed: true, status: s.status === 'working' ? 'streaming' : s.status, text: s.text + ev.text };
+    case 'citations':
+      return { ...s, citations: ev.citations };
     case 'done':
       return { ...s, status: 'done', tokens: ev.tokens, summary: ev.tokens > 0 ? `${ev.summary} · ${ev.tokens.toLocaleString()} tokens` : ev.summary };
     case 'error':

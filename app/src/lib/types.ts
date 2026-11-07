@@ -90,6 +90,13 @@ export type Block =
   /** A guardrail rejected the request. */
   | { kind: 'rejected'; title: string; text: string; by: string };
 
+/** A file attached to a message. `stored` means kept but not readable by Horizon in this build. */
+export interface AttachmentRef {
+  id: string;
+  filename: string;
+  status?: 'ready' | 'stored' | 'failed';
+}
+
 export interface UserMessage {
   id: string;
   role: 'user';
@@ -98,6 +105,7 @@ export interface UserMessage {
   testType?: TestType | null;
   tickets?: string[];
   components?: string[];
+  attachments?: AttachmentRef[];
 }
 
 export interface AssistantMessage {

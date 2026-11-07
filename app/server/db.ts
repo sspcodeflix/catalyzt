@@ -1350,6 +1350,7 @@ export function openDb(path: string) {
       if (!c) return undefined;
       const rows = db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY seq').all(chatId) as Row[];
       const items = db.prepare('SELECT item_type AS type, item_ref AS ref FROM message_items WHERE message_id = ?');
+      const files = db.prepare("SELECT a.id, a.filename, a.status FROM message_items i JOIN attachments a ON a.id = i.item_ref WHERE i.message_id = ? AND i.item_type = 'file' ORDER BY a.created_at");
       const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
       const cits = db.prepare('SELECT n, title, detail FROM citations WHERE revision_id = ? ORDER BY n');
       const rating = db.prepare('SELECT stars FROM ratings WHERE revision_id = ? AND user_id = ?');
@@ -1368,6 +1369,7 @@ export function openDb(path: string) {
               testType: (m.test_type as 'uat' | 'regression' | null) ?? null,
               tickets: its.filter((i) => i.type === 'story').map((i) => i.ref),
               components: its.filter((i) => i.type === 'component').map((i) => i.ref),
+              attachments: files.all(m.id) as { id: string; filename: string; status: 'ready' | 'stored' | 'failed' }[],
             },
           ];
         }
@@ -1479,6 +1481,43 @@ export function openDb(path: string) {
     getArtifact(revisionId: string, localId: string): Artifact | undefined {
       const r = db.prepare('SELECT body FROM artifacts WHERE id = ?').get(`${revisionId}/${localId}`) as Row | undefined;
       return r ? json<Artifact | undefined>(r.body, undefined) : undefined;
+    },
+
+    /* ---------- Attachments ---------- */
+    addAttachment(a: { id: string; app: string; chatId: string | null; filename: string; mime: string; size: number; sha256: string; storageKey: string; status: 'ready' | 'stored' | 'failed'; note: string | null; text: string | null; userId: string }) {
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO attachments (id, application_id, chat_id, filename, mime, size, sha256, storage_key, status, note, text_chars, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(a.id, a.app, a.chatId, a.filename, a.mime, a.size, a.sha256, a.storageKey, a.status, a.note, a.text?.length ?? 0, a.userId, now());
+        if (a.text) db.prepare('INSERT INTO attachment_text (attachment_id, text) VALUES (?, ?)').run(a.id, a.text);
+        audit('user', a.userId, 'attachment.add', 'attachment', a.id, { app: a.app, filename: a.filename, size: a.size, status: a.status });
+      })();
+    },
+    getAttachment(id: string) {
+      const r = db.prepare('SELECT * FROM attachments WHERE id = ?').get(id) as Row | undefined;
+      if (!r) return undefined;
+      return {
+        id,
+        applicationId: String(r.application_id),
+        chatId: (r.chat_id as string) ?? null,
+        filename: String(r.filename),
+        mime: String(r.mime),
+        size: Number(r.size),
+        sha256: String(r.sha256),
+        storageKey: String(r.storage_key),
+        status: r.status as 'ready' | 'stored' | 'failed',
+        note: (r.note as string) ?? null,
+        textChars: Number(r.text_chars),
+        createdBy: String(r.created_by),
+        createdAt: String(r.created_at),
+      };
+    },
+    attachmentText(id: string): string | null {
+      return (db.prepare('SELECT text FROM attachment_text WHERE attachment_id = ?').get(id) as { text: string } | undefined)?.text ?? null;
+    },
+    /** Ties a free attachment to the chat it is first used in. */
+    bindAttachment(id: string, chatId: string) {
+      db.prepare('UPDATE attachments SET chat_id = ? WHERE id = ? AND chat_id IS NULL').run(chatId, id);
     },
 
     /** Marks anything left running (for example after a crash or restart) as stopped. */

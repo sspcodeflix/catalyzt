@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { api, hexaChanged, ORIGIN, PURPOSE, RESULT, type RunRow, type ScanRow, type TestRow, type TestsResponse } from '../lib/hexa';
-import { withSession } from '../lib/session';
+import { StaleScopeError, withSession } from '../lib/session';
 import { relTime } from './Tickets';
 
 type Tab = 'manual' | 'automated' | 'runs';
@@ -128,6 +128,7 @@ function TestList({ tab, compact, initialResult }: { tab: 'manual' | 'automated'
       setData(await api<TestsResponse>(`/api/hexa/tests?${p}`));
       setError(null);
     } catch (e) {
+      if (e instanceof StaleScopeError) return;
       setError((e as Error).message);
     }
   }, [q, purpose, proposed, result, repo, limit, tab]);
@@ -460,6 +461,7 @@ function Runs() {
     try {
       setRuns((await api<{ runs: RunRow[] }>('/api/hexa/runs')).runs);
     } catch (e) {
+      if (e instanceof StaleScopeError) return;
       setMsg({ ok: false, text: (e as Error).message });
     }
   }, []);

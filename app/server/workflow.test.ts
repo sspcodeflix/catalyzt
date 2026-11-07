@@ -186,6 +186,34 @@ describe('sub-agents', () => {
   });
 });
 
+describe('attachments (F15)', () => {
+  const files = [
+    { id: 'att-1', filename: 'notes.md', text: 'Partial refunds need a reason.', note: null },
+    { id: 'att-2', filename: 'spec.pdf', text: null, note: 'PDF text extraction is not available in this build' },
+  ];
+
+  it('a readable file becomes a numbered source the specialist can cite; an unreadable one is named, not pretended', async () => {
+    const db = fixtureDb();
+    const f = stubDeepSeek({ ...ok, capability: 'analysis' }, ['The notes say refunds need a reason [1]. ']);
+    const { events, agents, text } = await run(req(db, 'What do the notes say about refunds?', { attachments: files }), cfg, db);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('[1] notes.md');
+    expect(stream).toContain('Partial refunds need a reason.');
+    expect(stream).not.toContain('[2] spec.pdf');
+    expect(events.find((e) => e.type === 'citations')).toEqual({ type: 'citations', citations: [{ n: 1, title: 'notes.md', detail: 'Attached file' }] });
+    const spec = agents.find((a) => a.agent === 'Analysis agent')!;
+    expect(spec.steps[0]).toMatchObject({ label: 'Reading 2 attached files', detail: '1 readable · spec.pdf: PDF text extraction is not available in this build' });
+    expect(text).toContain('[1]');
+  });
+
+  it('records the files on the message when a chat is given', async () => {
+    const db = fixtureDb();
+    stubDeepSeek({ ...ok, capability: 'analysis' }, ['Fine. ']);
+    await run(req(db, 'Summarise the notes', { attachments: files, chatId: 'c1', chatTitle: 'Notes', messageId: 'm1' }), cfg, db, true);
+    expect((db.raw.prepare("SELECT item_ref FROM message_items WHERE message_id = 'm1' AND item_type = 'file' ORDER BY item_ref").all() as { item_ref: string }[]).map((r) => r.item_ref)).toEqual(['att-1', 'att-2']);
+  });
+});
+
 describe('history', () => {
   it('drops earlier user turns that break a policy before they reach the model', async () => {
     const db = fixtureDb();
