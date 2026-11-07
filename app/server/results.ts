@@ -43,8 +43,8 @@ export function matchCase(c: JUnitCase, cands: Candidate[]): Candidate | undefin
 }
 
 /** A stable id for a test first seen in CI results, so later runs land on it. */
-export function ciTestId(repo: string | null, c: JUnitCase) {
-  return `TC-${createHash('sha1').update(`ci|${repo ?? ''}|${c.classname}|${rawName(c.name)}`).digest('hex').slice(0, 10).toUpperCase()}`;
+export function ciTestId(app: string, repo: string | null, c: JUnitCase) {
+  return `TC-${createHash('sha1').update(`ci|${app}|${repo ?? ''}|${c.classname}|${rawName(c.name)}`).digest('hex').slice(0, 10).toUpperCase()}`;
 }
 
 /** Title for a test first seen in CI: words stay as they are, code names become words. */

@@ -1,8 +1,10 @@
+import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { NavLink } from 'react-router-dom';
 
-import { currentUser, recents } from '../lib/data';
 import { useAgentActivity } from '../lib/agentsStore';
+import { useRecentChats } from '../lib/chatStore';
 import { useHuddle } from '../lib/huddleData';
+import { selectApp, signInAs, useSession } from '../lib/session';
 import { useTickets } from '../lib/ticketStore';
 import { HorizonMark } from './HorizonMark';
 import { Icon } from './Icon';
@@ -14,10 +16,17 @@ interface SidebarProps {
 
 const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? 'on' : undefined);
 
+const ROLE_LABEL: Record<string, string> = { app_owner: 'App owner', component_manager: 'Component manager', security_champion: 'Security champion', member: 'Member' };
+const roleOf = (roles: string[]) => ROLE_LABEL[roles.find((r) => r !== 'member') ?? 'member'];
+
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const session = useSession();
+  const me = session.me;
   const runningAgents = useAgentActivity().agents.filter((a) => a.status === 'running' && a.parentId).length;
   const openHuddleItems = useHuddle().filter((i) => !i.decision).length;
   const waiting = useTickets().filter((t) => t.uat.state === 'not-analysed').length;
+  const recents = useRecentChats();
+
   return (
     <aside className={`sidebar${open ? ' open' : ''}`} aria-label="Horizon">
       <div className="brandrow">
@@ -89,6 +98,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       </nav>
 
       <div className="group">Recents</div>
+      {recents.length === 0 && <div className="recent muted">No chats yet</div>}
       {recents.map((r) => (
         <NavLink key={r.id} to={`/chat/${r.id}`} className={({ isActive }) => `recent${isActive ? ' on' : ''}`}>
           {r.title}
@@ -96,15 +106,59 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       ))}
 
       <div className="grow" />
-      <div className="me">
-        <span className="avatar">{currentUser.initials}</span>
-        <div style={{ minWidth: 0 }}>
-          <div>{currentUser.name}</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            {currentUser.team}
-          </div>
-        </div>
-      </div>
+
+      {/* Sign in as: stands in for SSO in this preview. The server trusts the choice; see server/api.ts. */}
+      <Dropdown.Root>
+        <Dropdown.Trigger asChild>
+          <button type="button" className="me mebtn" aria-label="Sign in as someone else, or switch application">
+            <span className="avatar">{me?.user.initials ?? '…'}</span>
+            <span style={{ minWidth: 0, textAlign: 'left' }}>
+              <span className="mename">{me?.user.name ?? (session.error ? 'Not signed in' : 'Loading…')}</span>
+              <span className="muted" style={{ fontSize: 12, display: 'block' }}>
+                {me?.app ? `${me.app.name} · ${roleOf(me.app.roles)}` : session.error ? session.error : ''}
+              </span>
+            </span>
+            <Icon name="down" small />
+          </button>
+        </Dropdown.Trigger>
+        <Dropdown.Portal>
+          <Dropdown.Content className="menu-content wide-menu" sideOffset={6} align="start">
+            {me && me.apps.length > 1 && (
+              <>
+                <Dropdown.Label className="menu-label">Application</Dropdown.Label>
+                <Dropdown.RadioGroup value={me.app?.id ?? ''} onValueChange={(v) => void selectApp(v)}>
+                  {me.apps.map((a) => (
+                    <Dropdown.RadioItem key={a.id} value={a.id} className="menu-item">
+                      <span>
+                        {a.name}
+                        <span className="menu-hint">{roleOf(a.roles)}</span>
+                      </span>
+                      <Dropdown.ItemIndicator className="menu-check">
+                        <Icon name="check" small />
+                      </Dropdown.ItemIndicator>
+                    </Dropdown.RadioItem>
+                  ))}
+                </Dropdown.RadioGroup>
+                <Dropdown.Separator className="menu-sep" />
+              </>
+            )}
+            <Dropdown.Label className="menu-label">Sign in as · preview only, SSO replaces this</Dropdown.Label>
+            <Dropdown.RadioGroup value={me?.user.id ?? ''} onValueChange={(v) => void signInAs(v)}>
+              {(me?.people ?? []).map((p) => (
+                <Dropdown.RadioItem key={p.id} value={p.id} className="menu-item">
+                  <span>
+                    {p.name}
+                    <span className="menu-hint">{p.apps.map((a) => `${a.id} · ${ROLE_LABEL[a.role] ?? a.role}`).join(', ') || 'Member'}</span>
+                  </span>
+                  <Dropdown.ItemIndicator className="menu-check">
+                    <Icon name="check" small />
+                  </Dropdown.ItemIndicator>
+                </Dropdown.RadioItem>
+              ))}
+            </Dropdown.RadioGroup>
+          </Dropdown.Content>
+        </Dropdown.Portal>
+      </Dropdown.Root>
     </aside>
   );
 }

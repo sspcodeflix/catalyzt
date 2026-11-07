@@ -176,6 +176,7 @@ function CodeView({ a, sources }: { a: CodeArtifact; sources: Citation[] }) {
 /** Status colours follow DESIGN.md: green passing, blue waiting, neutral grey for no test. Always with text. */
 export const criterionPill: Record<CriterionStatus, { cls: string; label: string }> = {
   passing: { cls: 'pass', label: 'Covered' },
+  failing: { cls: 'crit', label: 'Failing' },
   'not-run': { cls: 'info', label: 'Not run yet' },
   'no-test': { cls: '', label: 'No test' },
 };
@@ -191,7 +192,7 @@ function UatView({ a, sources }: { a: UatArtifact; sources: Citation[] }) {
           content: (
             <>
               <div className="uatsum" aria-label="Summary">
-                {(['passing', 'not-run', 'no-test'] as const).map((s) => (
+                {(['passing', 'failing', 'not-run', 'no-test'] as const).map((s) => (
                   <div key={s} className="kpi">
                     <b>{count(s)}</b>
                     <span>{criterionPill[s].label}</span>

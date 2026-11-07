@@ -254,14 +254,14 @@ export function toOctaneCsv(
   return `${lines.join('\r\n')}\r\n`;
 }
 
-/** An .xlsx template with the columns and one example test. */
-export async function octaneTemplate(): Promise<Buffer> {
+/** An .xlsx template with the columns and one example test, covering `storyKey` when one is given. */
+export async function octaneTemplate(storyKey = 'STORY-1'): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('manual tests');
   ws.addRow([...OCTANE_COLUMNS]);
-  ws.addRow(['UAT-1', 'test_manual', 'Partial refund above the paid amount is rejected', 'simple', 'Sign in to the merchant portal on SIT-2 as a test merchant', 'Acceptance', 'Refunds', 'PAY-1482', 'Priya N.', 'Checks AC2 of PAY-1482', 10, 'Priya N.', 'Ready', 'uat', 'merchant-portal-ui']);
-  ws.addRow(['UAT-1', '', '', 'simple', 'Open a settled card payment of 500 AED and choose Refund']);
-  ws.addRow(['UAT-1', '', '', 'validation', 'Refunding 501 AED shows "exceeds the original amount" and no refund is created']);
+  ws.addRow(['UAT-1', 'test_manual', 'Example: the feature rejects an invalid input with a clear message', 'simple', 'Sign in to the test environment as a test user', 'Acceptance', '', `${storyKey}#AC1`, '', `Checks AC1 of ${storyKey}. Replace with your own test; one row per step.`, 10, '', 'New', 'uat', '']);
+  ws.addRow(['UAT-1', '', '', 'simple', 'Open the feature and enter an invalid value']);
+  ws.addRow(['UAT-1', '', '', 'validation', 'An error message is shown and nothing is saved']);
   ws.getRow(1).font = { bold: true };
   ws.columns.forEach((c) => (c.width = 22));
   return Buffer.from(await wb.xlsx.writeBuffer());

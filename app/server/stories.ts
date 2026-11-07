@@ -4,7 +4,6 @@
  * it uses DeepSeek when configured and simple rules otherwise.
  */
 import { checkInput, type Policy } from '../src/lib/guardrails';
-import { components as knownComponents } from '../src/lib/data';
 import { completeJson, type DeepSeekConfig, type Usage } from './deepseek';
 import { STATUSES, STORY_TYPES, type NewStory, type RefinementOutput } from './db';
 
@@ -49,7 +48,7 @@ export interface StoryInput {
   acceptanceCriteria: string;
 }
 
-export function parseStoryInput(b: unknown, createdBy: string): NewStory {
+export function parseStoryInput(b: unknown, createdBy: string, knownComponents: string[]): NewStory {
   const r = (b ?? {}) as Record<string, unknown>;
   const summary = clean(String(r.summary ?? '')).slice(0, 200);
   const description = String(r.description ?? '').trim().slice(0, 4000);
@@ -68,6 +67,7 @@ export function parseStoryInput(b: unknown, createdBy: string): NewStory {
     description,
     type,
     status,
+    purpose: r.purpose === 'uat' || r.purpose === 'regression' ? r.purpose : null,
     fixVersion: clean(String(r.fixVersion ?? '')).slice(0, 20),
     components,
     acceptanceCriteria,

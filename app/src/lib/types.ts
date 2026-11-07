@@ -135,7 +135,7 @@ export interface CodeArtifact {
 }
 
 /** How well one acceptance criterion is covered by tests. Status always has a text label. */
-export type CriterionStatus = 'passing' | 'not-run' | 'no-test';
+export type CriterionStatus = 'passing' | 'failing' | 'not-run' | 'no-test';
 
 export interface UatArtifact {
   id: string;
@@ -179,6 +179,8 @@ export interface Ticket {
   uat: { state: UatState; covered: number; total: number; chatId?: string };
   /** 'horizon' when created in Horizon's dummy Jira. */
   source?: 'jira_sync' | 'horizon';
+  applicationId?: string;
+  purpose?: 'uat' | 'regression' | null;
   /** What the author first wrote, when the saved text was refined. */
   original?: { summary: string; description: string; acceptanceCriteria: string } | null;
   refinementId?: number | null;

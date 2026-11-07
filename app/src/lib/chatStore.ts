@@ -6,11 +6,11 @@
 import { useSyncExternalStore } from 'react';
 
 import { runWorkflow } from './llm';
+import { http } from './session';
 import { getTicket, recordUatAnalysis } from './ticketStore';
-import { sampleChats } from './sampleChats';
 import type { Agent, AgentView, AssistantMessage, Block, Chat, RunStep, Scope, TestType, UserMessage } from './types';
 
-const chats = new Map<string, Chat>(sampleChats.map((c) => [c.id, structuredClone(c)]));
+const chats = new Map<string, Chat>();
 const listeners = new Set<() => void>();
 
 let chatList: Chat[] = [...chats.values()];
@@ -38,8 +38,34 @@ function updateAnswer(chatId: string, messageId: string, fn: (m: AssistantMessag
   }));
 }
 
-/** All chats, for Search. */
+/** All chats loaded in this session, for Search. */
 export const useChatList = () => useSyncExternalStore(subscribe, () => chatList);
+
+/* ---------- Recent chats, from the server ---------- */
+let recent: { id: string; title: string; updatedAt: string }[] = [];
+export const useRecentChats = () => useSyncExternalStore(subscribe, () => recent);
+export async function refreshRecents() {
+  try {
+    const r = await http('/api/chats');
+    if (r.ok) {
+      recent = ((await r.json()) as { chats: typeof recent }).chats;
+      emit();
+    }
+  } catch {
+    /* keep the last list */
+  }
+}
+if (typeof window !== 'undefined') {
+  // A new sign-in or application: this session's chats belong to someone else now.
+  window.addEventListener('hz:session', () => {
+    for (const c of running.values()) c.abort();
+    chats.clear();
+    requests.clear();
+    recent = [];
+    emit();
+    void refreshRecents();
+  });
+}
 
 export function useChat(chatId: string | undefined): Chat | undefined {
   return useSyncExternalStore(subscribe, () => (chatId ? chats.get(chatId) : undefined));
@@ -290,7 +316,7 @@ async function runAnswer(chatId: string, answerId: string) {
               artifacts: { ...c.artifacts, [artifact.id]: artifact },
             }));
           }
-          if (uatTicket) recordUatAnalysis(uatTicket, chatId);
+          if (uatTicket && artifact?.kind === 'uat') recordUatAnalysis(uatTicket, chatId, artifact.criteria.map((c) => c.status));
           set((m) => ({ ...m, citations: ev.citations }));
           render();
           break;
@@ -304,6 +330,7 @@ async function runAnswer(chatId: string, answerId: string) {
           schedule();
           break;
         case 'done':
+          void refreshRecents();
           summary = ev.tokens > 0 ? `${ev.summary} · ${ev.tokens.toLocaleString()} tokens` : ev.summary;
           finished = true;
           render();
@@ -362,7 +389,7 @@ async function carryOut(chatId: string, messageId: string) {
   const setOutcome = (outcome: { ok: boolean; text: string }) =>
     updateAnswer(chatId, messageId, (m) => ({ ...m, blocks: m.blocks.map((b) => (b.kind === 'approval' ? { ...b, approval: { ...b.approval, outcome } } : b)) }));
   try {
-    const res = await fetch('/api/hexa/manual/from-uat', {
+    const res = await http('/api/hexa/manual/from-uat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storyKey: artifact.ticketKey, cases: artifact.proposedCases }),

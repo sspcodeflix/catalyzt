@@ -3,6 +3,7 @@ import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { api, hexaChanged, ORIGIN, PURPOSE, RESULT, type RunRow, type ScanRow, type TestRow, type TestsResponse } from '../lib/hexa';
+import { withSession } from '../lib/session';
 import { relTime } from './Tickets';
 
 type Tab = 'manual' | 'automated' | 'runs';
@@ -27,7 +28,11 @@ export function Hexa() {
   useEffect(() => {
     loadStats();
     window.addEventListener('hexa:changed', loadStats);
-    return () => window.removeEventListener('hexa:changed', loadStats);
+    window.addEventListener('hz:session', loadStats);
+    return () => {
+      window.removeEventListener('hexa:changed', loadStats);
+      window.removeEventListener('hz:session', loadStats);
+    };
   }, [loadStats]);
 
   const n = (k: string) => stats?.byKind.find((x) => x.key === k)?.n ?? 0;
@@ -133,7 +138,11 @@ function TestList({ tab, compact, initialResult }: { tab: 'manual' | 'automated'
   }, [load, q]);
   useEffect(() => {
     window.addEventListener('hexa:changed', load);
-    return () => window.removeEventListener('hexa:changed', load);
+    window.addEventListener('hz:session', load);
+    return () => {
+      window.removeEventListener('hexa:changed', load);
+      window.removeEventListener('hz:session', load);
+    };
   }, [load]);
 
   const scanning = data?.scans.some((s) => s.status === 'running') ?? false;
@@ -198,7 +207,7 @@ function TestList({ tab, compact, initialResult }: { tab: 'manual' | 'automated'
             </label>
           )}
           {tab === 'manual' && !proposed && (
-            <a className="btn plain" href="/api/hexa/manual/export" download>
+            <a className="btn plain" href={withSession('/api/hexa/manual/export')} download>
               <Icon name="dl" small />
               Export for Octane
             </a>
@@ -455,7 +464,11 @@ function Runs() {
   useEffect(() => {
     void load();
     window.addEventListener('hexa:changed', load);
-    return () => window.removeEventListener('hexa:changed', load);
+    window.addEventListener('hz:session', load);
+    return () => {
+      window.removeEventListener('hexa:changed', load);
+      window.removeEventListener('hz:session', load);
+    };
   }, [load]);
 
   const sync = async (e: FormEvent) => {

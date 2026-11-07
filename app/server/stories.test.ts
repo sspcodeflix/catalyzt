@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { openDb } from './db';
+import { fixtureDb } from './fixture';
 import { parseStoryInput, refineByRules, refineStory, splitCriteria, StoryError } from './stories';
+
+const COMPONENTS = ['checkoutservice', 'frontend'];
 
 describe('splitCriteria', () => {
   it('takes criteria as written: one per line, bullets and numbers optional, no duplicates', () => {
@@ -36,23 +38,26 @@ describe('refineStory', () => {
 });
 
 describe('stories in the database', () => {
-  it('creates stories with the next key, normalised criteria, and the original kept', () => {
-    const db = openDb(':memory:');
-    const refinementId = db.saveRefinement({ input: { summary: 'a' }, output: { summary: 'A', description: '', acceptanceCriteria: ['X'], questions: [] }, source: 'rules', model: null, agentRunId: null, createdBy: 'u-priya' });
-    const s = db.createStory({ ...parseStoryInput({ summary: 'Refund codes', acceptanceCriteria: '- one\n- two', components: ['refund-service', 'nope'], status: 'To Do' }, 'u-priya'), original: { summary: 'refund codes', description: '', acceptanceCriteria: '- one\n- two' }, refinementId });
-    expect(s).toMatchObject({ key: 'PAY-1512', acceptanceCriteria: ['one', 'two'], components: ['refund-service'], source: 'horizon', status: 'To Do', refinementId });
-    expect(db.getRefinement(refinementId)?.storyKey).toBe('PAY-1512');
-    expect(db.getStory('PAY-1512')?.original?.summary).toBe('refund codes');
+  it('creates stories with the next key, normalised criteria, known components only, and the original kept', () => {
+    const db = fixtureDb();
+    const refinementId = db.saveRefinement({ input: { summary: 'a' }, output: { summary: 'A', description: '', acceptanceCriteria: ['X'], questions: [] }, source: 'rules', model: null, agentRunId: null, createdBy: 'u-sourav' });
+    const input = parseStoryInput({ summary: 'Refund codes', acceptanceCriteria: '- one\n- two', components: ['checkoutservice', 'nope'], status: 'To Do', purpose: 'regression' }, 'u-sourav', COMPONENTS);
+    const s = db.createStory({ ...input, original: { summary: 'refund codes', description: '', acceptanceCriteria: '- one\n- two' }, refinementId }, 'ABCD');
+    expect(s).toMatchObject({ key: 'ABCD-1004', applicationId: 'ABCD', acceptanceCriteria: ['one', 'two'], components: ['checkoutservice'], source: 'horizon', status: 'To Do', purpose: 'regression', refinementId, assignee: 'Sourav' });
+    expect(db.getRefinement(refinementId)?.storyKey).toBe('ABCD-1004');
+    expect(db.getStory('ABCD-1004')?.original?.summary).toBe('refund codes');
     // To Do is outside the default filter.
-    expect(db.listStories().some((x) => x.key === 'PAY-1512')).toBe(false);
-    db.setFilter({ statuses: ['Ready for UAT', 'To Do'], everyMinutes: 30 }, 'u-priya');
-    expect(db.listStories().some((x) => x.key === 'PAY-1512')).toBe(true);
-    expect(db.getFilter()).toMatchObject({ statuses: ['Ready for UAT', 'To Do'], everyMinutes: 30 });
-    expect((db.raw.prepare("SELECT action FROM audit_log ORDER BY id").all() as { action: string }[]).map((a) => a.action)).toEqual(['story.create', 'jira_filter.update']);
+    expect(db.listStories('ABCD').some((x) => x.key === 'ABCD-1004')).toBe(false);
+    db.setFilter({ statuses: ['Ready for UAT', 'To Do'], everyMinutes: 30 }, 'u-ram', 'ABCD');
+    expect(db.listStories('ABCD').some((x) => x.key === 'ABCD-1004')).toBe(true);
+    expect(db.getFilter('ABCD')).toMatchObject({ project: 'ABCD', statuses: ['Ready for UAT', 'To Do'], everyMinutes: 30 });
+    // The other application's filter is untouched.
+    expect(db.getFilter('IBGM').statuses).toEqual(['Ready for UAT', 'In Progress']);
+    expect((db.raw.prepare('SELECT action FROM audit_log ORDER BY id').all() as { action: string }[]).map((a) => a.action)).toEqual(['story.create', 'jira_filter.update']);
   });
 
   it('rejects a story without a summary or criteria', () => {
-    expect(() => parseStoryInput({ summary: '', acceptanceCriteria: 'a' }, 'u-priya')).toThrow('Add a summary.');
-    expect(() => parseStoryInput({ summary: 's', acceptanceCriteria: '  ' }, 'u-priya')).toThrow('Add at least one acceptance criterion.');
+    expect(() => parseStoryInput({ summary: '', acceptanceCriteria: 'a' }, 'u-ram', COMPONENTS)).toThrow('Add a summary.');
+    expect(() => parseStoryInput({ summary: 's', acceptanceCriteria: '  ' }, 'u-ram', COMPONENTS)).toThrow('Add at least one acceptance criterion.');
   });
 });

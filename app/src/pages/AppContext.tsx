@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormE
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { currentUser } from '../lib/data';
+import { useSession } from '../lib/session';
 import { useJiraSync, useTickets } from '../lib/ticketStore';
 import { relTime } from './Tickets';
 import {
@@ -25,6 +25,7 @@ const PAGE_SIZE = 8;
 /** App Context: what Horizon knows about the selected application, and what the team adds. */
 export function AppContext() {
   const { sources, conflict, notice } = useContextStore();
+  const app = useSession().me?.app;
   const location = useLocation();
   const panelOpen = location.pathname.startsWith('/context/source/');
   const selectedId = panelOpen ? decodeURIComponent(location.pathname.split('/')[3] ?? '') : undefined;
@@ -42,7 +43,7 @@ export function AppContext() {
             <div>
               <span className="appname">
                 <Icon name="layers" small />
-                Payments Hub · ABCD
+                {app ? `${app.name}${app.description ? ` · ${app.description}` : ''}` : 'Loading…'}
               </span>
               <h1>App Context</h1>
               {!panelOpen && (
@@ -72,7 +73,7 @@ export function AppContext() {
                       <span>Read only · {fabric?.updated.toLowerCase() ?? 'synced'} · v14</span>
                     </div>
                   </div>
-                  <span>214 sections for Payments Hub. Highest trust; your uploads never overwrite it.</span>
+                  <span>The source of truth for {app?.name ?? 'this application'}. Highest trust; your uploads never overwrite it.</span>
                 </div>
                 <div className="card ctile">
                   <b>{sources.length}</b>
@@ -117,6 +118,7 @@ export function AppContext() {
 /* ---------- Add context ---------- */
 
 function AddContext() {
+  const who = useSession().me?.user.name ?? 'Someone';
   const [kind, setKind] = useState<ScopeKind>('app');
   const [workspace, setWorkspace] = useState(workspaces[0]);
   const [link, setLink] = useState('');
@@ -129,7 +131,7 @@ function AddContext() {
 
   const take = (files: FileList | null) => {
     if (!files?.length) return;
-    setFileErrors(addFiles(Array.from(files), kind, workspace, currentUser.name));
+    setFileErrors(addFiles(Array.from(files), kind, workspace, who));
   };
 
   const onDrop = (e: DragEvent) => {

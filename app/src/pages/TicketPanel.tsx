@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { startUatChat } from '../lib/chatStore';
-import { scopes } from '../lib/data';
+import { currentScope } from '../lib/session';
 import { fetchStory, getTicket, useTickets } from '../lib/ticketStore';
 import { relTime, uatPill, uatText } from './Tickets';
 
@@ -63,7 +63,9 @@ export function TicketPanel() {
   }
 
   const analyse = () => {
-    const id = t.uat.chatId ?? startUatChat(t.key, scopes[0]);
+    const scope = currentScope();
+    if (!scope) return;
+    const id = t.uat.chatId ?? startUatChat(t.key, scope);
     navigate(`/chat/${id}/artifact/uat-${t.key.toLowerCase()}`);
   };
 

@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-
 
 import { Icon } from '../components/Icon';
 import { startUatChat } from '../lib/chatStore';
-import { scopes } from '../lib/data';
+import { currentScope } from '../lib/session';
 import { setJiraFilter, syncNow, useJiraSync, useTickets } from '../lib/ticketStore';
 import { STORY_STATUSES, type StoryStatus, type Ticket, type UatState } from '../lib/types';
 
@@ -54,7 +54,9 @@ export function Tickets() {
 
   const analyse = (t: Ticket) => {
     // Re-open the existing analysis if there is one; otherwise start a new UAT chat.
-    const id = t.uat.chatId ?? startUatChat(t.key, scopes[0]);
+    const scope = currentScope();
+    if (!scope) return;
+    const id = t.uat.chatId ?? startUatChat(t.key, scope);
     navigate(`/chat/${id}/artifact/uat-${t.key.toLowerCase()}`);
   };
 

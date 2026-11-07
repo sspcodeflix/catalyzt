@@ -277,7 +277,7 @@ h3 { margin: 0; font: 500 20px/1.3 var(--hz-font-display); }
 .results a > span:nth-child(2) { flex: 1; min-width: 0; }
 
 /* UAT report */
-.uatsum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.uatsum { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .kpi { display: flex; flex-direction: column; gap: 2px; padding-left: 12px; border-left: 1px solid var(--hz-border); }
 .kpi b { font: 400 34px/1.1 var(--hz-font-display); }
 .kpi span { font-size: 12.5px; color: var(--hz-text-secondary); }
@@ -396,7 +396,7 @@ p.callout { margin: 0; }
 .usetable td, .usetable th { font-variant-numeric: tabular-nums; }
 .barcell { width: 30%; }
 .barcell i { display: block; height: 6px; border-radius: 99px; background: var(--hz-info); min-width: 2px; }
-@media (max-width: 899px) { .usetiles { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 899px) { .usetiles, .uatsum { grid-template-columns: 1fr 1fr; } }
 
 /* ---------- Hexa ---------- */
 .hexatitle { display: flex; align-items: center; gap: 10px; }
@@ -461,3 +461,9 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
   .octsteps li { grid-template-columns: 22px 1fr; }
   .octsteps .stepdesc { grid-column: 2; }
 }
+
+/* ---------- Sign in as ---------- */
+.mebtn { width: 100%; border: 0; background: transparent; border-radius: var(--hz-radius-md); cursor: pointer; text-align: left; }
+.mebtn:hover { background: var(--hz-hover); }
+.mename { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-sep { height: 1px; background: var(--hz-divider); margin: 6px 0; }

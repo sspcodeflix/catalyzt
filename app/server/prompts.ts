@@ -35,7 +35,7 @@ Guard: set in_scope to false, with a policy, when the request is one Horizon mus
 Testing these things is in scope: "write a test for password reset" or "check token expiry" are fine. Otherwise in_scope is true and policy is null.
 
 Return exactly this json shape:
-{"in_scope":true,"policy":null,"capability":"analysis","test_type":"uat","action":"Check whether PAY-1482 is ready for UAT","tickets":["PAY-1482"],"components":[],"confidence":0.9,"needs_clarification":false,"question":null,"options":[]}`;
+{"in_scope":true,"policy":null,"capability":"analysis","test_type":"uat","action":"Check whether APP-123 is ready for UAT","tickets":["APP-123"],"components":[],"confidence":0.9,"needs_clarification":false,"question":null,"options":[]}`;
 
   const fixed = [
     req.fixedCapability && `The user chose the capability "${req.fixedCapability}". Use it.`,

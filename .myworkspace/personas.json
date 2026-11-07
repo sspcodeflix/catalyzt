@@ -1,0 +1,15 @@
+{
+  "note": "The people in the simulation. Horizon seeds users and memberships from this file. Emails are placeholders.",
+  "people": [
+    { "id": "u-ram",     "name": "Ram Kumar",       "initials": "RK", "email": "ram.kumar@example.com",       "app": "ABCD", "role": "app_owner" },
+    { "id": "u-sourav",  "name": "Sourav",          "initials": "SV", "email": "sourav@example.com",          "app": "ABCD", "role": "component_manager" },
+    { "id": "u-brijesh", "name": "Brijesh",         "initials": "BJ", "email": "brijesh@example.com",         "app": "ABCD", "role": "component_manager" },
+    { "id": "u-nabih",   "name": "Nabih Ben Lagha", "initials": "NB", "email": "nabih.benlagha@example.com",  "app": "IBGM", "role": "app_owner" },
+    { "id": "u-sayeer",  "name": "Mohd Sayeer",     "initials": "MS", "email": "mohd.sayeer@example.com",     "app": "IBGM", "role": "component_manager" },
+    { "id": "u-karim",   "name": "Karim",           "initials": "KM", "email": "karim@example.com",           "app": "IBGM", "role": "component_manager" },
+    { "id": "u-jacques", "name": "Jacques",         "initials": "JQ", "email": "jacques@example.com",         "app": "WIMT", "role": "app_owner" },
+    { "id": "u-hitesh",  "name": "Hitesh",          "initials": "HT", "email": "hitesh@example.com",          "app": "WIMT", "role": "component_manager" },
+    { "id": "u-david",   "name": "David",           "initials": "DV", "email": "david@example.com",           "app": "WIMT", "role": "component_manager" },
+    { "id": "u-robin",   "name": "Robin",           "initials": "RB", "email": "robin@example.com",           "app": "WIMT", "role": "component_manager" }
+  ]
+}

@@ -10,18 +10,18 @@ import { extractTests, fetchFile, GitHubError, listTestFiles, parseRepoRef, type
 export class ScanError extends Error {}
 
 /** Starts a scan and returns its id at once; the scan continues in the background. */
-export function startRepoScan(db: HorizonDb, input: string, userId: string, token?: string): { scanId: string; repo: string } {
+export function startRepoScan(db: HorizonDb, app: string, input: string, userId: string, token?: string): { scanId: string; repo: string } {
   const ref = parseRepoRef(input);
   if (!ref) throw new ScanError('Enter a GitHub repository as owner/repo or a github.com link.');
   const repo = `${ref.owner}/${ref.repo}`;
-  if (db.runningScan(repo)) throw new ScanError(`${repo} is already being scanned.`);
+  if (db.runningScan(app, repo)) throw new ScanError(`${repo} is already being scanned.`);
 
   const scanId = randomUUID();
   const wf = randomUUID();
   const agentId = randomUUID();
-  db.startWorkflow({ id: wf, chatId: null, messageId: null, revision: 1, userId });
+  db.startWorkflow({ id: wf, app, chatId: null, messageId: null, revision: 1, userId });
   db.startAgent({ id: agentId, workflowRunId: wf, parentId: null, agent: 'Repo scanner', kind: 'tool_agent', task: `Find test cases in ${repo}${ref.ref ? `@${ref.ref}` : ''}`, model: null });
-  db.startScan({ id: scanId, repo, ref: ref.ref ?? null, workflowRunId: wf, userId });
+  db.startScan({ id: scanId, app, repo, ref: ref.ref ?? null, workflowRunId: wf, userId });
 
   const step = (label: string, tool: string) => {
     const id = randomUUID();
@@ -61,7 +61,7 @@ export function startRepoScan(db: HorizonDb, input: string, userId: string, toke
       current('done', `${found.length} tests${frameworks.length ? ` · ${frameworks.join(', ')}` : ''}`);
 
       current = step('Updating the inventory', 'hexa.update_inventory');
-      const r = db.completeScan({ id: scanId, repo, ref: listing.ref, sha: listing.sha, htmlUrl: listing.htmlUrl, filesFound: listing.totalFiles, filesScanned: read, truncated: listing.truncated, tests: found, userId });
+      const r = db.completeScan({ id: scanId, app, repo, ref: listing.ref, sha: listing.sha, htmlUrl: listing.htmlUrl, filesFound: listing.totalFiles, filesScanned: read, truncated: listing.truncated, tests: found, userId });
       current('done', `${r.added} new · ${r.found - r.added} already known · ${r.removed} removed`);
       current = null;
 

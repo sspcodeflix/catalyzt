@@ -1,22 +1,21 @@
 /**
- * Horizon's database (SQLite). Opens, migrates and seeds it, and exposes small repositories.
- * The schema is in schema.ts and the design in DATA_MODEL.md. Server only.
+ * Horizon's database (SQLite). Opens and migrates it, seeds it from the workspace, and exposes
+ * small repositories. Every repository is scoped to an application. The schema is in schema.ts,
+ * the design in DATA_MODEL.md. Server only.
  */
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { Ticket } from '../src/lib/types';
-import { COVERAGE } from '../src/lib/uat';
+import type { CriterionStatus, Ticket } from '../src/lib/types';
 import { MIGRATIONS } from './schema';
+import type { Workspace } from './workspace';
 
 export const STATUSES = ['To Do', 'In Progress', 'Ready for UAT', 'Done'] as const;
 export type StoryStatus = (typeof STATUSES)[number];
 export const STORY_TYPES = ['Story', 'Bug', 'Task'] as const;
-
-export const DEFAULT_APP = 'App-abcd';
-export const DEFAULT_USER = 'u-priya';
+export type Role = 'member' | 'app_owner' | 'component_manager' | 'security_champion';
 
 export interface JiraFilter {
   project: string;
@@ -27,7 +26,10 @@ export interface JiraFilter {
 
 /** A story as stored. `original` keeps what the author first wrote. */
 export interface StoredStory extends Omit<Ticket, 'uat'> {
+  applicationId: string;
   source: 'jira_sync' | 'horizon';
+  purpose: 'uat' | 'regression' | null;
+  assigneeId: string | null;
   createdBy: string;
   createdAt: string;
   original: { summary: string; description: string; acceptanceCriteria: string } | null;
@@ -47,8 +49,10 @@ export interface NewStory {
   type: StoredStory['type'];
   status: StoryStatus;
   fixVersion: string;
+  /** Component names within the application. */
   components: string[];
   acceptanceCriteria: string[];
+  purpose: 'uat' | 'regression' | null;
   original: StoredStory['original'];
   refinementId: number | null;
   createdBy: string;
@@ -77,137 +81,33 @@ export interface AgentActivity {
   steps: { seq: number; kind: string; label: string; detail: string | null; status: string }[];
 }
 
-type Row = Record<string, unknown>;
-const now = () => new Date().toISOString();
-const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
-const json = <T>(v: unknown, fallback: T): T => {
-  try {
-    return typeof v === 'string' ? (JSON.parse(v) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-/* ---------- Seed data (placeholders, as in the mock-ups) ---------- */
-
-const SEED_USERS = [
-  { id: 'u-priya', name: 'Priya N.', initials: 'PN', email: 'priya.n@example.com', roles: ['member', 'app_owner'] },
-  { id: 'u-omar', name: 'Omar K.', initials: 'OK', email: 'omar.k@example.com', roles: ['member'] },
-  { id: 'u-sara', name: 'Sara R.', initials: 'SR', email: 'sara.r@example.com', roles: ['member', 'security_champion'] },
-  { id: 'u-jun', name: 'Jun T.', initials: 'JT', email: 'jun.t@example.com', roles: ['member'] },
-];
-
-const SEED_STORIES: (Omit<StoredStory, 'createdAt' | 'createdBy' | 'original' | 'refinementId' | 'source'> & { ago: number })[] = [
-  { key: 'PAY-1482', summary: 'Partial refunds for card payments', type: 'Story', status: 'Ready for UAT', fixVersion: '24.11', components: ['refund-service', 'merchant-portal-ui'], assignee: 'Omar K.', ago: 35, updated: '', description: 'Merchants can refund part of a settled card payment from the portal, up to the original amount.', acceptanceCriteria: ['A merchant can refund part of a settled card payment', 'A refund above the original amount is rejected with a clear message', 'A card refund needs a reason', 'Partial refunds are allowed for 45 days from settlement'], requirements: ['FR-0231', 'FR-0233'] },
-  { key: 'PAY-1490', summary: 'Show refund status on the payment timeline', type: 'Story', status: 'Ready for UAT', fixVersion: '24.11', components: ['merchant-portal-ui'], assignee: 'Sara R.', ago: 80, updated: '', description: 'Each refund appears on the payment timeline with its status and amount.', acceptanceCriteria: ['Refunds appear on the timeline in date order', 'Each refund shows amount and status', 'Failed refunds show the reason'], requirements: ['FR-0240'] },
-  { key: 'PAY-1495', summary: 'Refund webhooks for merchants', type: 'Story', status: 'Ready for UAT', fixVersion: '24.11', components: ['payments-api'], assignee: 'Jun T.', ago: 130, updated: '', description: 'Send a webhook when a refund succeeds or fails.', acceptanceCriteria: ['A webhook is sent when a refund succeeds', 'A webhook is sent when a refund fails', 'Webhooks retry 3 times with backoff', 'Payloads are signed'], requirements: ['FR-0244', 'NFR-0012'] },
-  { key: 'PAY-1501', summary: 'Refund limit per merchant per day', type: 'Story', status: 'Ready for UAT', fixVersion: '24.12', components: ['refund-service'], assignee: 'Omar K.', ago: 200, updated: '', description: 'Cap the total refunded per merchant per day, configurable by risk.', acceptanceCriteria: ['Refunds over the daily limit are rejected', 'Risk can change the limit per merchant'], requirements: ['FR-0250'] },
-  { key: 'PAY-1503', summary: 'Refund button disabled after settlement window', type: 'Bug', status: 'Ready for UAT', fixVersion: '24.11', components: ['merchant-portal-ui'], assignee: 'Sara R.', ago: 260, updated: '', description: 'The refund button stays enabled after the 45-day window and the API then rejects the request.', acceptanceCriteria: ['The refund button is disabled after 45 days, with a tooltip'], requirements: ['FR-0231'] },
-  { key: 'PAY-1507', summary: 'Export refunds to CSV', type: 'Story', status: 'Ready for UAT', fixVersion: '24.12', components: ['merchant-portal-ui', 'payments-api'], assignee: 'Priya N.', ago: 400, updated: '', description: 'Merchants can export refunds for a date range.', acceptanceCriteria: ['Export covers the chosen date range', 'Amounts use the merchant currency', 'Exports over 50,000 rows are emailed'], requirements: ['FR-0252'] },
-  { key: 'PAY-1511', summary: 'Refund reason codes from a fixed list', type: 'Story', status: 'In Progress', fixVersion: '24.12', components: ['refund-service', 'merchant-portal-ui'], assignee: 'Jun T.', ago: 20, updated: '', description: 'Replace the free-text refund reason with codes agreed with Risk.', acceptanceCriteria: ['The reason is chosen from the agreed list', 'Old free-text reasons still display'], requirements: ['FR-0255'] },
-];
-
-const SEED_COMPONENTS = [
-  { name: 'refund-service', repo: 'payments/pay-hub-api' },
-  { name: 'payments-api', repo: 'payments/pay-hub-api' },
-  { name: 'merchant-portal-ui', repo: 'payments/pay-hub-web' },
-  { name: 'card-gateway', repo: 'payments/pay-hub-api' },
-];
-
-/**
- * Runs pending migrations. Foreign keys are switched off while a migration runs, so a table can
- * be rebuilt (SQLite cannot alter a CHECK constraint) without cascading deletes, and checked after.
- */
-function migrate(db: Database.Database) {
-  const version = db.pragma('user_version', { simple: true }) as number;
-  if (version >= MIGRATIONS.length) return;
-  db.pragma('foreign_keys = OFF');
-  try {
-    for (let v = version; v < MIGRATIONS.length; v++) {
-      db.transaction(() => {
-        db.exec(MIGRATIONS[v]);
-        const broken = db.pragma('foreign_key_check') as unknown[];
-        if (broken.length) throw new Error(`Migration ${v + 1} broke ${broken.length} foreign keys`);
-        db.pragma(`user_version = ${v + 1}`);
-      })();
-    }
-  } finally {
-    db.pragma('foreign_keys = ON');
-  }
+export interface PersonRecord {
+  id: string;
+  name: string;
+  initials: string;
+  email: string;
 }
 
-function seed(db: Database.Database) {
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number };
-  if (n > 0) return;
-  const t = now();
-  db.transaction(() => {
-    db.prepare('INSERT INTO applications (id, name, jira_project) VALUES (?, ?, ?)').run(DEFAULT_APP, 'Payments Hub', 'PAY');
-    for (const w of ['web-ui', 'api', 'batch']) db.prepare('INSERT INTO workspaces (id, application_id, name) VALUES (?, ?, ?)').run(`${DEFAULT_APP}-${w}`, DEFAULT_APP, w);
-    for (const u of SEED_USERS) {
-      db.prepare('INSERT INTO users (id, name, initials, email, created_at) VALUES (?, ?, ?, ?, ?)').run(u.id, u.name, u.initials, u.email, t);
-      for (const r of u.roles) db.prepare('INSERT INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(u.id, DEFAULT_APP, r);
-    }
-    for (const c of SEED_COMPONENTS) db.prepare('INSERT INTO components (id, application_id, name, repo) VALUES (?, ?, ?, ?)').run(c.name, DEFAULT_APP, c.name, c.repo);
-    const reqs = new Set(SEED_STORIES.flatMap((s) => s.requirements));
-    for (const r of reqs) db.prepare('INSERT INTO requirements (id, application_id) VALUES (?, ?)').run(r, DEFAULT_APP);
-    for (const s of SEED_STORIES) {
-      const [project, num] = s.key.split('-');
-      const at = minutesAgo(s.ago);
-      db.prepare(
-        `INSERT INTO stories (key, application_id, project, number, summary, description, type, status, fix_version, assignee, source, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'jira_sync', ?, ?, ?)`,
-      ).run(s.key, DEFAULT_APP, project, Number(num), s.summary, s.description, s.type, s.status, s.fixVersion, s.assignee, DEFAULT_USER, at, at);
-      insertChildren(db, s.key, s.acceptanceCriteria, s.components, s.requirements);
-    }
-    db.prepare('INSERT INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at) VALUES (?, ?, ?, ?, ?)').run(
-      DEFAULT_APP,
-      'PAY',
-      JSON.stringify(['Ready for UAT']),
-      15,
-      minutesAgo(4),
-    );
-  })();
+export interface ComponentRecord {
+  id: string;
+  name: string;
+  managerId: string | null;
+  managerName: string | null;
+  workspace: string | null;
+  repo: string | null;
+  path: string | null;
+  language: string | null;
+  tests: string | null;
 }
 
-function insertChildren(db: Database.Database, key: string, criteria: string[], components: string[], requirements: string[]) {
-  const ac = db.prepare('INSERT INTO story_criteria (story_key, seq, text) VALUES (?, ?, ?)');
-  criteria.forEach((c, i) => ac.run(key, i + 1, c));
-  const sc = db.prepare('INSERT OR IGNORE INTO story_components (story_key, component_id) VALUES (?, ?)');
-  for (const c of components) sc.run(key, c);
-  const sr = db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_id) VALUES (?, ?)');
-  for (const r of requirements) sr.run(key, r);
-}
-
-/**
- * Seeds Hexa with the payment tests the UAT data refers to: a test for each criterion that is
- * covered or has a test not yet run. Runs once, on a database with no test cases yet.
- */
-function seedTests(db: Database.Database) {
-  const { n } = db.prepare('SELECT COUNT(*) AS n FROM test_cases').get() as { n: number };
-  if (n > 0) return;
-  const t = now();
-  const ins = db.prepare(
-    `INSERT INTO test_cases (id, application_id, title, suite, code_name, kind, purpose, framework, origin, repo, path, line, last_result, last_run_at, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'automated', 'regression', 'JUnit', 'repo_scan', 'payments/pay-hub-automation', ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const link = db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)');
-  db.transaction(() => {
-    for (const s of SEED_STORIES) {
-      const cov = COVERAGE[s.key] ?? [];
-      const suite = s.summary.replace(/[^A-Za-z ]/g, '').split(' ').filter(Boolean).slice(0, 3).map((w) => w[0].toUpperCase() + w.slice(1)).join('') + 'Test';
-      s.acceptanceCriteria.forEach((c, i) => {
-        if (cov[i] !== 'passing' && cov[i] !== 'not-run') return;
-        const id = `TC-${s.key.split('-')[1]}-${i + 1}`;
-        const words = c.replace(/[^A-Za-z0-9 ]/g, '').split(' ').filter(Boolean);
-        const codeName = words.map((w, k) => (k === 0 ? w.toLowerCase() : w[0].toUpperCase() + w.slice(1).toLowerCase())).join('');
-        ins.run(id, DEFAULT_APP, c, suite, codeName, `src/test/java/payments/${suite}.java`, 20 + i * 12, cov[i] === 'passing' ? 'passed' : 'not_run', cov[i] === 'passing' ? minutesAgo(600) : null, DEFAULT_USER, t, t);
-        link.run(id, 'story', s.key);
-        link.run(id, 'criterion', `${s.key}#AC${i + 1}`);
-        for (const r of s.requirements) link.run(id, 'requirement', r);
-        for (const c2 of s.components) link.run(id, 'component', c2);
-      });
-    }
-  })();
+export interface AppRecord {
+  id: string;
+  name: string;
+  description: string;
+  jiraProject: string;
+  roles: Role[];
+  workspaces: string[];
+  components: ComponentRecord[];
 }
 
 export interface TestCaseRow {
@@ -216,7 +116,7 @@ export interface TestCaseRow {
   suite: string | null;
   kind: 'automated' | 'manual' | 'proposed';
   framework: string | null;
-  origin: 'repo_scan' | 'uat_analyst' | 'authoring' | 'manual';
+  origin: 'repo_scan' | 'uat_analyst' | 'authoring' | 'manual' | 'upload' | 'ci_results';
   repo: string | null;
   path: string | null;
   line: number | null;
@@ -233,6 +133,7 @@ export interface TestCaseRow {
 }
 
 export interface RunMeta {
+  app: string;
   source: 'github_actions' | 'webhook' | 'upload';
   repo: string | null;
   workflow: string | null;
@@ -263,39 +164,89 @@ export interface ScanRow {
   endedAt: string | null;
 }
 
+/** What Hexa knows about one acceptance criterion. */
+export interface CriterionCoverage {
+  status: CriterionStatus;
+  evidence: string;
+  tests: { id: string; title: string; kind: string; lastResult: string | null }[];
+}
+
+type Row = Record<string, unknown>;
+const now = () => new Date().toISOString();
+const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+const json = <T>(v: unknown, fallback: T): T => {
+  try {
+    return typeof v === 'string' ? (JSON.parse(v) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/**
+ * Runs pending migrations. Foreign keys are switched off while a migration runs, so a table can
+ * be rebuilt (SQLite cannot alter a CHECK constraint) without cascading deletes, and checked after.
+ */
+function migrate(db: Database.Database) {
+  const version = db.pragma('user_version', { simple: true }) as number;
+  if (version >= MIGRATIONS.length) return;
+  db.pragma('foreign_keys = OFF');
+  try {
+    for (let v = version; v < MIGRATIONS.length; v++) {
+      db.transaction(() => {
+        db.exec(MIGRATIONS[v]);
+        const broken = db.pragma('foreign_key_check') as unknown[];
+        if (broken.length) throw new Error(`Migration ${v + 1} broke ${broken.length} foreign keys`);
+        db.pragma(`user_version = ${v + 1}`);
+      })();
+    }
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+}
+
+/** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
+export const componentId = (app: string, name: string) => `${app}/${name}`;
+
+/** Stable id for a scanned test, so a re-scan updates it instead of adding a duplicate. */
+function testId(app: string, repo: string, path: string, suite: string | null, title: string) {
+  return `TC-${createHash('sha1').update(`${app}|${repo}|${path}|${suite ?? ''}|${title}`).digest('hex').slice(0, 10).toUpperCase()}`;
+}
+
 export type HorizonDb = ReturnType<typeof openDb>;
 
-/** Opens the database, migrating and seeding as needed. Use ':memory:' in tests. */
+/** Opens the database and migrates it. It starts empty; seedWorkspace fills it. Use ':memory:' in tests. */
 export function openDb(path: string) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);
-  seed(db);
-  seedTests(db);
 
   const q = {
     criteria: db.prepare('SELECT text FROM story_criteria WHERE story_key = ? ORDER BY seq'),
-    components: db.prepare('SELECT component_id AS c FROM story_components WHERE story_key = ? ORDER BY component_id'),
+    components: db.prepare('SELECT c.name FROM story_components sc JOIN components c ON c.id = sc.component_id WHERE sc.story_key = ? ORDER BY c.name'),
     requirements: db.prepare('SELECT requirement_id AS r FROM story_requirements WHERE story_key = ? ORDER BY requirement_id'),
     story: db.prepare('SELECT * FROM stories WHERE key = ?'),
-    user: db.prepare('SELECT id, name, initials FROM users WHERE id = ?'),
+    user: db.prepare('SELECT id, name, initials, email FROM users WHERE id = ?'),
+    componentByName: db.prepare('SELECT id FROM components WHERE application_id = ? AND name = ?'),
   };
 
   function toStory(r: Row): StoredStory {
     const key = String(r.key);
     return {
       key,
+      applicationId: String(r.application_id),
       summary: String(r.summary),
       description: String(r.description),
       type: r.type as StoredStory['type'],
       status: String(r.status),
       fixVersion: String(r.fix_version),
       assignee: String(r.assignee),
+      assigneeId: (r.assignee_id as string) ?? null,
+      purpose: (r.purpose as StoredStory['purpose']) ?? null,
       updated: String(r.updated_at),
       acceptanceCriteria: (q.criteria.all(key) as { text: string }[]).map((x) => x.text),
-      components: (q.components.all(key) as { c: string }[]).map((x) => x.c),
+      components: (q.components.all(key) as { name: string }[]).map((x) => x.name),
       requirements: (q.requirements.all(key) as { r: string }[]).map((x) => x.r),
       source: r.source as StoredStory['source'],
       createdBy: String(r.created_by),
@@ -310,9 +261,74 @@ export function openDb(path: string) {
     return r ? toStory(r) : undefined;
   }
 
-  function getFilter(app = DEFAULT_APP): JiraFilter {
-    const r = db.prepare('SELECT * FROM jira_sync WHERE application_id = ?').get(app) as Row;
+  function getUser(id: string) {
+    return q.user.get(id) as PersonRecord | undefined;
+  }
+
+  function getFilter(app: string): JiraFilter {
+    const r = db.prepare('SELECT * FROM jira_sync WHERE application_id = ?').get(app) as Row | undefined;
+    if (!r) {
+      const a = db.prepare('SELECT jira_project FROM applications WHERE id = ?').get(app) as { jira_project: string } | undefined;
+      return { project: a?.jira_project ?? app, statuses: ['Ready for UAT'], everyMinutes: 15, lastSyncAt: now() };
+    }
     return { project: String(r.project), statuses: json(r.statuses, []), everyMinutes: Number(r.every_minutes), lastSyncAt: String(r.last_sync_at) };
+  }
+
+  function rolesFor(userId: string, app: string): Role[] {
+    return (db.prepare('SELECT role FROM memberships WHERE user_id = ? AND application_id = ?').all(userId, app) as { role: Role }[]).map((r) => r.role);
+  }
+
+  function listComponents(app: string): ComponentRecord[] {
+    return (
+      db
+        .prepare(
+          `SELECT c.*, u.name AS manager_name, w.name AS workspace_name FROM components c
+           LEFT JOIN users u ON u.id = c.manager_id LEFT JOIN workspaces w ON w.id = c.workspace_id
+           WHERE c.application_id = ? ORDER BY c.name`,
+        )
+        .all(app) as Row[]
+    ).map((r) => ({
+      id: String(r.id),
+      name: String(r.name),
+      managerId: (r.manager_id as string) ?? null,
+      managerName: (r.manager_name as string) ?? null,
+      workspace: (r.workspace_name as string) ?? null,
+      repo: (r.repo as string) ?? null,
+      path: (r.path as string) ?? null,
+      language: (r.language as string) ?? null,
+      tests: (r.tests as string) ?? null,
+    }));
+  }
+
+  function getApp(id: string, forUser?: string): AppRecord | undefined {
+    const r = db.prepare('SELECT * FROM applications WHERE id = ?').get(id) as Row | undefined;
+    if (!r) return undefined;
+    return {
+      id,
+      name: String(r.name),
+      description: String(r.description ?? ''),
+      jiraProject: String(r.jira_project),
+      roles: forUser ? rolesFor(forUser, id) : [],
+      workspaces: (db.prepare('SELECT name FROM workspaces WHERE application_id = ? ORDER BY rowid').all(id) as { name: string }[]).map((w) => w.name),
+      components: listComponents(id),
+    };
+  }
+
+  /** Links a story to components by name within its application. */
+  function linkStory(key: string, app: string, criteria: string[], components: string[], requirements: string[]) {
+    const ac = db.prepare('INSERT INTO story_criteria (story_key, seq, text) VALUES (?, ?, ?)');
+    criteria.forEach((c, i) => ac.run(key, i + 1, c));
+    const sc = db.prepare('INSERT OR IGNORE INTO story_components (story_key, component_id) VALUES (?, ?)');
+    for (const name of components) {
+      const c = q.componentByName.get(app, name) as { id: string } | undefined;
+      if (c) sc.run(key, c.id);
+    }
+    const req = db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)');
+    const sr = db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_id) VALUES (?, ?)');
+    for (const r of requirements) {
+      req.run(r, app);
+      sr.run(key, r);
+    }
   }
 
   function audit(actorType: 'user' | 'agent' | 'system', actorRef: string, action: string, entityType: string, entityRef: string, detail: object = {}) {
@@ -331,41 +347,69 @@ export function openDb(path: string) {
     raw: db,
     audit,
 
-    /* ---------- People ---------- */
-    getUser(id: string) {
-      return q.user.get(id) as { id: string; name: string; initials: string } | undefined;
+    /* ---------- People and applications ---------- */
+    getUser,
+    rolesFor,
+    getApp,
+    listComponents,
+    /** True when the database has no people: no workspace was loaded. */
+    isEmpty() {
+      return (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n === 0;
+    },
+    /** The first person, for requests that carry no user (there is no sign-in in this preview). */
+    defaultUser() {
+      return db.prepare('SELECT id, name, initials, email FROM users ORDER BY rowid LIMIT 1').get() as PersonRecord | undefined;
+    },
+    /** Everyone, with their apps and roles, for the "Sign in as" picker. */
+    listPeople() {
+      const people = db.prepare('SELECT id, name, initials, email FROM users ORDER BY rowid').all() as PersonRecord[];
+      const roles = db.prepare("SELECT application_id AS id, role FROM memberships WHERE user_id = ? AND role != 'member' ORDER BY application_id").all.bind(
+        db.prepare("SELECT application_id AS id, role FROM memberships WHERE user_id = ? AND role != 'member' ORDER BY application_id"),
+      );
+      return people.map((p) => ({ ...p, apps: roles(p.id) as { id: string; role: string }[] }));
+    },
+    appsFor(userId: string): AppRecord[] {
+      const ids = (db.prepare('SELECT DISTINCT application_id AS id FROM memberships WHERE user_id = ? ORDER BY application_id').all(userId) as { id: string }[]).map((r) => r.id);
+      return ids.map((id) => getApp(id, userId)!).filter(Boolean);
+    },
+    isMember(userId: string, app: string) {
+      return !!db.prepare('SELECT 1 FROM memberships WHERE user_id = ? AND application_id = ?').get(userId, app);
     },
 
     /* ---------- Jira ---------- */
     getFilter,
-    setFilter(f: { statuses: StoryStatus[]; everyMinutes: number }, by: string, app = DEFAULT_APP) {
-      db.prepare('UPDATE jira_sync SET statuses = ?, every_minutes = ?, updated_by = ? WHERE application_id = ?').run(JSON.stringify(f.statuses), f.everyMinutes, by, app);
+    setFilter(f: { statuses: StoryStatus[]; everyMinutes: number }, by: string, app: string) {
+      const cur = getFilter(app);
+      db.prepare(
+        `INSERT INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at, updated_by) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(application_id) DO UPDATE SET statuses = excluded.statuses, every_minutes = excluded.every_minutes, updated_by = excluded.updated_by`,
+      ).run(app, cur.project, JSON.stringify(f.statuses), f.everyMinutes, cur.lastSyncAt, by);
       audit('user', by, 'jira_filter.update', 'application', app, f);
       return getFilter(app);
     },
     /** In production this pulls from Jira; the dummy Jira is this database, so a sync only records the time. */
-    markSynced(app = DEFAULT_APP) {
+    markSynced(app: string) {
       db.prepare('UPDATE jira_sync SET last_sync_at = ? WHERE application_id = ?').run(now(), app);
       return getFilter(app);
     },
-    listStories(filter: JiraFilter = getFilter()): StoredStory[] {
+    listStories(app: string, filter: JiraFilter = getFilter(app)): StoredStory[] {
       if (filter.statuses.length === 0) return [];
       const marks = filter.statuses.map(() => '?').join(', ');
-      return (db.prepare(`SELECT * FROM stories WHERE project = ? AND status IN (${marks}) ORDER BY updated_at DESC`).all(filter.project, ...filter.statuses) as Row[]).map(toStory);
+      return (db.prepare(`SELECT * FROM stories WHERE application_id = ? AND status IN (${marks}) ORDER BY updated_at DESC`).all(app, ...filter.statuses) as Row[]).map(toStory);
     },
     getStory,
-    createStory(s: NewStory, app = DEFAULT_APP): StoredStory {
+    createStory(s: NewStory, app: string): StoredStory {
       const { project } = getFilter(app);
       const key = db.transaction(() => {
-        const { n } = db.prepare('SELECT COALESCE(MAX(number), 1500) + 1 AS n FROM stories WHERE project = ?').get(project) as { n: number };
+        const { n } = db.prepare('SELECT COALESCE(MAX(number), 1000) + 1 AS n FROM stories WHERE project = ?').get(project) as { n: number };
         const k = `${project}-${n}`;
         const t = now();
-        const user = q.user.get(s.createdBy) as { name: string } | undefined;
+        const user = getUser(s.createdBy);
         db.prepare(
-          `INSERT INTO stories (key, application_id, project, number, summary, description, type, status, fix_version, assignee, original, refinement_id, source, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'horizon', ?, ?, ?)`,
-        ).run(k, app, project, n, s.summary, s.description, s.type, s.status, s.fixVersion, user?.name ?? '', s.original ? JSON.stringify(s.original) : null, s.refinementId, s.createdBy, t, t);
-        insertChildren(db, k, s.acceptanceCriteria, s.components, []);
+          `INSERT INTO stories (key, application_id, project, number, summary, description, type, status, fix_version, assignee, assignee_id, purpose, original, refinement_id, source, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'horizon', ?, ?, ?)`,
+        ).run(k, app, project, n, s.summary, s.description, s.type, s.status, s.fixVersion, user?.name ?? '', s.createdBy, s.purpose, s.original ? JSON.stringify(s.original) : null, s.refinementId, s.createdBy, t, t);
+        linkStory(k, app, s.acceptanceCriteria, s.components, []);
         if (s.refinementId) db.prepare('UPDATE refinements SET story_key = ? WHERE id = ?').run(k, s.refinementId);
         audit('user', s.createdBy, 'story.create', 'story', k, { refined: !!s.refinementId });
         return k;
@@ -384,13 +428,25 @@ export function openDb(path: string) {
     },
 
     /* ---------- Chats (recorded with each request so agent runs link to them) ---------- */
-    upsertChat(c: { id: string; title: string; agent: string; workspace: string; userId: string }, app = DEFAULT_APP) {
+    upsertChat(c: { id: string; title: string; agent: string; workspace: string; userId: string }, app: string) {
       const t = now();
       const ws = db.prepare('SELECT id FROM workspaces WHERE application_id = ? AND name = ?').get(app, c.workspace) as { id: string } | undefined;
       db.prepare(
         `INSERT INTO chats (id, application_id, workspace_id, title, agent, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET agent = excluded.agent, updated_at = excluded.updated_at`,
       ).run(c.id, app, ws?.id ?? null, c.title.slice(0, 200), c.agent, c.userId, t, t);
+    },
+    /** A person's recent chats in an application. */
+    listChats(app: string, userId: string, limit = 12) {
+      return (db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? ORDER BY updated_at DESC LIMIT ?').all(app, userId, limit) as Row[]).map((r) => ({
+        id: String(r.id),
+        title: String(r.title),
+        updatedAt: String(r.updated_at),
+      }));
+    },
+    getChat(id: string) {
+      const r = db.prepare('SELECT id, application_id, title, agent, created_by FROM chats WHERE id = ?').get(id) as Row | undefined;
+      return r ? { id, applicationId: String(r.application_id), title: String(r.title), agent: String(r.agent), createdBy: String(r.created_by) } : undefined;
     },
     addUserMessage(m: { id: string; chatId: string; text: string; testType: string | null; testTypeSource: string | null; userId: string; items: { type: string; ref: string }[] }) {
       const exists = db.prepare('SELECT 1 FROM messages WHERE id = ?').get(m.id);
@@ -416,9 +472,10 @@ export function openDb(path: string) {
     },
 
     /* ---------- Workflow, agents, steps, guards ---------- */
-    startWorkflow(w: { id: string; chatId: string | null; messageId: string | null; revision: number; userId: string }) {
-      db.prepare("INSERT INTO workflow_runs (id, chat_id, message_id, revision, requested_by, status, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?)").run(
+    startWorkflow(w: { id: string; app: string | null; chatId: string | null; messageId: string | null; revision: number; userId: string }) {
+      db.prepare("INSERT INTO workflow_runs (id, application_id, chat_id, message_id, revision, requested_by, status, started_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)").run(
         w.id,
+        w.app,
         w.chatId,
         w.messageId,
         w.revision,
@@ -491,31 +548,32 @@ export function openDb(path: string) {
       ).run(c.workflowRunId, c.agentRunId, c.agent, c.userId, c.model, c.purpose, c.status, c.promptTokens, c.completionTokens, Math.round(c.latencyMs), now());
     },
 
-    /** Token totals: all time, today, and broken down by agent, model, user and day. */
-    usage() {
-      const sum = `COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt, COALESCE(SUM(completion_tokens), 0) AS completion,
-                   COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) AS total,
-                   SUM(CASE WHEN prompt_tokens IS NULL THEN 1 ELSE 0 END) AS unreported`;
+    /** Token totals for an application (or everything): all time, today, by agent, model, user and day. */
+    usage(app: string | null = null) {
+      const sum = `COUNT(*) AS calls, COALESCE(SUM(m.prompt_tokens), 0) AS prompt, COALESCE(SUM(m.completion_tokens), 0) AS completion,
+                   COALESCE(SUM(m.prompt_tokens), 0) + COALESCE(SUM(m.completion_tokens), 0) AS total,
+                   SUM(CASE WHEN m.prompt_tokens IS NULL THEN 1 ELSE 0 END) AS unreported`;
+      const from = `FROM model_calls m LEFT JOIN workflow_runs w ON w.id = m.workflow_run_id WHERE (? IS NULL OR w.application_id = ?)`;
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
       type Tot = { calls: number; prompt: number; completion: number; total: number; unreported: number };
       return {
-        allTime: db.prepare(`SELECT ${sum} FROM model_calls`).get() as Tot,
-        today: db.prepare(`SELECT ${sum} FROM model_calls WHERE created_at >= ?`).get(startOfDay.toISOString()) as Tot,
-        byAgent: db.prepare(`SELECT agent AS key, ${sum} FROM model_calls GROUP BY agent ORDER BY total DESC`).all() as (Tot & { key: string })[],
-        byModel: db.prepare(`SELECT model AS key, ${sum} FROM model_calls GROUP BY model ORDER BY total DESC`).all() as (Tot & { key: string })[],
+        allTime: db.prepare(`SELECT ${sum} ${from}`).get(app, app) as Tot,
+        today: db.prepare(`SELECT ${sum} ${from} AND m.created_at >= ?`).get(app, app, startOfDay.toISOString()) as Tot,
+        byAgent: db.prepare(`SELECT m.agent AS key, ${sum} ${from} GROUP BY m.agent ORDER BY total DESC`).all(app, app) as (Tot & { key: string })[],
+        byModel: db.prepare(`SELECT m.model AS key, ${sum} ${from} GROUP BY m.model ORDER BY total DESC`).all(app, app) as (Tot & { key: string })[],
         byUser: db
-          .prepare(`SELECT COALESCE(u.name, 'Unknown') AS key, ${sum.replace(/prompt_tokens/g, 'm.prompt_tokens').replace(/completion_tokens/g, 'm.completion_tokens')} FROM model_calls m LEFT JOIN users u ON u.id = m.user_id GROUP BY u.id ORDER BY total DESC`)
-          .all() as (Tot & { key: string })[],
-        byDay: db.prepare(`SELECT substr(created_at, 1, 10) AS key, ${sum} FROM model_calls GROUP BY key ORDER BY key DESC LIMIT 14`).all() as (Tot & { key: string })[],
+          .prepare(`SELECT COALESCE(u.name, 'Unknown') AS key, ${sum} FROM model_calls m LEFT JOIN workflow_runs w ON w.id = m.workflow_run_id LEFT JOIN users u ON u.id = m.user_id WHERE (? IS NULL OR w.application_id = ?) GROUP BY u.id ORDER BY total DESC`)
+          .all(app, app) as (Tot & { key: string })[],
+        byDay: db.prepare(`SELECT substr(m.created_at, 1, 10) AS key, ${sum} ${from} GROUP BY key ORDER BY key DESC LIMIT 14`).all(app, app) as (Tot & { key: string })[],
       };
     },
 
     /* ---------- Hexa: test case inventory ---------- */
 
-    listTests(f: { q?: string; kind?: string; kinds?: string[]; purpose?: string; result?: string; origin?: string; framework?: string; repo?: string; limit?: number; offset?: number } = {}) {
-      const where = ["t.status = 'active'"];
-      const args: unknown[] = [];
+    listTests(app: string, f: { q?: string; kind?: string; kinds?: string[]; purpose?: string; result?: string; origin?: string; framework?: string; repo?: string; limit?: number; offset?: number } = {}) {
+      const where = ["t.status = 'active'", 't.application_id = ?'];
+      const args: unknown[] = [app];
       if (f.kind) (where.push('t.kind = ?'), args.push(f.kind));
       if (f.kinds?.length) (where.push(`t.kind IN (${f.kinds.map(() => '?').join(', ')})`), args.push(...f.kinds));
       if (f.purpose) (where.push('t.purpose = ?'), args.push(f.purpose));
@@ -564,25 +622,33 @@ export function openDb(path: string) {
       return { rows: out, total };
     },
 
-    testStats() {
-      const one = (sql: string) => db.prepare(sql).all() as { key: string; n: number }[];
+    testStats(app: string) {
+      const one = (sql: string) => db.prepare(sql).all(app) as { key: string; n: number }[];
+      const A = "status = 'active' AND application_id = ?";
       return {
-        total: (db.prepare("SELECT COUNT(*) AS n FROM test_cases WHERE status = 'active'").get() as { n: number }).n,
-        byKind: one("SELECT kind AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' GROUP BY kind"),
-        byOrigin: one("SELECT origin AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' GROUP BY origin"),
-        byFramework: one("SELECT COALESCE(framework, 'Manual') AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' GROUP BY key ORDER BY n DESC"),
-        byRepo: one("SELECT COALESCE(repo, 'No repository') AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' GROUP BY key ORDER BY n DESC"),
-        byResult: one("SELECT COALESCE(last_result, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' AND kind = 'automated' GROUP BY key"),
-        byPurpose: one("SELECT COALESCE(purpose, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE status = 'active' GROUP BY key"),
-        runs: (db.prepare('SELECT COUNT(*) AS n FROM test_runs').get() as { n: number }).n,
-        storiesWithoutTests: (db.prepare("SELECT COUNT(*) AS n FROM stories s WHERE NOT EXISTS (SELECT 1 FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id AND t.status = 'active' WHERE l.entity_type = 'story' AND l.entity_ref = s.key)").get() as { n: number }).n,
+        total: (db.prepare(`SELECT COUNT(*) AS n FROM test_cases WHERE ${A}`).get(app) as { n: number }).n,
+        byKind: one(`SELECT kind AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY kind`),
+        byOrigin: one(`SELECT origin AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY origin`),
+        byFramework: one(`SELECT COALESCE(framework, 'Manual') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key ORDER BY n DESC`),
+        byRepo: one(`SELECT COALESCE(repo, 'No repository') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key ORDER BY n DESC`),
+        byResult: one(`SELECT COALESCE(last_result, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} AND kind = 'automated' GROUP BY key`),
+        byPurpose: one(`SELECT COALESCE(purpose, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key`),
+        runs: (db.prepare('SELECT COUNT(*) AS n FROM test_runs WHERE application_id = ?').get(app) as { n: number }).n,
+        storiesWithoutTests: (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS n FROM stories s WHERE s.application_id = ? AND NOT EXISTS (
+                 SELECT 1 FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id AND t.status = 'active' WHERE l.entity_type = 'story' AND l.entity_ref = s.key)`,
+            )
+            .get(app) as { n: number }
+        ).n,
       };
     },
 
-    startScan(s: { id: string; repo: string; ref: string | null; workflowRunId: string; userId: string }) {
+    startScan(s: { id: string; app: string; repo: string; ref: string | null; workflowRunId: string; userId: string }) {
       db.prepare("INSERT INTO repo_scans (id, application_id, repo, ref, status, workflow_run_id, started_by, started_at) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)").run(
         s.id,
-        DEFAULT_APP,
+        s.app,
         s.repo,
         s.ref,
         s.workflowRunId,
@@ -590,8 +656,8 @@ export function openDb(path: string) {
         now(),
       );
     },
-    runningScan(repo: string) {
-      return db.prepare("SELECT id FROM repo_scans WHERE repo = ? AND status = 'running'").get(repo) as { id: string } | undefined;
+    runningScan(app: string, repo: string) {
+      return db.prepare("SELECT id FROM repo_scans WHERE application_id = ? AND repo = ? AND status = 'running'").get(app, repo) as { id: string } | undefined;
     },
     failScan(id: string, error: string) {
       db.prepare("UPDATE repo_scans SET status = 'failed', error = ?, ended_at = ? WHERE id = ?").run(error, now(), id);
@@ -601,7 +667,19 @@ export function openDb(path: string) {
      * Replaces a repo's scanned tests with what this scan found: new tests are added, known ones
      * updated, and tests no longer in the repo marked removed (kept for history).
      */
-    completeScan(s: { id: string; repo: string; ref: string; sha: string; htmlUrl: string; filesFound: number; filesScanned: number; truncated: boolean; tests: { path: string; title: string; name?: string; suite: string | null; framework: string; line: number }[]; userId: string }) {
+    completeScan(s: {
+      id: string;
+      app: string;
+      repo: string;
+      ref: string;
+      sha: string;
+      htmlUrl: string;
+      filesFound: number;
+      filesScanned: number;
+      truncated: boolean;
+      tests: { path: string; title: string; name?: string; suite: string | null; framework: string; line: number }[];
+      userId: string;
+    }) {
       return db.transaction(() => {
         const t = now();
         const seen = new Set<string>();
@@ -613,26 +691,30 @@ export function openDb(path: string) {
            ON CONFLICT(id) DO UPDATE SET title = excluded.title, suite = excluded.suite, code_name = excluded.code_name, framework = excluded.framework, ref = excluded.ref, line = excluded.line, url = excluded.url, status = 'active', scan_id = excluded.scan_id, updated_at = excluded.updated_at`,
         );
         for (const x of s.tests) {
-          const id = testId(s.repo, x.path, x.suite, x.title);
+          const id = testId(s.app, s.repo, x.path, x.suite, x.title);
           if (seen.has(id)) continue;
           seen.add(id);
           if (!exists.get(id)) added++;
-          up.run({ id, app: DEFAULT_APP, title: x.title.slice(0, 300), suite: x.suite, code: x.name ?? null, framework: x.framework, repo: s.repo, ref: s.ref, path: x.path, line: x.line, url: `${s.htmlUrl}/blob/${s.sha}/${x.path}#L${x.line}`, scan: s.id, user: s.userId, t });
+          up.run({ id, app: s.app, title: x.title.slice(0, 300), suite: x.suite, code: x.name ?? null, framework: x.framework, repo: s.repo, ref: s.ref, path: x.path, line: x.line, url: `${s.htmlUrl}/blob/${s.sha}/${x.path}#L${x.line}`, scan: s.id, user: s.userId, t });
         }
-        const old = db.prepare("SELECT id FROM test_cases WHERE repo = ? AND origin = 'repo_scan' AND status = 'active'").all(s.repo) as { id: string }[];
+        const old = db.prepare("SELECT id FROM test_cases WHERE application_id = ? AND repo = ? AND origin = 'repo_scan' AND status = 'active'").all(s.app, s.repo) as { id: string }[];
         const gone = old.filter((o) => !seen.has(o.id));
         const rm = db.prepare("UPDATE test_cases SET status = 'removed', updated_at = ? WHERE id = ?");
         for (const g of gone) rm.run(t, g.id);
         db.prepare(
           "UPDATE repo_scans SET status = 'done', sha = ?, ref = ?, files_found = ?, files_scanned = ?, tests_found = ?, tests_new = ?, tests_removed = ?, truncated = ?, ended_at = ? WHERE id = ?",
         ).run(s.sha, s.ref, s.filesFound, s.filesScanned, seen.size, added, gone.length, s.truncated ? 1 : 0, t, s.id);
-        audit('user', s.userId, 'hexa.scan', 'repository', s.repo, { found: seen.size, added, removed: gone.length });
+        audit('user', s.userId, 'hexa.scan', 'repository', s.repo, { app: s.app, found: seen.size, added, removed: gone.length });
         return { found: seen.size, added, removed: gone.length };
       })();
     },
 
-    listScans(limit = 10): ScanRow[] {
-      return (db.prepare('SELECT s.*, u.name AS user_name FROM repo_scans s JOIN users u ON u.id = s.started_by ORDER BY s.started_at DESC, s.rowid DESC LIMIT ?').all(limit) as Row[]).map((r) => ({
+    listScans(app: string, limit = 10): ScanRow[] {
+      return (
+        db
+          .prepare('SELECT s.*, u.name AS user_name FROM repo_scans s JOIN users u ON u.id = s.started_by WHERE s.application_id = ? ORDER BY s.started_at DESC, s.rowid DESC LIMIT ?')
+          .all(app, limit) as Row[]
+      ).map((r) => ({
         id: String(r.id),
         repo: String(r.repo),
         ref: (r.ref as string) ?? null,
@@ -648,6 +730,10 @@ export function openDb(path: string) {
         startedAt: String(r.started_at),
         endedAt: (r.ended_at as string) ?? null,
       }));
+    },
+
+    hasUpload(app: string, filename: string) {
+      return !!db.prepare('SELECT 1 FROM hexa_uploads WHERE application_id = ? AND filename = ?').get(app, filename);
     },
 
     /**
@@ -671,20 +757,19 @@ export function openDb(path: string) {
         covers: string[];
         steps: { type: 'simple' | 'validation' | 'call'; description: string }[];
       }[],
-      o: { origin: 'upload' | 'uat_analyst'; purposeDefault: 'uat' | 'regression' | null; filename: string; format: string; problems: { row: number; message: string }[]; userId: string },
+      o: { app: string; origin: 'upload' | 'uat_analyst'; purposeDefault: 'uat' | 'regression' | null; filename: string; format: string; problems: { row: number; message: string }[]; userId: string },
     ) {
       return db.transaction(() => {
         const t = now();
-        const uploadId = createHash('sha1').update(`${o.filename}|${t}|${Math.random()}`).digest('hex').slice(0, 16);
+        const uploadId = createHash('sha1').update(`${o.app}|${o.filename}|${t}|${Math.random()}`).digest('hex').slice(0, 16);
         const find = db.prepare('SELECT id FROM test_cases WHERE application_id = ? AND external_id = ?');
-        const storyExists = db.prepare('SELECT 1 FROM stories WHERE key = ?');
-        const reqExists = db.prepare('SELECT 1 FROM requirements WHERE id = ?');
+        const storyExists = db.prepare('SELECT 1 FROM stories WHERE key = ? AND application_id = ?');
         const problems = [...o.problems];
         let created = 0;
         let updated = 0;
         for (const x of tests) {
-          const existing = find.get(DEFAULT_APP, x.externalId) as { id: string } | undefined;
-          const id = existing?.id ?? `MT-${createHash('sha1').update(`${DEFAULT_APP}|${x.externalId}`).digest('hex').slice(0, 10).toUpperCase()}`;
+          const existing = find.get(o.app, x.externalId) as { id: string } | undefined;
+          const id = existing?.id ?? `MT-${createHash('sha1').update(`${o.app}|${x.externalId}`).digest('hex').slice(0, 10).toUpperCase()}`;
           const purpose = x.purpose ?? o.purposeDefault;
           if (existing) {
             db.prepare(
@@ -695,7 +780,7 @@ export function openDb(path: string) {
             db.prepare(
               `INSERT INTO test_cases (id, application_id, title, kind, purpose, origin, external_id, description, test_type, phase, owner, designer, product_areas, application_modules, user_tags, estimated_minutes, upload_id, created_by, created_at, updated_at)
                VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            ).run(id, DEFAULT_APP, x.name, purpose, o.origin, x.externalId, x.description, x.testType, x.phase, x.owner, x.designer, x.productAreas, x.applicationModules, x.userTags, x.estimatedMinutes, uploadId, o.userId, t, t);
+            ).run(id, o.app, x.name, purpose, o.origin, x.externalId, x.description, x.testType, x.phase, x.owner, x.designer, x.productAreas, x.applicationModules, x.userTags, x.estimatedMinutes, uploadId, o.userId, t, t);
             created++;
           }
           db.prepare('DELETE FROM test_steps WHERE test_case_id = ?').run(id);
@@ -704,17 +789,20 @@ export function openDb(path: string) {
           const link = db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)');
           for (const ref of x.covers) {
             const crit = /^([A-Z][A-Z0-9]+-\d+)#(AC\d+)$/.exec(ref);
-            if (crit && storyExists.get(crit[1])) {
+            if (crit && storyExists.get(crit[1], o.app)) {
               link.run(id, 'story', crit[1]);
               link.run(id, 'criterion', ref);
-            } else if (storyExists.get(ref)) link.run(id, 'story', ref);
-            else if (reqExists.get(ref) || /^N?FR-\d+$/.test(ref)) link.run(id, 'requirement', ref);
-            else problems.push({ row: 0, message: `"${x.name}" covers "${ref}", which is not a known story or requirement; not linked.` });
+            } else if (storyExists.get(ref, o.app)) link.run(id, 'story', ref);
+            else if (/^N?FR-\d+$/.test(ref)) {
+              db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)').run(ref, o.app);
+              link.run(id, 'requirement', ref);
+            } else if (q.componentByName.get(o.app, ref)) link.run(id, 'component', componentId(o.app, ref));
+            else problems.push({ row: 0, message: `"${x.name}" covers "${ref}", which is not a known story, requirement or component of this application; not linked.` });
           }
         }
         db.prepare('INSERT INTO hexa_uploads (id, application_id, kind, filename, format, created, updated, problems, uploaded_by, uploaded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
           uploadId,
-          DEFAULT_APP,
+          o.app,
           'manual_tests',
           o.filename.slice(0, 200),
           o.format,
@@ -724,17 +812,17 @@ export function openDb(path: string) {
           o.userId,
           t,
         );
-        audit('user', o.userId, 'hexa.upload_manual', 'upload', uploadId, { created, updated, problems: problems.length });
+        audit('user', o.userId, 'hexa.upload_manual', 'upload', uploadId, { app: o.app, created, updated, problems: problems.length });
         return { uploadId, created, updated, problems };
       })();
     },
 
-    /** Automated tests in a repo (or all), for matching CI results. */
-    automatedCandidates(repo: string | null) {
+    /** Automated tests in an application's repo (or all its repos), for matching CI results. */
+    automatedCandidates(app: string, repo: string | null) {
       const rows = (
         repo
-          ? db.prepare("SELECT id, suite, code_name, title, path FROM test_cases WHERE kind = 'automated' AND status = 'active' AND repo = ?").all(repo)
-          : db.prepare("SELECT id, suite, code_name, title, path FROM test_cases WHERE kind = 'automated' AND status = 'active'").all()
+          ? db.prepare("SELECT id, suite, code_name, title, path FROM test_cases WHERE application_id = ? AND kind = 'automated' AND status = 'active' AND repo = ?").all(app, repo)
+          : db.prepare("SELECT id, suite, code_name, title, path FROM test_cases WHERE application_id = ? AND kind = 'automated' AND status = 'active'").all(app)
       ) as Row[];
       return rows.map((r) => ({ id: String(r.id), suite: (r.suite as string) ?? null, codeName: (r.code_name as string) ?? null, title: String(r.title), path: (r.path as string) ?? null }));
     },
@@ -754,7 +842,7 @@ export function openDb(path: string) {
     ) {
       return db.transaction(() => {
         const t = now();
-        const runId = createHash('sha1').update(`${meta.source}|${meta.repo}|${meta.externalRunId ?? t}|${Math.random()}`).digest('hex').slice(0, 16);
+        const runId = createHash('sha1').update(`${meta.app}|${meta.source}|${meta.repo}|${meta.externalRunId ?? t}|${Math.random()}`).digest('hex').slice(0, 16);
         const runAt = meta.startedAt ?? t;
         let created = 0;
         let matched = 0;
@@ -769,7 +857,7 @@ export function openDb(path: string) {
                 `INSERT OR IGNORE INTO test_cases (id, application_id, title, suite, code_name, kind, framework, origin, repo, path, created_by, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, 'automated', NULL, 'ci_results', ?, ?, ?, ?, ?)`,
               )
-              .run(id, DEFAULT_APP, r.create.title.slice(0, 300), r.create.suite, r.create.codeName, meta.repo, r.create.path, userId, t, t);
+              .run(id, meta.app, r.create.title.slice(0, 300), r.create.suite, r.create.codeName, meta.repo, r.create.path, userId, t, t);
             if (ins.changes) created++;
           } else if (id) matched++;
           if (!id) continue;
@@ -783,20 +871,24 @@ export function openDb(path: string) {
         db.prepare(
           `INSERT INTO test_runs (id, application_id, source, repo, workflow, external_run_id, run_url, event, branch, sha, pr_number, is_merge, status, total, passed, failed, skipped, duration_ms, started_at, ingested_by, ingested_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(runId, DEFAULT_APP, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, runAt, userId, t);
+        ).run(runId, meta.app, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, runAt, userId, t);
         const res = db.prepare('INSERT INTO test_results (run_id, test_case_id, status, duration_ms, message) VALUES (?, ?, ?, ?, ?)');
-        const last = db.prepare("UPDATE test_cases SET last_result = ?, last_run_at = ?, updated_at = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)");
+        const last = db.prepare('UPDATE test_cases SET last_result = ?, last_run_at = ?, updated_at = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)');
         for (const r of seen.values()) {
           res.run(runId, r.testCaseId, r.status, r.durationMs, r.message);
           last.run(r.status, runAt, t, r.testCaseId, runAt);
         }
-        audit('user', userId, 'hexa.ingest_run', 'test_run', runId, { source: meta.source, repo: meta.repo, total, failed: counts.failed, created });
+        audit('user', userId, 'hexa.ingest_run', 'test_run', runId, { app: meta.app, source: meta.source, repo: meta.repo, total, failed: counts.failed, created });
         return { runId, total, matched, created, ...counts };
       })();
     },
 
-    listRuns(limit = 20) {
-      return (db.prepare('SELECT r.*, u.name AS user_name FROM test_runs r LEFT JOIN users u ON u.id = r.ingested_by ORDER BY COALESCE(r.started_at, r.ingested_at) DESC, r.rowid DESC LIMIT ?').all(limit) as Row[]).map((r) => ({
+    listRuns(app: string, limit = 20) {
+      return (
+        db
+          .prepare('SELECT r.*, u.name AS user_name FROM test_runs r LEFT JOIN users u ON u.id = r.ingested_by WHERE r.application_id = ? ORDER BY COALESCE(r.started_at, r.ingested_at) DESC, r.rowid DESC LIMIT ?')
+          .all(app, limit) as Row[]
+      ).map((r) => ({
         id: String(r.id),
         source: String(r.source),
         repo: (r.repo as string) ?? null,
@@ -826,6 +918,7 @@ export function openDb(path: string) {
       if (!r) return undefined;
       return {
         id,
+        applicationId: String(r.application_id),
         title: String(r.title),
         kind: String(r.kind),
         purpose: (r.purpose as string) ?? null,
@@ -878,12 +971,55 @@ export function openDb(path: string) {
       };
     },
 
+    /** Links a test to a story, criterion, requirement or component; `remove` unlinks. */
+    linkTest(testCaseId: string, type: 'story' | 'criterion' | 'requirement' | 'component', ref: string, by: string, remove = false) {
+      if (remove) db.prepare('DELETE FROM test_case_links WHERE test_case_id = ? AND entity_type = ? AND entity_ref = ?').run(testCaseId, type, ref);
+      else db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)').run(testCaseId, type, ref);
+      // A criterion link implies the story link.
+      if (!remove && type === 'criterion') db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)').run(testCaseId, 'story', ref.split('#')[0]);
+      db.prepare('UPDATE test_cases SET updated_at = ? WHERE id = ?').run(now(), testCaseId);
+      audit('user', by, remove ? 'hexa.unlink' : 'hexa.link', 'test_case', testCaseId, { type, ref });
+    },
+
+    /**
+     * What Hexa knows about each acceptance criterion of a story: covered when a linked automated
+     * test passed in its latest run; failing when the latest run failed; not run when linked tests
+     * (automated without a result, or manual) exist; no test otherwise.
+     */
+    coverageFor(storyKey: string): CriterionCoverage[] {
+      const story = getStory(storyKey);
+      if (!story) return [];
+      const linked = db.prepare(
+        `SELECT t.id, t.title, t.kind, t.last_result FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id
+         WHERE l.entity_type = 'criterion' AND l.entity_ref = ? AND t.status = 'active' ORDER BY t.kind, t.title`,
+      );
+      return story.acceptanceCriteria.map((_, i) => {
+        const tests = (linked.all(`${storyKey}#AC${i + 1}`) as Row[]).map((r) => ({ id: String(r.id), title: String(r.title), kind: String(r.kind), lastResult: (r.last_result as string) ?? null }));
+        const auto = tests.filter((t) => t.kind === 'automated');
+        const one = (list: typeof tests) => (list.length === 1 ? list[0].id : `${list.length} tests`);
+        if (auto.some((t) => t.lastResult === 'passed')) {
+          const ok = auto.filter((t) => t.lastResult === 'passed');
+          return { status: 'passing', evidence: `${one(ok)} passed in the latest pipeline run`, tests };
+        }
+        if (auto.some((t) => t.lastResult === 'failed')) {
+          const bad = auto.filter((t) => t.lastResult === 'failed');
+          return { status: 'failing', evidence: `${one(bad)} failed in the latest pipeline run`, tests };
+        }
+        if (tests.length) {
+          const manual = tests.filter((t) => t.kind === 'manual');
+          const evidence = auto.length ? `${one(auto)} exist${auto.length === 1 ? 's' : ''} but ha${auto.length === 1 ? 's' : 've'} no result yet` : `${one(manual)} manual, no automated result`;
+          return { status: 'not-run', evidence, tests };
+        }
+        return { status: 'no-test', evidence: 'No test linked to this criterion', tests };
+      });
+    },
+
     /** Manual tests as rows for the Octane export. */
-    manualForExport(ids?: string[]) {
+    manualForExport(app: string, ids?: string[]) {
       const rows = (
         ids?.length
-          ? db.prepare(`SELECT * FROM test_cases WHERE kind = 'manual' AND status = 'active' AND id IN (${ids.map(() => '?').join(', ')}) ORDER BY external_id`).all(...ids)
-          : db.prepare("SELECT * FROM test_cases WHERE kind = 'manual' AND status = 'active' ORDER BY external_id").all()
+          ? db.prepare(`SELECT * FROM test_cases WHERE application_id = ? AND kind = 'manual' AND status = 'active' AND id IN (${ids.map(() => '?').join(', ')}) ORDER BY external_id`).all(app, ...ids)
+          : db.prepare("SELECT * FROM test_cases WHERE application_id = ? AND kind = 'manual' AND status = 'active' ORDER BY external_id").all(app)
       ) as Row[];
       const steps = db.prepare('SELECT step_type AS type, description FROM test_steps WHERE test_case_id = ? ORDER BY seq');
       const covers = db.prepare("SELECT entity_ref AS ref FROM test_case_links WHERE test_case_id = ? AND entity_type IN ('story', 'requirement', 'criterion') ORDER BY entity_type, entity_ref");
@@ -905,8 +1041,10 @@ export function openDb(path: string) {
       }));
     },
 
-    listUploads(limit = 8) {
-      return (db.prepare('SELECT h.*, u.name AS user_name FROM hexa_uploads h JOIN users u ON u.id = h.uploaded_by ORDER BY uploaded_at DESC, h.rowid DESC LIMIT ?').all(limit) as Row[]).map((r) => ({
+    listUploads(app: string, limit = 8) {
+      return (
+        db.prepare('SELECT h.*, u.name AS user_name FROM hexa_uploads h JOIN users u ON u.id = h.uploaded_by WHERE h.application_id = ? ORDER BY uploaded_at DESC, h.rowid DESC LIMIT ?').all(app, limit) as Row[]
+      ).map((r) => ({
         id: String(r.id),
         kind: String(r.kind),
         filename: String(r.filename),
@@ -922,18 +1060,19 @@ export function openDb(path: string) {
     upsertProposedCases(storyKey: string, cases: { id: string; title: string; criterion: string }[], userId: string) {
       const t = now();
       const story = getStory(storyKey);
+      if (!story) return;
       db.transaction(() => {
         const up = db.prepare(
-          `INSERT INTO test_cases (id, application_id, title, kind, origin, status, created_by, created_at, updated_at)
-           VALUES (?, ?, ?, 'proposed', 'uat_analyst', 'active', ?, ?, ?)
+          `INSERT INTO test_cases (id, application_id, title, kind, purpose, origin, status, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, 'proposed', 'uat', 'uat_analyst', 'active', ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`,
         );
         const link = db.prepare('INSERT OR IGNORE INTO test_case_links (test_case_id, entity_type, entity_ref) VALUES (?, ?, ?)');
         for (const c of cases) {
-          up.run(c.id, DEFAULT_APP, c.title, userId, t, t);
+          up.run(c.id, story.applicationId, c.title, userId, t, t);
           link.run(c.id, 'story', storyKey);
           link.run(c.id, 'criterion', `${storyKey}#${c.criterion}`);
-          for (const comp of story?.components ?? []) link.run(c.id, 'component', comp);
+          for (const comp of story.components) link.run(c.id, 'component', componentId(story.applicationId, comp));
         }
       })();
     },
@@ -947,8 +1086,9 @@ export function openDb(path: string) {
       db.prepare("UPDATE repo_scans SET status = 'failed', error = 'The server stopped during the scan', ended_at = ? WHERE status = 'running'").run(t);
     },
 
-    /** Agent activity: everything running now, plus the most recent finished runs. */
-    listAgentActivity(opts: { recent?: number } = {}): AgentActivity[] {
+    /** Agent activity in an application: everything running now, plus the most recent finished runs. */
+    listAgentActivity(opts: { app?: string | null; recent?: number } = {}): AgentActivity[] {
+      const app = opts.app ?? null;
       const rows = db
         .prepare(
           `SELECT a.*, p.agent AS parent_agent, u.id AS user_id, u.name AS user_name, u.initials AS user_initials, c.id AS chat_id, c.title AS chat_title
@@ -957,11 +1097,12 @@ export function openDb(path: string) {
            JOIN users u ON u.id = w.requested_by
            LEFT JOIN agent_runs p ON p.id = a.parent_id
            LEFT JOIN chats c ON c.id = w.chat_id
-           WHERE a.status = 'running'
-              OR a.id IN (SELECT id FROM agent_runs WHERE status != 'running' ORDER BY started_at DESC, rowid DESC LIMIT ?)
+           WHERE (? IS NULL OR w.application_id = ?)
+             AND (a.status = 'running'
+              OR a.id IN (SELECT a2.id FROM agent_runs a2 JOIN workflow_runs w2 ON w2.id = a2.workflow_run_id WHERE a2.status != 'running' AND (? IS NULL OR w2.application_id = ?) ORDER BY a2.started_at DESC, a2.rowid DESC LIMIT ?))
            ORDER BY a.started_at DESC, a.rowid DESC`,
         )
-        .all(opts.recent ?? 60) as Row[];
+        .all(app, app, app, app, opts.recent ?? 60) as Row[];
       const steps = db.prepare('SELECT seq, kind, label, detail, status FROM agent_steps WHERE agent_run_id = ? ORDER BY seq');
       return rows.map((r) => ({
         id: String(r.id),
@@ -986,7 +1127,75 @@ export function openDb(path: string) {
   };
 }
 
-/** Stable id for a scanned test, so a re-scan updates it instead of adding a duplicate. */
-function testId(repo: string, path: string, suite: string | null, title: string) {
-  return `TC-${createHash('sha1').update(`${repo}|${path}|${suite ?? ''}|${title}`).digest('hex').slice(0, 10).toUpperCase()}`;
+/**
+ * Seeds the database from the workspace: applications, workspaces, people, memberships,
+ * components, and each team's backlog. Safe to run on every start: records are added or
+ * updated, never removed, and stories that already exist are left alone so edits persist.
+ */
+export function seedWorkspace(h: HorizonDb, ws: Workspace) {
+  const db = h.raw;
+  const t = now();
+  const counts = { apps: 0, people: 0, components: 0, stories: 0 };
+  db.transaction(() => {
+    for (const team of ws.teams) {
+      db.prepare(
+        `INSERT INTO applications (id, name, jira_project, description) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, jira_project = excluded.jira_project, description = excluded.description`,
+      ).run(team.id, team.name, team.jiraProject, team.description);
+      counts.apps++;
+      for (const w of team.workspaces) db.prepare('INSERT OR IGNORE INTO workspaces (id, application_id, name) VALUES (?, ?, ?)').run(`${team.id}-${w}`, team.id, w);
+    }
+    for (const p of ws.people) {
+      db.prepare(
+        `INSERT INTO users (id, name, initials, email, created_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, initials = excluded.initials, email = excluded.email`,
+      ).run(p.id, p.name, p.initials, p.email, t);
+      counts.people++;
+      if (ws.teams.some((x) => x.id === p.app)) {
+        db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(p.id, p.app, 'member');
+        if (p.role !== 'member') db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(p.id, p.app, p.role);
+      }
+    }
+    for (const team of ws.teams) {
+      for (const c of team.components) {
+        const repo = team.repos.find((r) => r.name === c.repo);
+        db.prepare(
+          `INSERT INTO components (id, application_id, name, manager_id, workspace_id, repo, path, language, tests) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET manager_id = excluded.manager_id, workspace_id = excluded.workspace_id, repo = excluded.repo, path = excluded.path, language = excluded.language, tests = excluded.tests`,
+        ).run(componentId(team.id, c.name), team.id, c.name, c.manager, `${team.id}-${c.workspace}`, repo?.github ?? c.repo, c.path, c.language, c.tests);
+        counts.components++;
+      }
+      db.prepare('INSERT OR IGNORE INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at) VALUES (?, ?, ?, ?, ?)').run(
+        team.id,
+        team.jiraProject,
+        JSON.stringify(['Ready for UAT', 'In Progress']),
+        15,
+        t,
+      );
+      // Keys are assigned in order after the highest existing number, so re-seeding never collides.
+      let next = ((db.prepare('SELECT COALESCE(MAX(number), 1000) AS n FROM stories WHERE project = ?').get(team.jiraProject) as { n: number }).n ?? 1000) + 1;
+      for (const s of team.stories) {
+        const key = s.key ?? `${team.jiraProject}-${next}`;
+        if (db.prepare('SELECT 1 FROM stories WHERE key = ?').get(key)) continue;
+        if (!s.key) next++;
+        const number = Number(key.split('-').pop());
+        const assignee = s.assignee ? h.getUser(s.assignee) : undefined;
+        const at = s.updatedDaysAgo != null ? daysAgo(s.updatedDaysAgo) : t;
+        db.prepare(
+          `INSERT INTO stories (key, application_id, project, number, summary, description, type, status, fix_version, assignee, assignee_id, purpose, source, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'jira_sync', ?, ?, ?)`,
+        ).run(key, team.id, team.jiraProject, number, s.summary, s.description ?? '', s.type ?? 'Story', s.status ?? 'Ready for UAT', s.fixVersion ?? '', assignee?.name ?? '', assignee?.id ?? null, s.purpose ?? null, team.owner, at, at);
+        const ac = db.prepare('INSERT INTO story_criteria (story_key, seq, text) VALUES (?, ?, ?)');
+        s.acceptanceCriteria.forEach((c, i) => ac.run(key, i + 1, c));
+        const sc = db.prepare('INSERT OR IGNORE INTO story_components (story_key, component_id) VALUES (?, ?)');
+        for (const name of s.components ?? []) if (team.components.some((c) => c.name === name)) sc.run(key, componentId(team.id, name));
+        for (const r of s.requirements ?? []) {
+          db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)').run(r, team.id);
+          db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_id) VALUES (?, ?)').run(key, r);
+        }
+        counts.stories++;
+      }
+    }
+  })();
+  return counts;
 }

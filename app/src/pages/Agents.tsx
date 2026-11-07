@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { AgentNode } from '../components/chat/RunSummary';
 import { Icon } from '../components/Icon';
 import { useAgentActivity, useUsage, type AgentActivity, type UsageRow } from '../lib/agentsStore';
-import { currentUser } from '../lib/data';
+import { useSession } from '../lib/session';
 import type { AgentView } from '../lib/types';
 
 type Filter = 'all' | 'running' | 'rejected' | 'failed' | 'mine';
@@ -34,6 +34,7 @@ const toView = (a: AgentActivity): AgentView => ({
 export function Agents() {
   const { agents, loaded, error, at } = useAgentActivity();
   const [filter, setFilter] = useState<Filter>('all');
+  const myName = useSession().me?.user.name ?? '';
 
   // Group agent runs into workflow runs (one per request), newest first.
   const runs = useMemo(() => {
@@ -56,10 +57,10 @@ export function Agents() {
       : filter === 'running'
         ? r.status === 'running'
         : filter === 'mine'
-          ? r.root.requestedBy.name === currentUser.name
+          ? r.root.requestedBy.name === myName
           : r.list.some((a) => a.status === filter),
   );
-  const count = (f: Filter) => runs.filter((r) => (f === 'running' ? r.status === 'running' : f === 'mine' ? r.root.requestedBy.name === currentUser.name : f === 'all' ? true : r.list.some((a) => a.status === f))).length;
+  const count = (f: Filter) => runs.filter((r) => (f === 'running' ? r.status === 'running' : f === 'mine' ? r.root.requestedBy.name === myName : f === 'all' ? true : r.list.some((a) => a.status === f))).length;
 
   return (
     <div className="page">

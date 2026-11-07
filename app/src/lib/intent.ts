@@ -11,7 +11,7 @@ export const CAPABILITIES: Capability[] = ['analysis', 'authoring', 'execution',
 export interface Intent {
   capability: Capability;
   testType: TestType | null;
-  /** Short plain-language description, e.g. "Check whether PAY-1482 is ready for UAT". */
+  /** Short plain-language description, e.g. "Check whether APP-123 is ready for UAT". */
   action: string;
   tickets: string[];
   components: string[];

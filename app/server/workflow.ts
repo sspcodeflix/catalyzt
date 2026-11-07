@@ -13,7 +13,6 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { components as knownComponents } from '../src/lib/data';
 import { checkInput, policyFromModel, redactSecrets, streamSafeLength, type Policy } from '../src/lib/guardrails';
 import { validateIntent, type Intent, type IntentRequest } from '../src/lib/intent';
 import { rulesIntent } from '../src/lib/routing';
@@ -52,6 +51,8 @@ const secs = (t0: number) => Math.round((performance.now() - t0) / 100) / 10;
 export interface WorkflowOptions {
   db?: HorizonDb;
   userId: string;
+  /** The application the request is scoped to. */
+  app: string;
 }
 
 class Recorder {
@@ -150,15 +151,16 @@ export async function runWorkflow(
   cfg: DeepSeekConfig | null,
   emit: Emit,
   signal: AbortSignal,
-  opts: WorkflowOptions = { userId: 'u-priya' },
+  opts: WorkflowOptions,
 ): Promise<void> {
-  const { db, userId } = opts;
+  const { db, userId, app } = opts;
+  const knownComponents = req.knownComponents ?? [];
   const started = performance.now();
   const total = () => `${secs(started)} s`;
 
   // Record the chat and message so the run links to them.
   if (db && req.chatId && req.messageId) {
-    db.upsertChat({ id: req.chatId, title: req.chatTitle ?? req.text.slice(0, 80), agent: req.agent, workspace: req.scope.workspace, userId });
+    db.upsertChat({ id: req.chatId, title: req.chatTitle ?? req.text.slice(0, 80), agent: req.agent, workspace: req.scope.workspace, userId }, app);
     db.addUserMessage({
       id: req.messageId,
       chatId: req.chatId,
@@ -171,7 +173,7 @@ export async function runWorkflow(
   }
 
   const rec = new Recorder(emit, db, userId);
-  db?.startWorkflow({ id: rec.workflowRunId, chatId: req.chatId ?? null, messageId: req.messageId ?? null, revision: req.revision ?? 1, userId });
+  db?.startWorkflow({ id: rec.workflowRunId, app, chatId: req.chatId ?? null, messageId: req.messageId ?? null, revision: req.revision ?? 1, userId });
   const short = req.text.length > 80 ? `${req.text.slice(0, 77)}…` : req.text;
   // A message with a secret is never written into a task.
   const root = new AgentHandle(rec, randomUUID(), null, 'Orchestrator', 'orchestrator', 'Handle the request', undefined);
@@ -271,9 +273,11 @@ export async function runWorkflow(
     if (ticket) {
       router.finish('done', { result: `Assigned to the UAT analyst: ${ticket.key}`, ...routerUsage });
       const uat = root.spawn('UAT analyst', 'tool_agent', `Check whether ${ticket.key} is ready for UAT`);
-      const { answer, artifact } = uatAnswer(ticket);
+      // Coverage comes from Hexa: tests linked to each criterion and their latest pipeline results.
+      const coverage = db?.coverageFor(ticket.key) ?? ticket.acceptanceCriteria.map(() => ({ status: 'no-test' as const, evidence: 'No test linked to this criterion' }));
+      const { answer, artifact } = uatAnswer(ticket, coverage);
       const run = answer.blocks[0];
-      const tools = ['jira.get_story', 'requirements.map', 'evidence.test_results', 'uat.draft_cases'];
+      const tools = ['jira.get_story', 'hexa.linked_tests', 'hexa.latest_results', 'uat.draft_cases'];
       (run.kind === 'run' ? run.steps : []).forEach((s, i) => {
         const done = uat.step(s.noModel ? 'tool' : 'model', s.label, tools[i]);
         done({ detail: s.detail });

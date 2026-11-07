@@ -1,0 +1,143 @@
+{
+  "id": "ABCD",
+  "name": "Ram's Portfolio",
+  "description": "Ram Kumar's portfolio: the Online Boutique microservices (GoogleCloudPlatform/microservices-demo) and the moov-io ACH library.",
+  "jiraProject": "ABCD",
+  "owner": "u-ram",
+  "workspaces": [
+    "online-boutique",
+    "ach"
+  ],
+  "repos": [
+    {
+      "name": "microservices-demo",
+      "github": "GoogleCloudPlatform/microservices-demo",
+      "clone": true,
+      "languages": [
+        "Go",
+        "C#",
+        "Java",
+        "Node.js",
+        "Python"
+      ],
+      "testFrameworks": [
+        "go test",
+        "xUnit (.NET)",
+        "JUnit (Gradle)",
+        "pytest"
+      ]
+    },
+    {
+      "name": "ach",
+      "github": "moov-io/ach",
+      "clone": true,
+      "languages": [
+        "Go"
+      ],
+      "testFrameworks": [
+        "go test"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "frontend",
+      "manager": "u-sourav",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/frontend",
+      "language": "Go",
+      "tests": "go test"
+    },
+    {
+      "name": "cartservice",
+      "manager": "u-sourav",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/cartservice",
+      "language": "C#",
+      "tests": "xUnit (.NET)"
+    },
+    {
+      "name": "paymentservice",
+      "manager": "u-sourav",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/paymentservice",
+      "language": "Node.js",
+      "tests": "none in repo"
+    },
+    {
+      "name": "currencyservice",
+      "manager": "u-sourav",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/currencyservice",
+      "language": "Node.js",
+      "tests": "none in repo"
+    },
+    {
+      "name": "shippingservice",
+      "manager": "u-sourav",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/shippingservice",
+      "language": "Go",
+      "tests": "go test"
+    },
+    {
+      "name": "checkoutservice",
+      "manager": "u-brijesh",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/checkoutservice",
+      "language": "Go",
+      "tests": "go test"
+    },
+    {
+      "name": "productcatalogservice",
+      "manager": "u-brijesh",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/productcatalogservice",
+      "language": "Go",
+      "tests": "go test"
+    },
+    {
+      "name": "adservice",
+      "manager": "u-brijesh",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/adservice",
+      "language": "Java",
+      "tests": "JUnit (Gradle)"
+    },
+    {
+      "name": "emailservice",
+      "manager": "u-brijesh",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/emailservice",
+      "language": "Python",
+      "tests": "pytest"
+    },
+    {
+      "name": "recommendationservice",
+      "manager": "u-brijesh",
+      "workspace": "online-boutique",
+      "repo": "microservices-demo",
+      "path": "src/recommendationservice",
+      "language": "Python",
+      "tests": "pytest"
+    },
+    {
+      "name": "ach-core",
+      "manager": "u-brijesh",
+      "workspace": "ach",
+      "repo": "ach",
+      "path": ".",
+      "language": "Go",
+      "tests": "go test"
+    }
+  ]
+}

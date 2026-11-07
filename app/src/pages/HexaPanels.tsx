@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
 import { Icon } from '../components/Icon';
 import { api, fileToBase64, hexaChanged, ORIGIN, PURPOSE, RESULT, type TestDetail } from '../lib/hexa';
+import { withSession } from '../lib/session';
 import { relTime } from './Tickets';
 
 function useScrollIntoViewOnPhone(dep: unknown) {
@@ -105,7 +106,7 @@ export function HexaUpload() {
           {kind === 'manual' && (
             <small className="muted">
               No template yet?{' '}
-              <a href="/api/hexa/manual/template" download>
+              <a href={withSession('/api/hexa/manual/template')} download>
                 Download the Octane template
               </a>
               . Tests with an existing unique_id are updated, not duplicated.
@@ -271,7 +272,7 @@ export function HexaTestPanel() {
           </span>
         </div>
         {t.kind === 'manual' && (
-          <a className="ghost hidem" href={`/api/hexa/manual/export?ids=${t.id}`} download>
+          <a className="ghost hidem" href={withSession(`/api/hexa/manual/export?ids=${t.id}`)} download>
             <Icon name="dl" small />
             Octane CSV
           </a>

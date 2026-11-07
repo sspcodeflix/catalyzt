@@ -14,7 +14,7 @@ export interface Detection {
   /** null with `ambiguous: false` means there was nothing to go on. */
   type: TestType | null;
   ambiguous: boolean;
-  /** Short reason shown to the user, e.g. "from PAY-1482". */
+  /** Short reason shown to the user, e.g. "from APP-123". */
   reason: string;
   tickets: string[];
 }

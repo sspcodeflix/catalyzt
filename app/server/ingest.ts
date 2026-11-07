@@ -18,10 +18,10 @@ import { ciSuite, ciTestId, ciTitle, matchCase, rawName } from './results';
 export class IngestError extends Error {}
 
 /** Runs `work` as an agent with steps, recorded like the chat workflow's agents. */
-async function asAgent<T>(db: HorizonDb, userId: string, agent: string, task: string, work: (step: (label: string, tool: string) => (status: 'done' | 'failed', detail?: string) => void) => Promise<T>): Promise<T> {
+async function asAgent<T>(db: HorizonDb, app: string, userId: string, agent: string, task: string, work: (step: (label: string, tool: string) => (status: 'done' | 'failed', detail?: string) => void) => Promise<T>): Promise<T> {
   const wf = randomUUID();
   const id = randomUUID();
-  db.startWorkflow({ id: wf, chatId: null, messageId: null, revision: 1, userId });
+  db.startWorkflow({ id: wf, app, chatId: null, messageId: null, revision: 1, userId });
   db.startAgent({ id, workflowRunId: wf, parentId: null, agent, kind: 'tool_agent', task, model: null });
   const step = (label: string, tool: string) => {
     const sid = randomUUID();
@@ -42,11 +42,11 @@ async function asAgent<T>(db: HorizonDb, userId: string, agent: string, task: st
 
 /* ---------- Manual tests ---------- */
 
-export async function importManual(db: HorizonDb, file: { filename: string; data: Buffer }, purposeDefault: 'uat' | 'regression' | null, userId: string) {
+export async function importManual(db: HorizonDb, app: string, file: { filename: string; data: Buffer }, purposeDefault: 'uat' | 'regression' | null, userId: string) {
   const lower = file.filename.toLowerCase();
   const format = lower.endsWith('.xlsx') ? 'xlsx' : lower.endsWith('.csv') ? 'csv' : null;
   if (!format) throw new IngestError('Upload an Octane template as .xlsx or .csv.');
-  return asAgent(db, userId, 'Hexa importer', `Import manual tests from ${file.filename}`, async (step) => {
+  return asAgent(db, app, userId, 'Hexa importer', `Import manual tests from ${file.filename}`, async (step) => {
     const read = step(`Reading ${format.toUpperCase()}`, 'octane.read');
     let rows: string[][];
     try {
@@ -61,7 +61,7 @@ export async function importManual(db: HorizonDb, file: { filename: string; data
     parse('done', `${tests.length} tests, ${tests.reduce((a, t) => a + t.steps.length, 0)} steps`);
     if (tests.length === 0) throw new IngestError(problems[0]?.message ?? 'No tests found in the file.');
     const save = step('Saving to Hexa', 'hexa.upsert_manual');
-    const r = db.upsertManualTests(tests, { origin: 'upload', purposeDefault, filename: file.filename, format, problems, userId });
+    const r = db.upsertManualTests(tests, { app, origin: 'upload', purposeDefault, filename: file.filename, format, problems, userId });
     save('done', `${r.created} new · ${r.updated} updated`);
     return { ...r, tests: tests.length, summary: `${r.created} new, ${r.updated} updated manual tests` };
   });
@@ -71,12 +71,12 @@ export async function importManual(db: HorizonDb, file: { filename: string; data
 
 /** Matches parsed cases to known tests and stores the run. */
 function storeRun(db: HorizonDb, meta: RunMeta, cases: JUnitCase[], userId: string) {
-  const cands = db.automatedCandidates(meta.repo);
+  const cands = db.automatedCandidates(meta.app, meta.repo);
   const results = cases.map((c) => {
     const hit = matchCase(c, cands);
     return {
       testCaseId: hit?.id ?? null,
-      create: hit ? undefined : { id: ciTestId(meta.repo, c), title: ciTitle(c), suite: ciSuite(c), codeName: rawName(c.name), path: c.file },
+      create: hit ? undefined : { id: ciTestId(meta.app, meta.repo, c), title: ciTitle(c), suite: ciSuite(c), codeName: rawName(c.name), path: c.file },
       status: c.status,
       durationMs: c.durationMs,
       message: c.message,
@@ -87,7 +87,7 @@ function storeRun(db: HorizonDb, meta: RunMeta, cases: JUnitCase[], userId: stri
 
 export async function ingestJUnit(db: HorizonDb, files: { filename: string; xml: string }[], meta: RunMeta, userId: string) {
   if (files.length === 0) throw new IngestError('No JUnit XML was sent.');
-  return asAgent(db, userId, 'Results collector', `Record test results${meta.repo ? ` for ${meta.repo}` : ''}${meta.prNumber ? ` (PR #${meta.prNumber})` : ''}`, async (step) => {
+  return asAgent(db, meta.app, userId, 'Results collector', `Record test results${meta.repo ? ` for ${meta.repo}` : ''}${meta.prNumber ? ` (PR #${meta.prNumber})` : ''}`, async (step) => {
     const parse = step(`Reading ${files.length} JUnit file${files.length > 1 ? 's' : ''}`, 'junit.parse');
     const cases: JUnitCase[] = [];
     for (const f of files) {
@@ -137,12 +137,12 @@ async function gh<T>(url: string, token: string, accept = 'application/vnd.githu
  * is the merge commit of a merged pull request. Artifacts whose name looks like test results are
  * downloaded and their JUnit XML ingested. Runs already ingested are skipped.
  */
-export async function syncGitHubActions(db: HorizonDb, input: string, token: string | undefined, userId: string, limit = 10) {
+export async function syncGitHubActions(db: HorizonDb, app: string, input: string, token: string | undefined, userId: string, limit = 10) {
   if (!token) throw new IngestError('Set GITHUB_TOKEN on the server to read GitHub Actions: GitHub requires a token to download run artifacts, even for public repositories.');
   const ref = parseRepoRef(input);
   if (!ref) throw new IngestError('Enter a GitHub repository as owner/repo or a github.com link.');
   const repo = `${ref.owner}/${ref.repo}`;
-  return asAgent(db, userId, 'Results collector', `Collect merge-commit test results from GitHub Actions for ${repo}`, async (step) => {
+  return asAgent(db, app, userId, 'Results collector', `Collect merge-commit test results from GitHub Actions for ${repo}`, async (step) => {
     const list = step('Listing completed runs on the default branch', 'github.list_runs');
     const meta = await gh<{ default_branch: string }>(`https://api.github.com/repos/${repo}`, token);
     const branch = ref.ref ?? meta.default_branch;
@@ -189,7 +189,7 @@ export async function syncGitHubActions(db: HorizonDb, input: string, token: str
       }
       const r = storeRun(
         db,
-        { source: 'github_actions', repo, workflow: run.name, externalRunId: String(run.id), runUrl: run.html_url, event: run.event, branch: run.head_branch, sha: run.head_sha, prNumber: pr.number, isMerge: true, startedAt: run.run_started_at },
+        { app, source: 'github_actions', repo, workflow: run.name, externalRunId: String(run.id), runUrl: run.html_url, event: run.event, branch: run.head_branch, sha: run.head_sha, prNumber: pr.number, isMerge: true, startedAt: run.run_started_at },
         cases,
         userId,
       );

@@ -525,4 +525,46 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX test_results_case ON test_results (test_case_id);
   `,
+  // 5: real teams. Component managers as a role; components carry their manager, workspace, repo path,
+  //    language and test framework; stories carry purpose and assignee; workflow runs carry their application.
+  `
+  ALTER TABLE applications ADD COLUMN description TEXT NOT NULL DEFAULT '';
+
+  CREATE TABLE memberships_v5 (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    role TEXT NOT NULL CHECK (role IN ('member', 'app_owner', 'component_manager', 'security_champion')),
+    PRIMARY KEY (user_id, application_id, role)
+  );
+  INSERT INTO memberships_v5 SELECT user_id, application_id, role FROM memberships;
+  DROP TABLE memberships;
+  ALTER TABLE memberships_v5 RENAME TO memberships;
+
+  -- Component ids become "<application>/<name>", so two applications can both have a "frontend".
+  CREATE TABLE components_v5 (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    name TEXT NOT NULL,
+    manager_id TEXT REFERENCES users(id),
+    workspace_id TEXT REFERENCES workspaces(id),
+    repo TEXT,
+    path TEXT,
+    language TEXT,
+    tests TEXT,
+    indexed_commit TEXT,
+    UNIQUE (application_id, name)
+  );
+  INSERT INTO components_v5 (id, application_id, name, repo, indexed_commit)
+    SELECT application_id || '/' || name, application_id, name, repo, indexed_commit FROM components;
+  UPDATE story_components SET component_id = (SELECT application_id FROM stories WHERE stories.key = story_components.story_key) || '/' || component_id
+    WHERE component_id NOT LIKE '%/%';
+  DROP TABLE components;
+  ALTER TABLE components_v5 RENAME TO components;
+
+  ALTER TABLE stories ADD COLUMN purpose TEXT CHECK (purpose IN ('uat', 'regression'));
+  ALTER TABLE stories ADD COLUMN assignee_id TEXT REFERENCES users(id);
+
+  ALTER TABLE workflow_runs ADD COLUMN application_id TEXT REFERENCES applications(id);
+  CREATE INDEX workflow_runs_app ON workflow_runs (application_id, started_at);
+  `,
 ];

@@ -56,7 +56,7 @@ describe('export and template', () => {
     const { tests, problems } = readOctaneRows(rows);
     expect(problems).toEqual([]);
     expect(tests).toHaveLength(1);
-    expect(tests[0]).toMatchObject({ externalId: 'UAT-1', purpose: 'uat', covers: ['PAY-1482'] });
+    expect(tests[0]).toMatchObject({ externalId: 'UAT-1', purpose: 'uat', covers: ['STORY-1#AC1'] });
     expect(tests[0].steps.map((s) => s.type)).toEqual(['simple', 'simple', 'validation']);
   });
 });

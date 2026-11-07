@@ -2,7 +2,7 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 import { createApi } from './server/api';
-import { openDb, type HorizonDb } from './server/db';
+import { bootstrap, type Boot } from './server/bootstrap';
 import { configFromEnv } from './server/deepseek';
 
 /**
@@ -11,17 +11,20 @@ import { configFromEnv } from './server/deepseek';
  */
 function horizonApi(env: Record<string, string>): Plugin {
   const cfg = configFromEnv(env);
-  // Opened lazily, so `vite build` never touches the database.
-  let db: HorizonDb | null = null;
-  const getDb = () => {
-    if (!db) {
-      db = openDb(env.HORIZON_DB_PATH || 'data/horizon.db');
-      // Anything still marked running belongs to a server that stopped; close it.
-      db.stopOrphans();
+  // Booted lazily, so `vite build` never touches the database or the workspace.
+  let boot: Boot | null = null;
+  const getBoot = () => {
+    if (!boot) {
+      boot = bootstrap(env);
+      console.log(`  Horizon: ${boot.summary}`);
     }
-    return db;
+    return boot;
   };
-  const api = createApi(() => cfg, getDb, { githubToken: env.GITHUB_TOKEN?.trim() || undefined, ingestToken: env.HEXA_INGEST_TOKEN?.trim() || undefined });
+  const api = createApi(() => cfg, () => getBoot().db, {
+    githubToken: env.GITHUB_TOKEN?.trim() || undefined,
+    ingestToken: env.HEXA_INGEST_TOKEN?.trim() || undefined,
+    getWorkspace: () => getBoot().workspace,
+  });
   return {
     name: 'horizon-api',
     configureServer(server) {

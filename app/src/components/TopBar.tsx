@@ -1,7 +1,6 @@
 import { useMatch } from 'react-router-dom';
 
-import { useChat } from '../lib/chatStore';
-import { recents } from '../lib/data';
+import { useChat, useRecentChats } from '../lib/chatStore';
 import { useTheme } from '../lib/useTheme';
 import { HorizonMark } from './HorizonMark';
 import { Icon } from './Icon';
@@ -15,6 +14,7 @@ export function TopBar({ onOpenSidebar }: TopBarProps) {
   const chat = useMatch('/chat/:chatId/*');
   const chatId = chat?.params.chatId;
   const loaded = useChat(chatId);
+  const recents = useRecentChats();
   const title = chatId ? (loaded?.title ?? recents.find((r) => r.id === chatId)?.title ?? 'New chat') : '';
 
   return (

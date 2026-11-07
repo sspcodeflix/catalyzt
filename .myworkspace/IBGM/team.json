@@ -1,0 +1,114 @@
+{
+  "id": "IBGM",
+  "name": "Nabih's Portfolio",
+  "description": "Nabih Ben Lagha's portfolio: PiggyMetrics (Spring Cloud microservices) and OWASP Juice Shop (scanned only, for the security track).",
+  "jiraProject": "IBGM",
+  "owner": "u-nabih",
+  "workspaces": [
+    "piggymetrics",
+    "juice-shop"
+  ],
+  "repos": [
+    {
+      "name": "piggymetrics",
+      "github": "sqshq/piggymetrics",
+      "clone": true,
+      "languages": [
+        "Java"
+      ],
+      "testFrameworks": [
+        "JUnit (Maven)"
+      ]
+    },
+    {
+      "name": "juice-shop",
+      "github": "juice-shop/juice-shop",
+      "clone": false,
+      "languages": [
+        "TypeScript",
+        "Node.js"
+      ],
+      "testFrameworks": [
+        "Mocha",
+        "Jasmine",
+        "Cypress",
+        "Frisby"
+      ],
+      "note": "Scanned through GitHub only; not cloned. Security track target (POC_PLAN.md)."
+    }
+  ],
+  "components": [
+    {
+      "name": "account-service",
+      "manager": "u-sayeer",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "account-service",
+      "language": "Java",
+      "tests": "JUnit (Maven)"
+    },
+    {
+      "name": "auth-service",
+      "manager": "u-sayeer",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "auth-service",
+      "language": "Java",
+      "tests": "JUnit (Maven)"
+    },
+    {
+      "name": "config",
+      "manager": "u-sayeer",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "config",
+      "language": "Java",
+      "tests": "none in repo"
+    },
+    {
+      "name": "registry",
+      "manager": "u-sayeer",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "registry",
+      "language": "Java",
+      "tests": "none in repo"
+    },
+    {
+      "name": "statistics-service",
+      "manager": "u-karim",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "statistics-service",
+      "language": "Java",
+      "tests": "JUnit (Maven)"
+    },
+    {
+      "name": "notification-service",
+      "manager": "u-karim",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "notification-service",
+      "language": "Java",
+      "tests": "JUnit (Maven)"
+    },
+    {
+      "name": "gateway",
+      "manager": "u-karim",
+      "workspace": "piggymetrics",
+      "repo": "piggymetrics",
+      "path": "gateway",
+      "language": "Java",
+      "tests": "none in repo"
+    },
+    {
+      "name": "customer-portal",
+      "manager": "u-karim",
+      "workspace": "juice-shop",
+      "repo": "juice-shop",
+      "path": ".",
+      "language": "TypeScript",
+      "tests": "Mocha, Jasmine, Cypress"
+    }
+  ]
+}

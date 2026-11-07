@@ -36,8 +36,9 @@ export function configFromEnv(env: Record<string, string | undefined>): DeepSeek
   return {
     apiKey,
     baseUrl: (env.DEEPSEEK_BASE_URL?.trim() || 'https://api.deepseek.com').replace(/\/+$/, ''),
-    intentModel: env.DEEPSEEK_INTENT_MODEL?.trim() || 'deepseek-flash',
-    chatModel: env.DEEPSEEK_CHAT_MODEL?.trim() || 'deepseek-flash',
+    // DEEPSEEK_MODEL sets both; the two specific variables override it.
+    intentModel: env.DEEPSEEK_INTENT_MODEL?.trim() || env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash',
+    chatModel: env.DEEPSEEK_CHAT_MODEL?.trim() || env.DEEPSEEK_MODEL?.trim() || 'deepseek-flash',
     thinking: env.DEEPSEEK_THINKING?.trim() === 'on',
     timeoutMs: Number(env.DEEPSEEK_TIMEOUT_MS) || 60_000,
   };

@@ -1,7 +1,8 @@
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
-import { agentLabel, capabilities, components as allComponents, scopeLabel, scopes } from '../lib/data';
+import { agentLabel, capabilities, scopeLabel } from '../lib/data';
+import { useSession } from '../lib/session';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 import { useTickets } from '../lib/ticketStore';
 import type { Agent, Scope, TestType } from '../lib/types';
@@ -45,15 +46,20 @@ export function Composer({
   value,
   onValueChange,
   initialAgent = 'auto',
-  initialScope = scopes[0],
+  initialScope,
   busy = false,
   onStop,
 }: ComposerProps) {
+  const { me } = useSession();
+  const app = me?.app ?? null;
+  const scopes = useMemo<Scope[]>(() => (app ? app.workspaces.map((w) => ({ appName: app.name, appId: app.id, workspace: w })) : []), [app]);
+  const allComponents = app?.components.map((c) => c.name) ?? [];
   const [ownText, setOwnText] = useState('');
   const text = value ?? ownText;
   const setText = onValueChange ?? setOwnText;
   const [agent, setAgent] = useState<Agent>(initialAgent);
-  const [scope, setScope] = useState<Scope>(initialScope);
+  const [chosenScope, setScope] = useState<Scope | null>(initialScope ?? null);
+  const scope: Scope = chosenScope ?? scopes[0] ?? { appName: '', appId: '', workspace: '' };
   const [tickets, setTickets] = useState<string[]>([]);
   const [comps, setComps] = useState<string[]>([]);
   const [override, setOverride] = useState<TestType | null>(null);
@@ -66,7 +72,7 @@ export function Composer({
   const needsChoice = detection.ambiguous && !override;
   const showType = testType !== null || detection.ambiguous;
 
-  const canSend = text.trim().length > 0 && !needsChoice && !busy;
+  const canSend = text.trim().length > 0 && !needsChoice && !busy && !!app;
 
   const reset = () => {
     setText('');
@@ -249,7 +255,7 @@ export function Composer({
         <Picker
           icon="layers"
           label={scopeLabel(scope)}
-          shortLabel={`${scope.appId.replace('App-', '').toUpperCase()} · ${scope.workspace}`}
+          shortLabel={`${scope.appId} · ${scope.workspace}`}
           ariaLabel={`Scope: ${scopeLabel(scope)}`}
           items={scopes.map((s) => ({ key: scopeLabel(s), label: scopeLabel(s) }))}
           selected={scopeLabel(scope)}

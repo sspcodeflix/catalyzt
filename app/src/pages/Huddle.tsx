@@ -2,6 +2,7 @@ import { useId, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { useSession } from '../lib/session';
 import { kindInfo, me, useHuddle, type HuddleItem } from '../lib/huddleData';
 import '../styles/pages.css';
 
@@ -55,7 +56,7 @@ export function Huddle() {
             <div>
               <span className="appname">
                 <Icon name="layers" small />
-                Payments Hub · ABCD
+                {useSession().me?.app?.name ?? 'Loading…'}
               </span>
               <h1>Huddle</h1>
               <p>

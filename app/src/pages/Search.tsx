@@ -2,8 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { useChatList } from '../lib/chatStore';
-import { recents } from '../lib/data';
+import { useChatList, useRecentChats } from '../lib/chatStore';
 import { useTickets } from '../lib/ticketStore';
 import { uatPill, uatText } from './Tickets';
 
@@ -11,6 +10,7 @@ import { uatPill, uatText } from './Tickets';
 export function Search() {
   const [q, setQ] = useState('');
   const chats = useChatList();
+  const recents = useRecentChats();
   const tickets = useTickets();
   const needle = q.trim().toLowerCase();
 
@@ -23,7 +23,7 @@ export function Search() {
     const others = recents.filter((r) => !chats.some((c) => c.id === r.id)).map((r) => ({ id: r.id, title: r.title, text: '' }));
     const all = [...loaded, ...others];
     return needle ? all.filter((c) => `${c.title} ${c.text}`.toLowerCase().includes(needle)) : all;
-  }, [chats, needle]);
+  }, [chats, recents, needle]);
 
   const ticketHits = useMemo(
     () =>

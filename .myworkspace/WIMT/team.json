@@ -1,0 +1,118 @@
+{
+  "id": "WIMT",
+  "name": "Jacques's Portfolio",
+  "description": "Jacques's portfolio: Ghostfolio (Angular + NestJS) and the Spring PetClinic microservices.",
+  "jiraProject": "WIMT",
+  "owner": "u-jacques",
+  "workspaces": [
+    "ghostfolio",
+    "petclinic"
+  ],
+  "repos": [
+    {
+      "name": "ghostfolio",
+      "github": "ghostfolio/ghostfolio",
+      "clone": true,
+      "languages": [
+        "TypeScript"
+      ],
+      "testFrameworks": [
+        "Jest"
+      ]
+    },
+    {
+      "name": "petclinic",
+      "github": "spring-petclinic/spring-petclinic-microservices",
+      "clone": true,
+      "languages": [
+        "Java"
+      ],
+      "testFrameworks": [
+        "JUnit 5 (Maven)"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "portfolio-api",
+      "manager": "u-hitesh",
+      "workspace": "ghostfolio",
+      "repo": "ghostfolio",
+      "path": "apps/api",
+      "language": "TypeScript",
+      "tests": "Jest"
+    },
+    {
+      "name": "portfolio-client",
+      "manager": "u-david",
+      "workspace": "ghostfolio",
+      "repo": "ghostfolio",
+      "path": "apps/client",
+      "language": "TypeScript",
+      "tests": "Jest"
+    },
+    {
+      "name": "ui-lib",
+      "manager": "u-david",
+      "workspace": "ghostfolio",
+      "repo": "ghostfolio",
+      "path": "libs/ui",
+      "language": "TypeScript",
+      "tests": "Jest"
+    },
+    {
+      "name": "common-lib",
+      "manager": "u-robin",
+      "workspace": "ghostfolio",
+      "repo": "ghostfolio",
+      "path": "libs/common",
+      "language": "TypeScript",
+      "tests": "Jest"
+    },
+    {
+      "name": "platform",
+      "manager": "u-robin",
+      "workspace": "ghostfolio",
+      "repo": "ghostfolio",
+      "path": "prisma",
+      "language": "TypeScript",
+      "tests": "none in repo"
+    },
+    {
+      "name": "customers-service",
+      "manager": "u-robin",
+      "workspace": "petclinic",
+      "repo": "petclinic",
+      "path": "spring-petclinic-customers-service",
+      "language": "Java",
+      "tests": "JUnit 5 (Maven)"
+    },
+    {
+      "name": "visits-service",
+      "manager": "u-robin",
+      "workspace": "petclinic",
+      "repo": "petclinic",
+      "path": "spring-petclinic-visits-service",
+      "language": "Java",
+      "tests": "JUnit 5 (Maven)"
+    },
+    {
+      "name": "vets-service",
+      "manager": "u-hitesh",
+      "workspace": "petclinic",
+      "repo": "petclinic",
+      "path": "spring-petclinic-vets-service",
+      "language": "Java",
+      "tests": "JUnit 5 (Maven)"
+    },
+    {
+      "name": "api-gateway",
+      "manager": "u-hitesh",
+      "workspace": "petclinic",
+      "repo": "petclinic",
+      "path": "spring-petclinic-api-gateway",
+      "language": "Java",
+      "tests": "JUnit 5 (Maven)"
+    }
+  ]
+}

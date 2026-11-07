@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { components as allComponents } from '../lib/data';
+import { useSession } from '../lib/session';
 import { createStory, refineStory } from '../lib/ticketStore';
 import { STORY_STATUSES, type Refined, type StoryDraft } from '../lib/types';
 
@@ -32,6 +32,7 @@ export function StoryCreate() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const ref = useRef<HTMLElement>(null);
+  const allComponents = useSession().me?.app?.components.map((c) => c.name) ?? [];
   const ids = { summary: useId(), desc: useId(), ac: useId(), type: useId(), status: useId(), version: useId() };
 
   useEffect(() => {

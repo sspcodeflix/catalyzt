@@ -5,17 +5,17 @@ Replace every placeholder with data that behaves like the real thing, then have 
 
 ## The teams
 
-| Application | Owner | Component managers | Nature (to confirm) |
+| Application | Owner | Component managers | Portfolio |
 |---|---|---|---|
-| ABCD | Ram Kumar | Sourav, Brijesh | Payments and merchant services (the context the mock-ups used) |
-| IBGM | Nabih Ben Lagha | Mohd Sayeer, Karim | Banking: accounts, statements, notifications |
-| WIMT | Jacques | Hitesh, David, Robin | Wealth and investment management |
+| ABCD, Ram's Portfolio | Ram Kumar | Sourav, Brijesh | Online Boutique microservices, moov-io ACH |
+| IBGM, Nabih's Portfolio | Nabih Ben Lagha | Mohd Sayeer, Karim | PiggyMetrics, OWASP Juice Shop (scan only) |
+| WIMT, Jacques's Portfolio | Jacques | Hitesh, David, Robin | Ghostfolio, Spring PetClinic |
 
 Eleven people, two roles besides member: **app owner** (decides Huddle items, sets the Jira filter, approves changes for the whole app, watches token usage) and **component manager** (new role: owns components, writes and refines stories, authors and uploads tests, runs UAT analyses, approves changes to their components, raises Huddle items).
 
 ## Decisions needed before starting
 
-1. **What are ABCD, IBGM and WIMT?** The repositories are assigned by the nature of each app. The table above is my guess from the names and the payments context so far. Correct it if wrong.
+1. ~~What are ABCD, IBGM and WIMT?~~ Decided: they are the owners' portfolios of public repositories, named after the owner, with no invented domain.
 2. **Credentials.** A real `DEEPSEEK_API_KEY` makes the simulation exercise the model paths (routing, answers, refinement). Without it, the agents only test the rules paths and the specialists return placeholders. A `GITHUB_TOKEN` lets "Collect results" read GitHub Actions; without it, CI is simulated by a local runner that pushes results (realistic enough). Recommendation: DeepSeek key yes, GitHub token optional.
 3. **Depth of the persistence work.** Chat answers, ratings, approvals, App Context and Huddle still live in the browser and vanish on reload. A multi-user simulation is meaningless without moving them to the server. Recommendation: do it first (phase 3). It is the largest single piece of work, about two days of focused effort.
 4. **Git.** Nothing has ever been committed. Recommendation: commit the current state now on `main`, then one commit per phase, so the simulation's fixes are reviewable.

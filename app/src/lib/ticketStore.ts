@@ -1,12 +1,13 @@
 /**
- * Jira stories, from the server. The server's SQLite database is the dummy Jira; in production
- * the server syncs from Jira with a read-only service account using the filter shown here.
- * UAT state for each story is kept in the browser for this session.
+ * Jira stories, from the server, for the application the session is looking at. The server's
+ * SQLite database is the dummy Jira; in production the server syncs from Jira with a read-only
+ * service account using the filter shown here. UAT state per story is kept for this session.
  */
 import { useSyncExternalStore } from 'react';
 
-import type { JiraSync, Refined, StoryDraft, StoryStatus, Ticket, UatState } from './types';
-import { COVERAGE, summariseCoverage } from './uat';
+import { http } from './session';
+import type { CriterionStatus, JiraSync, Refined, StoryDraft, StoryStatus, Ticket, UatState } from './types';
+import { summariseCoverage } from './uat';
 
 type ServerStory = Omit<Ticket, 'uat'>;
 interface ServerFilter {
@@ -17,13 +18,14 @@ interface ServerFilter {
 }
 
 let stories: ServerStory[] = [];
-/** UAT results by story key, for this session. PAY-1490 was analysed earlier today. */
-const uat = new Map<string, Ticket['uat']>([['PAY-1490', summariseCoverage(COVERAGE['PAY-1490'])]]);
+/** UAT results by story key, for this session. */
+const uat = new Map<string, Ticket['uat']>();
 /** Stories opened directly that the filter hides, cached so their panel can show them. */
 const extra = new Map<string, ServerStory>();
 
 let tickets: Ticket[] = [];
-let sync: JiraSync = { project: 'PAY', filter: '', statuses: [], everyMinutes: 15, lastSync: new Date().toISOString(), syncing: false, loaded: false, error: null };
+const blank = (): JiraSync => ({ project: '', filter: '', statuses: [], everyMinutes: 15, lastSync: new Date().toISOString(), syncing: false, loaded: false, error: null });
+let sync: JiraSync = blank();
 
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
@@ -47,14 +49,14 @@ function apply(b: { stories: ServerStory[]; filter: ServerFilter }) {
 }
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
+  const res = await http(url, { ...init, headers: { 'Content-Type': 'application/json', ...((init?.headers as Record<string, string> | undefined) ?? {}) } });
   const body = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status}).`);
   return body;
 }
 
 let loading: Promise<void> | null = null;
-/** Loads stories once; later calls reuse the first load. */
+/** Loads stories once per session; later calls reuse the first load. */
 export function loadStories(): Promise<void> {
   loading ??= call<{ stories: ServerStory[]; filter: ServerFilter }>('/api/stories')
     .then(apply)
@@ -66,7 +68,19 @@ export function loadStories(): Promise<void> {
   return loading;
 }
 
-if (typeof window !== 'undefined') void loadStories();
+/** A new sign-in or application: forget this session's stories and load again. */
+function reset() {
+  loading = null;
+  stories = [];
+  tickets = [];
+  uat.clear();
+  extra.clear();
+  sync = blank();
+  emit();
+  void loadStories();
+}
+
+if (typeof window !== 'undefined') window.addEventListener('hz:session', reset);
 
 export const useTickets = () => useSyncExternalStore(subscribe, () => tickets);
 export const useJiraSync = () => useSyncExternalStore(subscribe, () => sync);
@@ -119,10 +133,7 @@ export async function createStory(
 }
 
 /** Records the result of a UAT analysis on the story, so the list shows it. */
-export function recordUatAnalysis(key: string, chatId: string) {
-  const s = getTicket(key);
-  if (!s) return;
-  const statuses = COVERAGE[key] ?? s.acceptanceCriteria.map(() => 'no-test' as const);
+export function recordUatAnalysis(key: string, chatId: string, statuses: CriterionStatus[]) {
   uat.set(key, { ...summariseCoverage(statuses), chatId });
   tickets = stories.map(withUat);
   emit();

@@ -2,6 +2,7 @@
  * Browser client for the server-side /api layer. The browser never sees the DeepSeek key, and
  * every request goes through the server's guards, so the browser cannot skip them.
  */
+import { http } from './session';
 import type { RunRequest, WorkflowEvent } from './workflow';
 
 export interface ModelHealth {
@@ -16,7 +17,7 @@ let health: Promise<ModelHealth> | null = null;
 
 /** Cached for the session; the server reads its config at start-up. */
 export function getModelHealth(): Promise<ModelHealth> {
-  health ??= fetch('/api/health')
+  health ??= http('/api/health')
     .then((r) => (r.ok ? r.json() : { model: { configured: false } }))
     .then((b: { model: ModelHealth }) => b.model)
     .catch(() => ({ configured: false }));
@@ -68,7 +69,7 @@ export async function* readEvents<E>(body: ReadableStream<Uint8Array>): AsyncGen
 
 /** Runs one request through the server's agent workflow and yields its events. */
 export async function* runWorkflow(req: RunRequest, signal?: AbortSignal): AsyncGenerator<WorkflowEvent> {
-  const res = await fetch('/api/run', {
+  const res = await http('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),

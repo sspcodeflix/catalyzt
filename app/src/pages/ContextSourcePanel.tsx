@@ -64,7 +64,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
     <section ref={ref} className="panel" aria-label={source.title}>
       <div className="phead">
         <div className="t">
-          <b>{source.type === 'Fabric' ? `${source.title} · Payments Hub` : source.title}</b>
+          <b>{source.title}</b>
           <span>
             {source.readOnly ? 'Read only · v14 · ' : ''}
             {source.updated} · {source.content}

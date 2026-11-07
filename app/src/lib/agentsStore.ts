@@ -4,6 +4,8 @@
  */
 import { useSyncExternalStore } from 'react';
 
+import { http } from './session';
+
 export interface AgentActivity {
   id: string;
   workflowRunId: string;
@@ -41,7 +43,7 @@ async function poll() {
   if (listeners.size === 0) return;
   if (document.visibilityState === 'visible') {
     try {
-      const r = await fetch('/api/agents');
+      const r = await http('/api/agents');
       if (!r.ok) throw new Error(`Request failed (${r.status})`);
       const b = (await r.json()) as { agents: AgentActivity[]; at: string };
       state = { agents: b.agents, loaded: true, error: null, at: b.at };
@@ -96,7 +98,7 @@ async function pollUsage() {
   if (usageListeners.size === 0) return;
   if (document.visibilityState === 'visible') {
     try {
-      const r = await fetch('/api/usage');
+      const r = await http('/api/usage');
       if (r.ok) {
         usage = (await r.json()) as Usage;
         usageListeners.forEach((l) => l());

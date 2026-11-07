@@ -36,11 +36,10 @@ export interface RunRequest {
   tickets: string[];
   components: string[];
   history: { role: 'user' | 'assistant'; text: string }[];
-  /**
-   * Tickets synced from Jira, sent as context because this preview keeps them in the browser.
-   * In production the server reads them from its own Jira sync.
-   */
+  /** The application's stories, read by the server from its database (never from the browser). */
   syncedTickets: Ticket[];
+  /** The application's component names, read by the server; attaching one means regression. */
+  knownComponents?: string[];
 }
 
 export type AgentKind = 'orchestrator' | 'guard' | 'router' | 'specialist' | 'tool_agent' | 'refiner';
