@@ -152,7 +152,7 @@ export async function runWorkflow(
   emit: Emit,
   signal: AbortSignal,
   opts: WorkflowOptions,
-): Promise<void> {
+): Promise<{ workflowRunId: string }> {
   const { db, userId, app } = opts;
   const knownComponents = req.knownComponents ?? [];
   const started = performance.now();
@@ -178,10 +178,12 @@ export async function runWorkflow(
   // A message with a secret is never written into a task.
   const root = new AgentHandle(rec, randomUUID(), null, 'Orchestrator', 'orchestrator', 'Handle the request', undefined);
 
+  const result = { workflowRunId: rec.workflowRunId };
   const end = (state: 'done' | 'rejected', summary: string) => {
     root.finish(state, { result: summary });
     db?.finishWorkflow(rec.workflowRunId, state, summary);
     emit({ type: 'done', summary, tokens: rec.tokens });
+    return result;
   };
 
   try {

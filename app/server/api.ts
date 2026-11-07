@@ -36,8 +36,11 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from '../src/lib/answerReducer';
 import { CAPABILITIES } from '../src/lib/intent';
+import type { UatArtifact } from '../src/lib/types';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
+import { extraRoutes } from './api-context';
 import { componentId, STATUSES, type HorizonDb, type Role, type StoredStory } from './db';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
@@ -76,7 +79,7 @@ async function readJson(req: IncomingMessage, max = MAX_BODY): Promise<unknown> 
   }
 }
 
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
@@ -106,6 +109,7 @@ function parseRunRequest(b: unknown): Omit<RunRequest, 'syncedTickets'> {
     chatId: id(r.chatId),
     chatTitle: isStr(r.chatTitle) ? r.chatTitle.slice(0, 200) : undefined,
     messageId: id(r.messageId),
+    answerId: id(r.answerId),
     revision: Number.isInteger(r.revision) ? (r.revision as number) : 1,
     // The guard enforces the length limit with a clear message, so only cap far above it here.
     text: r.text.slice(0, 20_000),
@@ -133,6 +137,27 @@ export interface ApiOptions {
   githubToken?: string;
   ingestToken?: string;
   getWorkspace?: () => Workspace | null;
+}
+
+/** The UAT analyst's proposed cases become manual tests in Hexa, linked to the story and its criteria. */
+function addUatCases(db: HorizonDb, appId: string, story: StoredStory, artifact: { proposedCases: { id: string; title: string; criterion: string; steps: string[] }[] }, user: { id: string; name: string }) {
+  const tests = artifact.proposedCases.slice(0, 50).map((c) => ({
+    externalId: c.id,
+    name: c.title.slice(0, 300),
+    description: `UAT case for ${story.key}${c.criterion ? ` ${c.criterion}` : ''}, proposed by the UAT analyst and approved in Horizon.`,
+    testType: 'Acceptance',
+    purpose: 'uat' as const,
+    phase: 'New',
+    owner: user.name,
+    designer: 'Horizon UAT analyst',
+    productAreas: '',
+    applicationModules: story.components.join(', '),
+    userTags: 'uat, horizon',
+    estimatedMinutes: null,
+    covers: [c.criterion ? `${story.key}#${c.criterion}` : story.key, ...story.components],
+    steps: c.steps.map((s, i) => ({ type: (i === c.steps.length - 1 || /^check\b/i.test(s) ? 'validation' : 'simple') as 'simple' | 'validation', description: s })),
+  }));
+  return db.upsertManualTests(tests, { app: appId, origin: 'uat_analyst', purposeDefault: 'uat', filename: `UAT analysis of ${story.key}`, format: 'horizon', problems: [], userId: user.id });
 }
 
 /** Creates the /api middleware. */
@@ -222,6 +247,25 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       const appId = app.id;
       const member = app;
 
+      // App Context and Huddle routes live in api-context.ts.
+      if (
+        await extraRoutes({
+          req,
+          res,
+          url,
+          method: req.method ?? 'GET',
+          query: full.searchParams,
+          db,
+          user,
+          app: member,
+          roles,
+          readJson: (max) => readJson(req, max),
+          send: (status, body) => send(res, status, body),
+          HttpError,
+        })
+      )
+        return;
+
       if (url === '/api/chats' && req.method === 'GET') {
         return send(res, 200, { chats: db.listChats(appId, user.id) });
       }
@@ -230,7 +274,13 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const body = parseRunRequest(await readJson(req));
         const abort = new AbortController();
         res.on('close', () => abort.abort());
-        const emit = sse(res);
+        const write = sse(res);
+        // The same reducer the browser renders with builds the answer that gets stored.
+        let answer = initialAnswer();
+        const emit = (e: WorkflowEvent) => {
+          answer = applyEvent(answer, e);
+          write(e);
+        };
         // Stories come from the database, never from the browser; only this application's.
         const run: RunRequest = {
           ...body,
@@ -238,15 +288,88 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           syncedTickets: db.listStories(appId).map(asTicket),
           knownComponents: member.components.map((c) => c.name),
         };
+        let workflowRunId: string | null = null;
+        let failure: string | undefined;
         try {
-          await runWorkflow(run, cfg, emit, abort.signal, { db, userId: user.id, app: appId });
+          workflowRunId = (await runWorkflow(run, cfg, emit, abort.signal, { db, userId: user.id, app: appId })).workflowRunId;
         } catch (e) {
           if (!abort.signal.aborted) {
+            failure = e instanceof DeepSeekError ? e.userMessage : 'The answer failed. Try again.';
             console.error('[horizon api] workflow failed:', (e as Error).message);
-            emit({ type: 'error', message: e instanceof DeepSeekError ? e.userMessage : 'The answer failed. Try again.' });
+            emit({ type: 'error', message: failure });
           }
         }
+        if (body.chatId && body.messageId && body.answerId) {
+          const final = failure || abort.signal.aborted ? finishAnswer(answer, abort.signal.aborted, failure) : answer;
+          const saved = db.saveAnswer({
+            app: appId,
+            chatId: body.chatId,
+            answerId: body.answerId,
+            userMessageId: body.messageId,
+            revision: body.revision ?? 1,
+            workflowRunId,
+            userId: user.id,
+            status: final.status,
+            intent: final.intent,
+            blocks: answerBlocks(final),
+            citations: final.citations,
+            artifact: final.artifact ?? null,
+          });
+          if (!abort.signal.aborted) write({ type: 'saved', revisionId: saved.revisionId, approvals: saved.approvals });
+        }
         return res.end();
+      }
+
+      const chatMatch = /^\/api\/chats\/([A-Za-z0-9_-]{1,64})$/.exec(url);
+      if (chatMatch && req.method === 'GET') {
+        const chat = db.getChatFull(chatMatch[1], user.id);
+        if (!chat || chat.applicationId !== appId) return send(res, 404, { error: 'This chat does not exist in this application.' });
+        return send(res, 200, { chat });
+      }
+
+      const ratingMatch = /^\/api\/answers\/([A-Za-z0-9_-]{1,80})\/rating$/.exec(url);
+      if (ratingMatch && req.method === 'POST') {
+        const rev = db.revisionChat(ratingMatch[1]);
+        if (!rev || rev.app !== appId) return send(res, 404, { error: 'This answer does not exist in this application.' });
+        const b = (await readJson(req)) as Record<string, unknown>;
+        const stars = Number(b.stars);
+        if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new HttpError(400, 'Stars must be 1 to 5.');
+        const reasons = strArr(b.reasons).map((x) => x.slice(0, 60)).slice(0, 10);
+        const comment = isStr(b.comment) ? b.comment.trim().slice(0, 280) : '';
+        // Below 4 stars the feedback must be usable: a reason and what was expected (DESIGN.md, Feedback).
+        if (stars < 4 && reasons.length === 0) throw new HttpError(400, 'Pick at least one reason.');
+        if (stars < 4 && comment.length < 10) throw new HttpError(400, 'Say what you expected, in at least 10 characters.');
+        db.rateAnswer({ revisionId: ratingMatch[1], userId: user.id, stars, reasons, comment: comment || null });
+        db.audit('user', user.id, 'answer.rate', 'answer_revision', ratingMatch[1], { stars, reasons });
+        return send(res, 200, { ok: true, stars, patterns: stars < 4 ? db.lowRatingPatterns(appId) : [] });
+      }
+
+      const approvalMatch = /^\/api\/approvals\/([A-Za-z0-9_-]{1,96})\/decision$/.exec(url);
+      if (approvalMatch && req.method === 'POST') {
+        const a = db.getApproval(approvalMatch[1]);
+        if (!a || a.app !== appId) return send(res, 404, { error: 'This approval does not exist in this application.' });
+        const b = (await readJson(req)) as Record<string, unknown>;
+        const decision = b.decision === 'approved' || b.decision === 'declined' ? b.decision : null;
+        if (!decision) throw new HttpError(400, 'decision must be approved or declined.');
+        if (a.status !== 'pending') throw new HttpError(409, `This was already ${a.status}.`);
+        if (decision === 'approved') {
+          // Server-side rules: the answer is rated first, and only an owner or a component manager approves.
+          if (!db.hasRating(a.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+          requireRole(['app_owner', 'component_manager'], 'approve a change');
+        }
+        let outcome: { ok: boolean; text: string } | undefined;
+        if (decision === 'approved' && a.action === 'add_uat_cases' && a.target.artifactId) {
+          const artifact = db.getArtifact(a.chatId, a.target.artifactId);
+          const story = a.target.storyKey ? db.getStory(a.target.storyKey) : undefined;
+          if (artifact?.kind === 'uat' && story && story.applicationId === appId) {
+            const r = addUatCases(db, appId, story, artifact as UatArtifact, user);
+            const n = r.created + r.updated;
+            outcome = { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
+          } else outcome = { ok: false, text: 'The UAT report this approval refers to is no longer available.' };
+        }
+        const decided = db.decideApproval(a.id, decision, user.id, outcome);
+        if (!decided) throw new HttpError(409, 'This was already decided.');
+        return send(res, 200, { approval: { id: a.id, ...decided } });
       }
 
       if (url === '/api/hexa/tests' && req.method === 'GET') {
@@ -331,30 +454,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const b = (await readJson(req)) as { storyKey?: unknown; cases?: unknown };
         const story = isStr(b.storyKey) ? db.getStory(b.storyKey) : undefined;
         if (!story || story.applicationId !== appId) throw new HttpError(400, 'Unknown story.');
-        const cases = (Array.isArray(b.cases) ? b.cases : []).slice(0, 50) as { id?: unknown; title?: unknown; criterion?: unknown; steps?: unknown }[];
-        const tests = cases
-          .filter((c) => isStr(c.id) && isStr(c.title))
-          .map((c) => {
-            const steps = strArr(c.steps);
-            return {
-              externalId: String(c.id),
-              name: String(c.title).slice(0, 300),
-              description: `UAT case for ${story.key}${isStr(c.criterion) ? ` ${c.criterion}` : ''}, proposed by the UAT analyst and approved in Horizon.`,
-              testType: 'Acceptance',
-              purpose: 'uat' as const,
-              phase: 'New',
-              owner: user.name,
-              designer: 'Horizon UAT analyst',
-              productAreas: '',
-              applicationModules: story.components.join(', '),
-              userTags: 'uat, horizon',
-              estimatedMinutes: null,
-              covers: [isStr(c.criterion) ? `${story.key}#${c.criterion}` : story.key, ...story.components],
-              steps: steps.map((s, i) => ({ type: (i === steps.length - 1 || /^check\b/i.test(s) ? 'validation' : 'simple') as 'simple' | 'validation', description: s })),
-            };
-          });
-        if (tests.length === 0) throw new HttpError(400, 'No cases to add.');
-        return send(res, 200, db.upsertManualTests(tests, { app: appId, origin: 'uat_analyst', purposeDefault: 'uat', filename: `UAT analysis of ${story.key}`, format: 'horizon', problems: [], userId: user.id }));
+        const cases = (Array.isArray(b.cases) ? b.cases : []).slice(0, 50).filter((c): c is { id: string; title: string; criterion: string; steps: string[] } => isStr(c?.id) && isStr(c?.title));
+        if (cases.length === 0) throw new HttpError(400, 'No cases to add.');
+        return send(res, 200, addUatCases(db, appId, story, { proposedCases: cases.map((c) => ({ ...c, criterion: String(c.criterion ?? ''), steps: strArr(c.steps) })) }, user));
       }
 
       if (url === '/api/hexa/results/upload' && req.method === 'POST') {

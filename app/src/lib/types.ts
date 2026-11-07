@@ -64,7 +64,10 @@ export interface Approval {
   credentialNote: string;
   actionLabel: string;
   status: 'pending' | 'approved' | 'declined';
+  /** Set once the server has stored the approval; decisions go through it. */
+  id?: string;
   decidedAt?: string;
+  decidedBy?: string;
   /** What approving does, when Horizon carries it out itself (others are only recorded). */
   action?: 'add_uat_cases';
   /** The UAT report the cases come from, for add_uat_cases. */
@@ -107,6 +110,8 @@ export interface AssistantMessage {
   rating: number | null;
   /** Absent means done (seeded answers). Rating and approvals wait until the answer is done. */
   status?: 'working' | 'streaming' | 'done' | 'error' | 'stopped';
+  /** The stored revision; ratings and approvals refer to it. */
+  revisionId?: string;
   error?: string;
   /** What Horizon understood the user wants, and whether a model or the rules decided it. */
   intent?: Intent;

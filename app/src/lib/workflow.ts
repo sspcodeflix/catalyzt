@@ -27,6 +27,8 @@ export interface RunRequest {
   chatId?: string;
   chatTitle?: string;
   messageId?: string;
+  /** The assistant message the answer is stored under; the browser chooses it so both sides agree. */
+  answerId?: string;
   revision?: number;
   text: string;
   agent: Agent;
@@ -80,4 +82,6 @@ export type WorkflowEvent =
   /** Streamed answer text, already checked by the output guard. */
   | { type: 'text'; text: string }
   | { type: 'done'; summary: string; tokens: number }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  /** The server saved the answer as a revision; approvals now have ids. */
+  | { type: 'saved'; revisionId: string; approvals: { index: number; id: string }[] };

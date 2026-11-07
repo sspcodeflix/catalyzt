@@ -567,4 +567,40 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE workflow_runs ADD COLUMN application_id TEXT REFERENCES applications(id);
   CREATE INDEX workflow_runs_app ON workflow_runs (application_id, started_at);
   `,
+  // 6: App Context and Huddle move to the server. Sources carry what the list shows (subtitle, content,
+  //    note, size, where they come from); conflicts keep their comparison; Huddle items keep their scope,
+  //    Horizon's summary with citations and the source they came from; options are ordered and say
+  //    whether choosing them means using the upload; links carry a label and a link.
+  //    Only columns are added, so no table needs rebuilding.
+  `
+  ALTER TABLE context_sources ADD COLUMN subtitle TEXT NOT NULL DEFAULT '';
+  ALTER TABLE context_sources ADD COLUMN href TEXT;
+  ALTER TABLE context_sources ADD COLUMN content TEXT NOT NULL DEFAULT '';
+  ALTER TABLE context_sources ADD COLUMN note TEXT;
+  ALTER TABLE context_sources ADD COLUMN size_bytes INTEGER;
+  -- Where the source is read from: the clone path of a repository, the URL of a Confluence page.
+  ALTER TABLE context_sources ADD COLUMN location TEXT;
+  ALTER TABLE context_sources ADD COLUMN synced_at TEXT;
+  CREATE INDEX context_sources_app ON context_sources (application_id, created_at);
+  CREATE INDEX source_chunks_source ON source_chunks (source_id);
+
+  ALTER TABLE conflicts ADD COLUMN title TEXT NOT NULL DEFAULT '';
+  ALTER TABLE conflicts ADD COLUMN detail TEXT NOT NULL DEFAULT '';
+  ALTER TABLE conflicts ADD COLUMN compare TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE conflicts ADD COLUMN created_at TEXT;
+  ALTER TABLE conflicts ADD COLUMN resolved_at TEXT;
+  ALTER TABLE conflicts ADD COLUMN resolution TEXT CHECK (resolution IN ('keep_higher', 'use_upload'));
+  CREATE INDEX conflicts_source ON conflicts (source_id, status);
+
+  ALTER TABLE huddle_items ADD COLUMN scope TEXT NOT NULL DEFAULT '';
+  ALTER TABLE huddle_items ADD COLUMN ai_summary TEXT NOT NULL DEFAULT '';
+  ALTER TABLE huddle_items ADD COLUMN citations TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE huddle_items ADD COLUMN source_id TEXT REFERENCES context_sources(id) ON DELETE SET NULL;
+  CREATE INDEX huddle_items_app ON huddle_items (application_id, status, created_at);
+  ALTER TABLE huddle_options ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE huddle_options ADD COLUMN keeps_upload INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE huddle_votes ADD COLUMN created_at TEXT;
+  ALTER TABLE huddle_links ADD COLUMN label TEXT NOT NULL DEFAULT '';
+  ALTER TABLE huddle_links ADD COLUMN href TEXT;
+  `,
 ];

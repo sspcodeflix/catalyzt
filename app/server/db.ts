@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { CriterionStatus, Ticket } from '../src/lib/types';
+import type { Intent } from '../src/lib/intent';
+import type { Artifact, Block, Citation, CriterionStatus, Message, Ticket } from '../src/lib/types';
 import { MIGRATIONS } from './schema';
 import type { Workspace } from './workspace';
 
@@ -1075,6 +1076,208 @@ export function openDb(path: string) {
           for (const comp of story.components) link.run(c.id, 'component', componentId(story.applicationId, comp));
         }
       })();
+    },
+
+    /* ---------- Answers, ratings, approvals ---------- */
+
+    /**
+     * Saves the final answer to a user message as a revision, with its citations, artifact and
+     * approvals. Approvals get ids here, and the stored blocks carry them, so the browser and
+     * the database agree on what can be approved.
+     */
+    saveAnswer(a: {
+      app: string;
+      chatId: string;
+      answerId: string;
+      userMessageId: string;
+      revision: number;
+      workflowRunId: string | null;
+      userId: string;
+      status: string;
+      intent: Intent | undefined;
+      blocks: Block[];
+      citations: Citation[];
+      artifact: Artifact | null;
+    }) {
+      return db.transaction(() => {
+        const t = now();
+        if (!db.prepare('SELECT 1 FROM messages WHERE id = ?').get(a.answerId)) {
+          const { seq } = db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM messages WHERE chat_id = ?').get(a.chatId) as { seq: number };
+          db.prepare("INSERT INTO messages (id, chat_id, seq, role, text, created_by, created_at) VALUES (?, ?, ?, 'assistant', '', ?, ?)").run(a.answerId, a.chatId, seq, a.userId, t);
+        }
+        const revisionId = `${a.answerId}-r${a.revision}`;
+        const approvals: { index: number; id: string }[] = [];
+        const blocks = a.blocks.map((b, i) => {
+          if (b.kind !== 'approval') return b;
+          const id = `${revisionId}-a${i}`;
+          approvals.push({ index: i, id });
+          return { ...b, approval: { ...b.approval, id } };
+        });
+        db.prepare(
+          `INSERT INTO answer_revisions (id, message_id, revision, status, intent, blocks, workflow_run_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET status = excluded.status, intent = excluded.intent, blocks = excluded.blocks, workflow_run_id = excluded.workflow_run_id`,
+        ).run(revisionId, a.answerId, a.revision, a.status, a.intent ? JSON.stringify(a.intent) : null, JSON.stringify(blocks), a.workflowRunId, t);
+        db.prepare('DELETE FROM citations WHERE revision_id = ?').run(revisionId);
+        const cit = db.prepare('INSERT INTO citations (revision_id, n, source_type, source_ref, title, detail) VALUES (?, ?, ?, ?, ?, ?)');
+        for (const c of a.citations) cit.run(revisionId, c.n, 'citation', String(c.n), c.title, c.detail);
+        if (a.artifact) {
+          db.prepare(
+            `INSERT INTO artifacts (id, chat_id, revision_id, kind, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET revision_id = excluded.revision_id, title = excluded.title, body = excluded.body`,
+          ).run(`${a.chatId}/${a.artifact.id}`, a.chatId, revisionId, a.artifact.kind === 'uat' ? 'uat_report' : 'code', a.artifact.title, JSON.stringify(a.artifact), t);
+        }
+        const ap = db.prepare("INSERT OR IGNORE INTO approvals (id, revision_id, action, target, facts, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)");
+        for (const { index, id } of approvals) {
+          const b = blocks[index];
+          if (b.kind !== 'approval') continue;
+          const action = b.approval.action && ['open_pr', 'add_uat_cases', 'gitops_change'].includes(b.approval.action) ? b.approval.action : 'other';
+          ap.run(id, revisionId, action, JSON.stringify({ artifactId: b.approval.artifactId ?? null, storyKey: a.artifact?.kind === 'uat' ? a.artifact.ticketKey : null }), JSON.stringify(b.approval.facts), t);
+        }
+        db.prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(t, a.chatId);
+        return { revisionId, approvals };
+      })();
+    },
+
+    /** A chat with its messages and the latest revision of each answer, in the browser's shape. */
+    getChatFull(chatId: string, forUser: string) {
+      const c = db
+        .prepare('SELECT c.*, w.name AS workspace_name, a.name AS app_name FROM chats c LEFT JOIN workspaces w ON w.id = c.workspace_id JOIN applications a ON a.id = c.application_id WHERE c.id = ?')
+        .get(chatId) as Row | undefined;
+      if (!c) return undefined;
+      const rows = db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY seq').all(chatId) as Row[];
+      const items = db.prepare('SELECT item_type AS type, item_ref AS ref FROM message_items WHERE message_id = ?');
+      const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
+      const cits = db.prepare('SELECT n, title, detail FROM citations WHERE revision_id = ? ORDER BY n');
+      const rating = db.prepare('SELECT stars FROM ratings WHERE revision_id = ? AND user_id = ?');
+      const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, target FROM approvals WHERE revision_id = ?');
+      const messages: Message[] = rows.flatMap((m): Message[] => {
+        if (m.role === 'user') {
+          const its = items.all(m.id) as { type: string; ref: string }[];
+          return [
+            {
+              id: String(m.id),
+              role: 'user' as const,
+              text: m.removed_reason ? '[Message removed: it contained a secret]' : String(m.text),
+              testType: (m.test_type as 'uat' | 'regression' | null) ?? null,
+              tickets: its.filter((i) => i.type === 'story').map((i) => i.ref),
+              components: its.filter((i) => i.type === 'component').map((i) => i.ref),
+            },
+          ];
+        }
+        const r = latest.get(m.id) as Row | undefined;
+        if (!r) return [];
+        const aps = approvalRows.all(r.id) as Row[];
+        const blocks = json<Block[]>(r.blocks, []).map((b) => {
+          if (b.kind !== 'approval' || !b.approval.id) return b;
+          const row = aps.find((x) => x.id === b.approval.id);
+          if (!row) return b;
+          const target = json<{ outcome?: { ok: boolean; text: string } }>(row.target, {});
+          return {
+            ...b,
+            approval: {
+              ...b.approval,
+              status: row.status as 'pending' | 'approved' | 'declined',
+              decidedAt: (row.decided_at as string) ?? undefined,
+              decidedBy: row.decided_by ? getUser(String(row.decided_by))?.name : undefined,
+              outcome: target.outcome,
+            },
+          };
+        });
+        const intent = json<Intent | undefined>(r.intent, undefined);
+        return [
+          {
+            id: String(m.id),
+            role: 'assistant' as const,
+            capability: intent?.capability ?? null,
+            revision: Number(r.revision),
+            revisionId: String(r.id),
+            rating: (rating.get(r.id, forUser) as { stars: number } | undefined)?.stars ?? null,
+            citations: cits.all(r.id) as Citation[],
+            blocks,
+            status: r.status as 'working' | 'streaming' | 'done' | 'error' | 'stopped',
+            intent,
+          },
+        ];
+      });
+      const artifacts: Record<string, Artifact> = {};
+      for (const a of db.prepare('SELECT body FROM artifacts WHERE chat_id = ?').all(chatId) as Row[]) {
+        const body = json<Artifact | null>(a.body, null);
+        if (body) artifacts[body.id] = body;
+      }
+      return {
+        id: chatId,
+        applicationId: String(c.application_id),
+        title: String(c.title),
+        agent: String(c.agent),
+        scope: { appName: String(c.app_name), appId: String(c.application_id), workspace: (c.workspace_name as string) ?? '' },
+        testType: (c.test_type as 'uat' | 'regression' | null) ?? null,
+        createdBy: String(c.created_by),
+        messages,
+        artifacts,
+      };
+    },
+
+    /** The chat and application a revision belongs to. */
+    revisionChat(revisionId: string) {
+      const r = db
+        .prepare('SELECT m.chat_id, c.application_id, json_extract(ar.intent, \'$.capability\') AS capability FROM answer_revisions ar JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id WHERE ar.id = ?')
+        .get(revisionId) as Row | undefined;
+      return r ? { chatId: String(r.chat_id), app: String(r.application_id), capability: (r.capability as string) ?? null } : undefined;
+    },
+
+    /** One rating per person per revision; rating again replaces it. */
+    rateAnswer(r: { revisionId: string; userId: string; stars: number; reasons: string[]; comment: string | null }) {
+      db.prepare(
+        `INSERT INTO ratings (revision_id, user_id, stars, reasons, comment, created_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(revision_id, user_id) DO UPDATE SET stars = excluded.stars, reasons = excluded.reasons, comment = excluded.comment, created_at = excluded.created_at`,
+      ).run(r.revisionId, r.userId, r.stars, JSON.stringify(r.reasons), r.comment, now());
+    },
+    hasRating(revisionId: string, userId: string) {
+      return !!db.prepare('SELECT 1 FROM ratings WHERE revision_id = ? AND user_id = ?').get(revisionId, userId);
+    },
+
+    /** Reasons given with low ratings in an application lately, grouped, for the feedback-pattern rule. */
+    lowRatingPatterns(app: string, days = 7, atLeast = 3) {
+      return db
+        .prepare(
+          `SELECT COALESCE(json_extract(ar.intent, '$.capability'), 'unknown') AS capability, je.value AS reason, COUNT(*) AS count
+           FROM ratings r JOIN answer_revisions ar ON ar.id = r.revision_id JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id, json_each(r.reasons) je
+           WHERE c.application_id = ? AND r.stars < 4 AND r.created_at >= ?
+           GROUP BY capability, reason HAVING COUNT(*) >= ? ORDER BY count DESC`,
+        )
+        .all(app, daysAgo(days), atLeast) as { capability: string; reason: string; count: number }[];
+    },
+
+    getApproval(id: string) {
+      const r = db
+        .prepare(
+          `SELECT a.*, m.chat_id, c.application_id FROM approvals a JOIN answer_revisions ar ON ar.id = a.revision_id JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id WHERE a.id = ?`,
+        )
+        .get(id) as Row | undefined;
+      if (!r) return undefined;
+      return {
+        id,
+        revisionId: String(r.revision_id),
+        action: String(r.action),
+        target: json<{ artifactId?: string | null; storyKey?: string | null; outcome?: { ok: boolean; text: string } }>(r.target, {}),
+        status: r.status as 'pending' | 'approved' | 'declined' | 'expired',
+        chatId: String(r.chat_id),
+        app: String(r.application_id),
+        decidedBy: (r.decided_by as string) ?? null,
+        decidedAt: (r.decided_at as string) ?? null,
+      };
+    },
+    decideApproval(id: string, decision: 'approved' | 'declined', userId: string, outcome?: { ok: boolean; text: string }) {
+      const t = now();
+      const info = db
+        .prepare("UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, target = json_set(target, '$.outcome', json(?)) WHERE id = ? AND status = 'pending'")
+        .run(decision, userId, t, JSON.stringify(outcome ?? null), id);
+      if (info.changes) audit('user', userId, `approval.${decision}`, 'approval', id, outcome ?? {});
+      return info.changes > 0 ? { status: decision, decidedAt: t, decidedBy: getUser(userId)?.name ?? userId, outcome } : undefined;
+    },
+    getArtifact(chatId: string, localId: string): Artifact | undefined {
+      const r = db.prepare('SELECT body FROM artifacts WHERE id = ?').get(`${chatId}/${localId}`) as Row | undefined;
+      return r ? json<Artifact | undefined>(r.body, undefined) : undefined;
     },
 
     /** Marks anything left running (for example after a crash or restart) as stopped. */
