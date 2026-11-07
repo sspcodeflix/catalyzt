@@ -102,7 +102,7 @@ def analyse_story(persona: Persona, key: str, low_rating: bool):
             approve.first.click()
             try:
                 p.wait_for_selector('.approve .outcome', timeout=20000)
-                out = p.inner_text('.approve .outcome')
+                out = p.inner_text('.approve .outcome').splitlines()[0]
                 summary['approvals'] += 1
                 if 'Added' not in out:
                     log.add('bug', chat_url, 'approval outcome is not a success', persona.name, out)

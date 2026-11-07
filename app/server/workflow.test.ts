@@ -246,6 +246,46 @@ describe('App Context in answers (F11)', () => {
   });
 });
 
+describe('Hexa facts in answers (S03)', () => {
+  it('a coverage question about a component gets the inventory and latest results as a cited source', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    const f = stubDeepSeek({ ...ok, capability: 'analysis', components: ['checkoutservice'] }, ['Three tests cover it [1]. ']);
+    const { events, agents } = await run(req(db, 'Which tests cover checkoutservice and what is missing?', { components: ['checkoutservice'] }), cfg, db, true);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('[1] Hexa · checkoutservice');
+    expect(stream).toContain('3 automated');
+    expect(stream).toContain('a Merchant Can Refund Part Of A Settled Card Payment (automated, latest result passed, linked to ABCD-1001#AC1)');
+    expect(stream).toContain('a Card Refund Needs A Reason (automated, latest result none, linked to ABCD-1001#AC3)');
+    expect(stream).toContain('Target build for acme/shop: PR #41');
+    const cites = (events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>).citations;
+    expect(cites).toEqual([{ n: 1, title: 'Hexa · checkoutservice', detail: 'checkoutservice · tests and latest results', href: '/hexa?tab=automated&q=checkoutservice' }]);
+    expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.map((s) => s.label)).toEqual(['Reading App Context', 'Reading Hexa', 'Writing the answer']);
+  });
+
+  it('a story named in a regression question gets its readiness per criterion', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    const f = stubDeepSeek({ ...ok, capability: 'analysis', test_type: 'regression', tickets: ['ABCD-1001'] }, ['AC4 has no test [1]. ']);
+    await run(req(db, 'What evidence is still missing for ABCD-1001 before release?', { testType: 'regression', testTypeSource: 'user' }), cfg, db, true);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('[1] Hexa · ABCD-1001');
+    expect(stream).toContain('AC4 (Partial refunds are allowed for 45 days from settlement): no-test');
+    expect(stream).toContain('AC1 (A merchant can refund part of a settled card payment): passing');
+  });
+
+  it('a question about tests that names nothing gets the application-wide inventory', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    const f = stubDeepSeek({ ...ok, capability: 'execution' }, ['Two runs. ']);
+    await run(req(db, 'How did the last pipeline runs go?'), cfg, db, true);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('Hexa · this application');
+    expect(stream).toContain('1 pipeline run recorded');
+    expect(stream).toContain('PR #41');
+  });
+});
+
 describe('history', () => {
   it('drops earlier user turns that break a policy before they reach the model', async () => {
     const db = fixtureDb();

@@ -22,6 +22,7 @@ import { uatAnswer } from '../src/lib/uat';
 import type { AgentKind, AgentName, AgentState, RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { retrieveContext, type ContextPassage } from './context';
 import type { HorizonDb } from './db';
+import { hexaEvidence } from './evidence';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
 
@@ -337,6 +338,17 @@ export async function runWorkflow(
       }
       const from = new Set(passages.map((p) => p.sourceTitle)).size;
       look({ detail: passages.length ? `${passages.length} passage${passages.length > 1 ? 's' : ''} from ${from} source${from > 1 ? 's' : ''} (keyword match)` : 'Nothing relevant in App Context' });
+      // Hexa facts for the components and stories the request names: the inventory is a source too.
+      const facts = hexaEvidence(db, app, { components: intent.components, tickets: intent.tickets, text: req.text, known: db.getApp(app)?.components ?? [] });
+      if (facts.length) {
+        const hexa = specialist.step('tool', 'Reading Hexa', 'hexa.evidence');
+        for (const f of facts) {
+          const n = sources.length + 1;
+          sources.push({ n, title: f.title, text: f.text });
+          citations.push({ n, title: f.title, detail: f.detail, href: f.href });
+        }
+        hexa({ detail: facts.map((f) => f.title.replace('Hexa · ', '')).join(', ') });
+      }
     }
     if (citations.length) emit({ type: 'citations', citations });
 
