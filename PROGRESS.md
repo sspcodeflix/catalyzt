@@ -31,8 +31,8 @@ checks, type-check, front-end and API bundles built, the bundle started without 
 | 2. Remove dummy data; multi-app; roles; Sign in as | done | `c6f6b2b`. |
 | 3. Persist chats, App Context, Huddle; feedback form | done | Through the brief's stages A–C. |
 | 4. Local CI runner; UAT readiness from real results; linking | done (runner), evidence delivered | `app/scripts/ci-runner.ts` with `.myworkspace/<APP>/ci.json` targets runs each clone's tests in Docker and posts JUnit to the live server. Delivered: ABCD 3 runs (ach 2,211 Go tests at PR #1922; microservices-demo 19), WIMT 1 run (petclinic 20, all modules), IBGM 1 run (piggymetrics 2: the Maven build stops at auth-service under Java 11, see `IBGM/log/ci-runs.md`). ghostfolio is a heavy target (`--heavy`). Tests are linked to criteria from the Hexa test panel (new link form) or by the simulation personas. |
-| 5. Simulation: three team agents in parallel | not started | Agents can drive everything through the API, including `POST /api/huddle` and `POST /api/context/conflicts`. |
-| 6. Fix, re-run, ISSUES.md, docs | not started | |
+| 5. Simulation: three team agents in parallel | in progress | `app/e2e/sim/run_sim.py` plays a team (owner and managers in separate sessions) against the live server with the model on `deepseek-flash`. IBGM: dry run and model run done, 6 analyses, approvals, linked evidence, context upload, conflict decided, risk raised, guardrails, phone session. ABCD and WIMT follow once their backlogs land (agents writing them). |
+| 6. Fix, re-run, ISSUES.md, docs | in progress | [ISSUES.md](ISSUES.md): S01 (approval ids never reached a fresh answer; fixed), S02 (piggymetrics CI stopped by JaCoCo on Java 11; configuration), S03 (specialists had no Hexa facts; fixed with cited Hexa sources). |
 
 ## Notes
 - **DeepSeek:** the key is in `app/.env` with `DEEPSEEK_MODEL=deepseek-v4-pro`. Tests and browser checks run without a key (rules routing), so they cost nothing.
