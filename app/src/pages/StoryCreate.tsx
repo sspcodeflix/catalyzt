@@ -86,7 +86,7 @@ export function StoryCreate() {
       <div className="phead">
         <div className="t">
           <b>Create a Jira story</b>
-          <span>Saved in Horizon's dummy Jira (SQLite). Write it as you like, then refine it if you want.</span>
+          <span>Saved in Catalyzt's dummy Jira (SQLite). Write it as you like, then refine it if you want.</span>
         </div>
         <Link to="/tickets" className="icon" aria-label="Close panel">
           <Icon name="close" />

@@ -34,7 +34,7 @@ export const POLICIES: Record<PolicyId, Policy> = {
     id: 'credentials',
     title: 'Credentials',
     message:
-      'Horizon never reads, shows or shares passwords, keys or tokens. Credentials stay in the credential broker and never reach the model. Ask the secret owner, or use your vault.',
+      'Catalyzt never reads, shows or shares passwords, keys or tokens. Credentials stay in the credential broker and never reach the model. Ask the secret owner, or use your vault.',
   },
   'secret-in-input': {
     id: 'secret-in-input',
@@ -46,18 +46,18 @@ export const POLICIES: Record<PolicyId, Policy> = {
     id: 'bypass-approval',
     title: 'Approval required',
     message:
-      'Horizon does not merge, push, deploy or change anything without a person approving it. Ask for the change, and Horizon will prepare it as an approval card.',
+      'Catalyzt does not merge, push, deploy or change anything without a person approving it. Ask for the change, and Catalyzt will prepare it as an approval card.',
   },
   'prompt-injection': {
     id: 'prompt-injection',
     title: 'Instruction override',
-    message: "Horizon's rules can't be switched off from a chat. Ask your question directly.",
+    message: "Catalyzt's rules can't be switched off from a chat. Ask your question directly.",
   },
   destructive: {
     id: 'destructive',
     title: 'Destructive action',
     message:
-      'Horizon does not delete, drop or destroy environments, data or repositories. Changes to environments go through GitOps pull requests that a person approves.',
+      'Catalyzt does not delete, drop or destroy environments, data or repositories. Changes to environments go through GitOps pull requests that a person approves.',
   },
   'suppress-findings': {
     id: 'suppress-findings',
@@ -69,13 +69,13 @@ export const POLICIES: Record<PolicyId, Policy> = {
     id: 'personal-data',
     title: 'Personal data',
     message:
-      "Horizon does not export or list customers' personal data. Use masked test data, or ask the data owner.",
+      "Catalyzt does not export or list customers' personal data. Use masked test data, or ask the data owner.",
   },
   'off-topic': {
     id: 'off-topic',
-    title: 'Outside Horizon',
+    title: 'Outside Catalyzt',
     message:
-      'Horizon helps with test analysis, test authoring, execution, CloudOps and security for your applications. This request is outside that.',
+      'Catalyzt helps with test analysis, test authoring, execution, CloudOps and security for your applications. This request is outside that.',
   },
   'too-long': {
     id: 'too-long',
@@ -96,7 +96,7 @@ const SECRET_IN =
 export const containsSecret = (text: string) => SECRET_IN.test(text);
 
 const RULES: [PolicyId, RegExp][] = [
-  // Asking Horizon to reveal or hand over credentials.
+  // Asking Catalyzt to reveal or hand over credentials.
   [
     'credentials',
     /\b(show|give|tell|print|reveal|share|send|dump|list|export|expose|leak|what(?:'s| is| are))\b[^.?!\n]{0,40}\b(passwords?|passwd|api[ -]?keys?|secrets?|tokens?|private keys?|credentials?|ssh keys?)\b/i,
@@ -106,7 +106,7 @@ const RULES: [PolicyId, RegExp][] = [
     'bypass-approval',
     /\b(without|skip(?:ping)?|bypass(?:ing)?|no)\s+(an?\s+)?(approvals?|reviews?|sign-?off|asking)\b|\bforce[- ]push\b|\b(merge|push|deploy|apply|release)\b[^.?!\n]{0,40}\b(directly|straight)\b[^.?!\n]{0,20}\b(main|master|prod|production)\b|\bauto-?(merge|approve)\b/i,
   ],
-  // Attempts to override Horizon's rules.
+  // Attempts to override Catalyzt's rules.
   [
     'prompt-injection',
     /\b(ignore|disregard|forget|override)\b[^.?!\n]{0,30}\b(previous|prior|above|all|your|system)\b[^.?!\n]{0,20}\b(instructions?|rules?|prompts?|guardrails?|policies)\b|\b(jailbreak|developer mode|dan mode)\b|\b(reveal|show|print)\b[^.?!\n]{0,20}\bsystem prompt\b/i,

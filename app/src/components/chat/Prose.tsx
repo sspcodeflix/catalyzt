@@ -94,7 +94,7 @@ function inline(text: string, citations: Citation[]): ReactNode[] {
     if (cite) {
       const c = citations.find((x) => x.n === Number(cite[1]));
       // Only known sources become citation chips; a model-invented [n] stays plain text. A source
-      // with a place in Horizon (an App Context passage, a ticket) opens there.
+      // with a place in Catalyzt (an App Context passage, a ticket) opens there.
       if (!c) return part;
       if (c.href) {
         return (

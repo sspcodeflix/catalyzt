@@ -1,6 +1,6 @@
-# Running Horizon on one host
+# Running Catalyzt on one host
 
-Horizon is a modular monolith: one Node process serves the API and the built front end, with one
+Catalyzt is a modular monolith: one Node process serves the API and the built front end, with one
 SQLite database and one folder of uploaded files on the same host's persistent disk. There is no
 second service to run. This note says how to start it, what it needs, where its data lives, and how
 to back it up, restore it and upgrade it.
@@ -27,7 +27,7 @@ in another; Vite then proxies `/api` and nothing else changes.
 ## Environment
 
 Read from the process environment, then from `app/.env` for anything not set (the file is
-git-ignored). Names kept from the Horizon era for compatibility; a Catalyzt alias can be added later
+git-ignored). Names kept from the Horizon era for compatibility (`HORIZON_*`, `x-horizon-*` headers, `hz-*` browser keys); a Catalyzt alias can be added later
 without breaking existing deployments.
 
 | Variable | Default | Meaning |

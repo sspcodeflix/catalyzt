@@ -1,5 +1,5 @@
 /**
- * Server-side API for the Horizon UI. The DeepSeek key and the database stay here.
+ * Server-side API for the Catalyzt UI. The DeepSeek key and the database stay here.
  * Mounted as connect middleware by the Vite plugin in vite.config.ts (dev and preview); the same
  * handler can be mounted in Express or any Node server for production.
  *
@@ -42,7 +42,7 @@ import { extraRoutes } from './api-context';
 import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
 import { RequestError } from './context';
 import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
-import { HuddleError, raiseFeedbackPattern } from './huddle';
+import { HuddleError, listItems, raiseFeedbackPattern } from './huddle';
 import { LocalBlobStore, type BlobStore } from './storage';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
@@ -170,12 +170,12 @@ function addUatCases(db: HorizonDb, appId: string, story: StoredStory, cases: No
   const tests = cases.slice(0, 50).map((c) => ({
     externalId: c.id,
     name: c.title.slice(0, 300),
-    description: `UAT case for ${story.key}${c.criterion ? ` ${c.criterion}` : ''}, proposed by the UAT analyst and approved in Horizon.`,
+    description: `UAT case for ${story.key}${c.criterion ? ` ${c.criterion}` : ''}, proposed by the UAT analyst and approved in Catalyzt.`,
     testType: 'Acceptance',
     purpose: 'uat' as const,
     phase: 'New',
     owner: user.name,
-    designer: 'Horizon UAT analyst',
+    designer: 'Catalyzt UAT analyst',
     productAreas: '',
     applicationModules: story.components.join(', '),
     userTags: 'uat, horizon',
@@ -219,7 +219,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const b = (await readJson(req, MAX_UPLOAD)) as Record<string, unknown>;
         const app = isStr(b.app) ? b.app : null;
         if (!app) throw new HttpError(400, 'The body must name the application in "app" (set HEXA_APP in the workflow).');
-        if (!db.getApp(app)) throw new HttpError(400, `"${app}" is not a known application; "app" must be one of the application ids in Horizon.`);
+        if (!db.getApp(app)) throw new HttpError(400, `"${app}" is not a known application; "app" must be one of the application ids in Catalyzt.`);
         const expected = perApp[app] ?? opts.ingestToken;
         if (bearer !== expected) return send(res, 401, { error: `The token is not valid for application ${app}.` });
         const junit = (Array.isArray(b.junit) ? b.junit : [b.junit]).filter(isStr).slice(0, 50);
@@ -260,15 +260,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       }
 
       /* ---------- Who, and which application ---------- */
-      if (db.isEmpty()) return send(res, 503, { error: 'No workspace is loaded, so Horizon has no people or applications. See SIMULATION_PLAN.md.' });
+      if (db.isEmpty()) return send(res, 503, { error: 'No workspace is loaded, so Catalyzt has no people or applications. See SIMULATION_PLAN.md.' });
       const identity: Identity = opts.identity ?? { mode: 'dev-picker' };
       let user: PersonRecord;
       if (identity.mode === 'proxy-header') {
         const v = req.headers[identity.header.toLowerCase()];
         const email = (Array.isArray(v) ? v[0] : v)?.trim().toLowerCase() ?? '';
-        if (!email) throw new HttpError(401, `Not signed in: the ${identity.header} header is missing. Horizon must be reached through the sign-in proxy.`);
+        if (!email) throw new HttpError(401, `Not signed in: the ${identity.header} header is missing. Catalyzt must be reached through the sign-in proxy.`);
         const found = db.getUserByEmail(email);
-        if (!found) throw new HttpError(403, `${email} is not a member of this Horizon workspace.`);
+        if (!found) throw new HttpError(403, `${email} is not a member of this Catalyzt workspace.`);
         user = found;
       } else {
         const userHeader = req.headers['x-horizon-user'];
@@ -318,6 +318,19 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       if (url === '/api/chats' && req.method === 'GET') {
         return send(res, 200, { chats: db.listChats(appId, user.id) });
+      }
+
+      // The home page's entry points: real work waiting in this application, never invented numbers.
+      if (url === '/api/home' && req.method === 'GET') {
+        const runs = db.listRuns(appId, 10);
+        const latest = runs[0];
+        return send(res, 200, {
+          pendingApprovals: db.listPendingApprovals(appId, 10),
+          openDecisions: listItems(db, appId).filter((i) => !i.decision).length,
+          stories: db.listStories(appId).length,
+          runs: { recent: runs.length, failed: runs.filter((r) => r.status === 'failed').length, latest: latest ? { id: latest.id, repo: latest.repo, status: latest.status, at: latest.at, prNumber: latest.prNumber } : null },
+          tests: db.testStats(appId).total,
+        });
       }
 
       if (url === '/api/run' && req.method === 'POST') {

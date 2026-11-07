@@ -1,13 +1,13 @@
 /**
  * The simulation workspace (`.myworkspace/`): the applications, people, components and
- * backlogs Horizon seeds from. See SIMULATION_PLAN.md and .myworkspace/ASSIGNMENTS.md.
+ * backlogs Catalyzt seeds from. See SIMULATION_PLAN.md and .myworkspace/ASSIGNMENTS.md.
  *
  *   .myworkspace/personas.json         people, roles, apps
  *   .myworkspace/<APP>/team.json       the application, its workspaces, repos and components
  *   .myworkspace/<APP>/stories.json    the backlog (optional)
  *   .myworkspace/<APP>/manual-tests.csv  Octane-format manual tests (optional)
  *
- * Nothing here is placeholder data: with no workspace, Horizon starts empty.
+ * Nothing here is placeholder data: with no workspace, Catalyzt starts empty.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -135,7 +135,7 @@ export function loadWorkspace(root: string): Workspace | null {
     if (!statSync(dir).isDirectory() || !existsSync(teamPath)) continue;
     const t = readJson(teamPath) as Record<string, unknown>;
     const id = str(t.id, `${entry}/team.json id`);
-    if (id !== entry) warnings.push(`${entry}/team.json has id "${id}"; the folder name is used for logs, the id for Horizon`);
+    if (id !== entry) warnings.push(`${entry}/team.json has id "${id}"; the folder name is used for logs, the id for Catalyzt`);
     const owner = str(t.owner, `${id} owner`);
     if (!ids.has(owner)) throw new WorkspaceError(`${id}: owner "${owner}" is not in personas.json`);
     const repos: WorkspaceRepo[] = (Array.isArray(t.repos) ? t.repos : []).map((x, i) => {

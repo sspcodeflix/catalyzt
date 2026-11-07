@@ -1,3 +1,4 @@
+import '@fontsource/montserrat/800.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';

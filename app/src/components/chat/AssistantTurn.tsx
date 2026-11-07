@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
 import type { AssistantMessage, Chat } from '../../lib/types';
-import { HorizonMark } from '../HorizonMark';
+import { BrandMark } from '../BrandMark';
 import { Icon } from '../Icon';
 import { ApprovalCard } from './ApprovalCard';
 import { ArtifactCard } from './ArtifactCard';
@@ -135,8 +135,8 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
 
   return (
     <div className="turn">
-      <div style={{ paddingTop: 2 }}>
-        <HorizonMark size={24} />
+      <div style={{ paddingTop: 4 }}>
+        <BrandMark size={20} />
       </div>
       <div className="content">
         {before.map(renderBlock)}

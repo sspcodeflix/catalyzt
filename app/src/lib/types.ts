@@ -1,7 +1,7 @@
 import type { Intent } from './intent';
 import type { IconName } from '../components/icons';
 
-/** The five capabilities. `auto` lets Horizon route the request by rules. */
+/** The five capabilities. `auto` lets Catalyzt route the request by rules. */
 export type Capability = 'analysis' | 'authoring' | 'execution' | 'cloudops' | 'security';
 export type Agent = 'auto' | Capability;
 
@@ -27,7 +27,7 @@ export interface Citation {
   title: string;
   /** e.g. "App Context · README.md ¶3 · v2" or "Jira · Ready for UAT" */
   detail: string;
-  /** Where the exact passage or record opens in Horizon, when it has a place. */
+  /** Where the exact passage or record opens in Catalyzt, when it has a place. */
   href?: string;
 }
 
@@ -71,7 +71,7 @@ export interface Approval {
   id?: string;
   decidedAt?: string;
   decidedBy?: string;
-  /** What approving does, when Horizon carries it out itself (others are only recorded). */
+  /** What approving does, when Catalyzt carries it out itself (others are only recorded). */
   action?: 'add_uat_cases';
   /** The UAT report the cases come from, for add_uat_cases. */
   artifactId?: string;
@@ -92,7 +92,7 @@ export type Block =
   /** A guardrail rejected the request. */
   | { kind: 'rejected'; title: string; text: string; by: string };
 
-/** A file attached to a message. `stored` means kept but not readable by Horizon in this build. */
+/** A file attached to a message. `stored` means kept but not readable by Catalyzt in this build. */
 export interface AttachmentRef {
   id: string;
   filename: string;
@@ -124,7 +124,7 @@ export interface AssistantMessage {
   /** The stored revision; ratings and approvals refer to it. */
   revisionId?: string;
   error?: string;
-  /** What Horizon understood the user wants, and whether a model or the rules decided it. */
+  /** What Catalyzt understood the user wants, and whether a model or the rules decided it. */
   intent?: Intent;
 }
 
@@ -193,7 +193,7 @@ export interface Ticket {
   acceptanceCriteria: string[];
   requirements: string[];
   uat: { state: UatState; covered: number; total: number; chatId?: string };
-  /** 'horizon' when created in Horizon's dummy Jira. */
+  /** 'horizon' when created in Catalyzt's dummy Jira. */
   source?: 'jira_sync' | 'horizon';
   applicationId?: string;
   purpose?: 'uat' | 'regression' | null;

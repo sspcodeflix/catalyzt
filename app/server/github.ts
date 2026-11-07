@@ -1,6 +1,6 @@
 /**
  * Reads public GitHub repositories for Hexa: finds test files and extracts test cases from them.
- * Read only: Horizon fetches and parses text with rules, and never runs a repository's code.
+ * Read only: Catalyzt fetches and parses text with rules, and never runs a repository's code.
  * Uses 2 GitHub API calls per scan (repo, tree); file contents come from raw.githubusercontent.com.
  * GITHUB_TOKEN, if set, raises the rate limit and allows private repos the token can read.
  */

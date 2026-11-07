@@ -9,7 +9,7 @@ const CAPS = `- analysis: test coverage, gaps, requirement-to-test mapping, UAT 
 
 /** System prompt for intent classification. JSON mode needs the word "json" and an example. */
 export function intentMessages(req: IntentRequest, knownComponents: string[]): ChatMessage[] {
-  const system = `You classify requests sent to Horizon, an assistant for quality and reliability engineering. Reply with json only.
+  const system = `You classify requests sent to Catalyzt, an assistant for quality and reliability engineering. Reply with json only.
 
 Capabilities:
 ${CAPS}
@@ -24,7 +24,7 @@ IDs starting FR-, NFR-, TC-, CVE-, S- are requirements, test cases, CVEs or scan
 
 Ask (needs_clarification true, with a short question and up to 3 short options) only when you cannot tell what the user wants. Do not ask about things already clear.
 
-Guard: set in_scope to false, with a policy, when the request is one Horizon must refuse:
+Guard: set in_scope to false, with a policy, when the request is one Catalyzt must refuse:
 - "off-topic": not about testing, quality, reliability, CI, environments or security of the user's software.
 - "credentials": asks to reveal, share or fetch passwords, keys, tokens or other secrets.
 - "bypass-approval": asks to merge, push, deploy or change something without a person approving it.
@@ -47,7 +47,7 @@ Return exactly this json shape:
 
   const history = req.history
     .slice(-6)
-    .map((m) => `${m.role === 'user' ? 'User' : 'Horizon'}: ${m.text.slice(0, 400)}`)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Catalyzt'}: ${m.text.slice(0, 400)}`)
     .join('\n');
 
   const user = [
@@ -131,7 +131,7 @@ export function chatMessages(req: ChatRequest): ChatMessage[] {
     .filter(Boolean)
     .join('\n\n');
 
-  const system = `You are Horizon, an assistant for quality and reliability engineering (test analysis, test authoring, execution, CloudOps and security), working with a person in the loop.
+  const system = `You are Catalyzt, an assistant for quality and reliability engineering (test analysis, test authoring, execution, CloudOps and security), working with a person in the loop.
 
 Current scope: ${req.scope.appName}, ${req.scope.appId}, workspace ${req.scope.workspace}.
 This request was routed to ${CAP_NAMES[req.intent.capability]}${req.intent.testType ? ` as ${req.intent.testType === 'uat' ? 'UAT' : 'regression'}` : ''}: ${req.intent.action}.

@@ -1,5 +1,5 @@
 /**
- * Versioned schema for Horizon's database. See DATA_MODEL.md for the design.
+ * Versioned schema for Catalyzt's database. See DATA_MODEL.md for the design.
  * Each migration runs once, in order, tracked by SQLite's user_version. Never edit a shipped
  * migration; add a new one.
  */
@@ -569,7 +569,7 @@ export const MIGRATIONS: string[] = [
   `,
   // 6: App Context and Huddle move to the server. Sources carry what the list shows (subtitle, content,
   //    note, size, where they come from); conflicts keep their comparison; Huddle items keep their scope,
-  //    Horizon's summary with citations and the source they came from; options are ordered and say
+  //    Catalyzt's summary with citations and the source they came from; options are ordered and say
   //    whether choosing them means using the upload; links carry a label and a link.
   //    Only columns are added, so no table needs rebuilding.
   `
@@ -640,7 +640,7 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE repo_scans ADD COLUMN complete INTEGER;
   `,
   // 9: attachments. The bytes live in the blob store under storage_key; SQLite holds the metadata,
-  //    who uploaded it, which chat it belongs to once used, and the text Horizon could read.
+  //    who uploaded it, which chat it belongs to once used, and the text Catalyzt could read.
   `
   CREATE TABLE attachments (
     id TEXT PRIMARY KEY,

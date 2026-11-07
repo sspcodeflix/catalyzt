@@ -487,3 +487,25 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
 .itemchip.uploading { opacity: .7; }
 .itemchip.stored { border: 1px dashed var(--hz-border-strong); background: transparent; }
 .itemchip.failed { background: var(--hz-crit-tint); color: var(--hz-crit-text); }
+
+/* ---------- Brand, scope in the top bar, home entry points, phone chat/report tabs ---------- */
+.wordmark { font: 800 17px/1 'Montserrat', var(--hz-font-ui); letter-spacing: -0.01em; color: var(--hz-text); }
+.scope { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; border-radius: var(--hz-radius-md); font-size: 13.5px; color: var(--hz-text); max-width: 48vw; }
+.scope.pick { border: 1px solid var(--hz-border); background: var(--hz-surface); }
+.scopename { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; text-align: left; }
+.scopename b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scopename small { font-size: 11px; }
+.menu-hint.mono { font-size: 12px; }
+.entry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; max-width: 980px; }
+.entry .cap { text-decoration: none; color: inherit; min-height: 0; }
+.mobiletabs { display: none; }
+@media (max-width: 899px) {
+  .scope .muted, .scopename small { display: none; }
+  .mobiletabs { display: flex; margin: 8px 12px 0; }
+  .body.split.view-report > .chatcol { display: none; }
+  .body.split.view-chat > .panel { display: none; }
+  .entry { grid-template-columns: 1fr; }
+}
+.scope { height: auto; min-height: 38px; padding: 3px 10px; }
+.scopeline { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px; line-height: 1.25; }
+.scopename small { display: block; line-height: 1.1; }

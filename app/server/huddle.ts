@@ -1,6 +1,6 @@
 /**
- * Huddle, server side: decisions Horizon will not make on its own. Items are raised by people or
- * by Horizon's agents, carry Horizon's cited summary and ordered options, collect advisory votes
+ * Huddle, server side: decisions Catalyzt will not make on its own. Items are raised by people or
+ * by Catalyzt's agents, carry Catalyzt's cited summary and ordered options, collect advisory votes
  * and comments, and are decided by an application owner with a reason. Everything is persisted
  * per application; nothing here is placeholder data.
  */
@@ -228,7 +228,7 @@ const CAP_LABEL: Record<string, string> = { analysis: 'Test analysis', authoring
 
 /**
  * The feedback-pattern rule (DESIGN.md, Huddle): the same low-rating reason given by several
- * people for one capability within a week becomes a Huddle item raised by Horizon, once per
+ * people for one capability within a week becomes a Huddle item raised by Catalyzt, once per
  * open pattern. Returns the item raised, or null when one is already open.
  */
 export function raiseFeedbackPattern(db: HorizonDb, app: AppRecord, p: { capability: string; reason: string; count: number }, days = 7) {
@@ -245,17 +245,17 @@ export function raiseFeedbackPattern(db: HorizonDb, app: AppRecord, p: { capabil
   return createItem(
     db,
     app,
-    { type: 'agent', ref: 'Horizon' },
+    { type: 'agent', ref: 'Catalyzt' },
     {
       kind: 'feedback',
       title: `${cap} answers rated low for "${p.reason}"`,
       summary: `${p.count} ratings below 4 stars in ${days} days gave the reason "${p.reason}" for ${cap.toLowerCase()} answers.`,
       scope: `${app.name} · whole app`,
-      aiSummary: `${p.count} people rated ${cap.toLowerCase()} answers below 4 stars in the last ${days} days and picked "${p.reason}" [1]. Horizon does not change its own behaviour from feedback; the team decides whether the sources, the prompts or the expectation need to change.`,
+      aiSummary: `${p.count} people rated ${cap.toLowerCase()} answers below 4 stars in the last ${days} days and picked "${p.reason}" [1]. Catalyzt does not change its own behaviour from feedback; the team decides whether the sources, the prompts or the expectation need to change.`,
       citations: [{ n: 1, title: 'Ratings with reasons and comments', detail: `${p.count} in ${days} days · ${cap} · "${p.reason}"` }],
       options: [
         { title: 'Review the sources and prompt for this capability', detail: 'Someone reads the rated answers and their comments, and proposes what to change.' },
-        { title: 'Keep as is and watch', detail: 'Leave it; Horizon raises it again if the pattern continues after this is decided.' },
+        { title: 'Keep as is and watch', detail: 'Leave it; Catalyzt raises it again if the pattern continues after this is decided.' },
       ],
       affects: recent.map((r) => ({ label: r.title.slice(0, 60), href: `/chat/${r.chat_id}` })),
       links: [{ type: 'feedback_pattern', ref: key }],

@@ -392,7 +392,7 @@ function ScanBox({ scans, onStarted, onShowRepo }: { scans: ScanRow[]; onStarted
     <details className="card scanbox" open={scans.length === 0 || scans.some((s) => s.status === 'running')}>
       <summary>
         <b>Find automated tests in a GitHub repository</b>
-        <span className="muted">Read only: Horizon reads test files and never runs code</span>
+        <span className="muted">Read only: Catalyzt reads test files and never runs code</span>
       </summary>
       <form className="field-row" onSubmit={submit}>
         <div className="field">
@@ -521,8 +521,8 @@ function Runs() {
           </p>
         )}
         <p className="muted" style={{ margin: 0, fontSize: 12.5 }}>
-          Horizon reads JUnit XML artifacts (named like <span className="mono">test-results</span> or <span className="mono">junit</span>) from each PR merge commit's run. In production, the workflow
-          pushes results to Horizon instead: see <span className="mono">docs/hexa-github-action.yml</span>.
+          Catalyzt reads JUnit XML artifacts (named like <span className="mono">test-results</span> or <span className="mono">junit</span>) from each PR merge commit's run. In production, the workflow
+          pushes results to Catalyzt instead: see <span className="mono">docs/hexa-github-action.yml</span>.
         </p>
       </section>
 

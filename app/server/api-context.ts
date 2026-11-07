@@ -7,7 +7,7 @@
  *   POST /api/context/uploads               { files: [{filename, contentBase64}], scope: 'app'|'workspace', workspace? }
  *   POST /api/context/confluence            501: not connected in this build
  *   POST /api/context/sources/:id/sync      re-read a repository's documentation; record a Jira sync
- *   POST /api/context/test                  { question } -> what Horizon would use, and what it would not, and why
+ *   POST /api/context/test                  { question } -> what Catalyzt would use, and what it would not, and why
  *   POST /api/context/conflicts             { sourceId, otherSourceId, title, detail, compare } -> Huddle item
  *   GET  /api/huddle                        the application's decisions
  *   POST /api/huddle                        raise one: { kind, title, summary, options, affects?, scope? }

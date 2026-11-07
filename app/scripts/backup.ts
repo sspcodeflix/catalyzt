@@ -1,5 +1,5 @@
 /**
- * Consistent backup of a live Horizon database with SQLite's online backup API (safe while the
+ * Consistent backup of a live Catalyzt database with SQLite's online backup API (safe while the
  * server is writing; copying the .db file alone while WAL is active is not).
  *
  *   npm run backup                      # data/horizon.db -> data/backups/horizon-<stamp>.db

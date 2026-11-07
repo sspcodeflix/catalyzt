@@ -167,11 +167,11 @@ export async function refineStory(
           output: { summary, description: clean(String(raw.description ?? '')).slice(0, 4000), acceptanceCriteria: ac, questions: strs(raw.questions, 8, 300) },
         };
       }
-      return { input, output: refineByRules(input), source: 'rules', model: null, call: call('ok'), note: "DeepSeek's answer was unusable, so Horizon tidied it with rules." };
+      return { input, output: refineByRules(input), source: 'rules', model: null, call: call('ok'), note: "DeepSeek's answer was unusable, so Catalyzt tidied it with rules." };
     } catch (e) {
       if (signal?.aborted) throw e;
-      return { input, output: refineByRules(input), source: 'rules', model: null, call: call('error'), note: `DeepSeek failed (${(e as Error).message}), so Horizon tidied it with rules.` };
+      return { input, output: refineByRules(input), source: 'rules', model: null, call: call('error'), note: `DeepSeek failed (${(e as Error).message}), so Catalyzt tidied it with rules.` };
     }
   }
-  return { input, output: refineByRules(input), source: 'rules', model: null, note: 'DeepSeek is not configured, so Horizon tidied it with rules.' };
+  return { input, output: refineByRules(input), source: 'rules', model: null, note: 'DeepSeek is not configured, so Catalyzt tidied it with rules.' };
 }

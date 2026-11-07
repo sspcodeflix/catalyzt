@@ -27,7 +27,7 @@ export const uatText = (t: Ticket) =>
 type Filter = 'all' | UatState;
 
 /**
- * Jira stories Horizon pulls on a schedule. Pick one to analyse it for UAT, or create one.
+ * Jira stories Catalyzt pulls on a schedule. Pick one to analyse it for UAT, or create one.
  * Route /tickets; a story opens in the side panel at /tickets/:ticketKey, and /tickets/new creates one.
  */
 export function Tickets() {
@@ -68,7 +68,7 @@ export function Tickets() {
             <div>
               <h1 className="pagetitle">Jira Stories</h1>
               <p className="muted">
-                Horizon pulls stories from Jira every {sync.everyMinutes} minutes and keeps them here. Pick one to analyse
+                Catalyzt pulls stories from Jira every {sync.everyMinutes} minutes and keeps them here. Pick one to analyse
                 it for UAT: each acceptance criterion is checked against your tests.
               </p>
             </div>
@@ -185,7 +185,7 @@ export function Tickets() {
   );
 }
 
-/** Edits which stories Horizon pulls: the statuses in the filter and how often it syncs. Saved on the server. */
+/** Edits which stories Catalyzt pulls: the statuses in the filter and how often it syncs. Saved on the server. */
 function FilterEditor({ id, onClose }: { id: string; onClose: () => void }) {
   const sync = useJiraSync();
   const [statuses, setStatuses] = useState<StoryStatus[]>(sync.statuses);

@@ -9,7 +9,7 @@ import type { IconName } from '../components/icons';
 import { http, sessionEpoch, StaleScopeError } from './session';
 
 export type SourceType = 'Repository' | 'Jira' | 'Confluence' | 'Text' | 'PDF' | 'Word' | 'Image' | 'ZIP' | 'File';
-/** stored: kept, but Horizon cannot read it in this build. */
+/** stored: kept, but Catalyzt cannot read it in this build. */
 export type SourceStatus = 'ready' | 'indexed' | 'review' | 'processing' | 'failed' | 'stored';
 /** Trust order: Confluence > Jira > code > team uploads. No Fabric is connected. */
 export type Trust = 'High' | 'Tickets' | 'Code' | 'Team upload';

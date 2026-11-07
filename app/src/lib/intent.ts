@@ -1,5 +1,5 @@
 /**
- * Intent: what the user wants Horizon to do. Shared by the browser and the server-side API layer.
+ * Intent: what the user wants Catalyzt to do. Shared by the browser and the server-side API layer.
  * The model proposes it; the server validates it (validateIntent); the user's explicit choices
  * in the composer always win over the model.
  */
@@ -15,9 +15,9 @@ export interface Intent {
   action: string;
   tickets: string[];
   components: string[];
-  /** 0 to 1. Below the clarify threshold Horizon asks instead of guessing. */
+  /** 0 to 1. Below the clarify threshold Catalyzt asks instead of guessing. */
   confidence: number;
-  /** Set when Horizon should ask before doing anything. */
+  /** Set when Catalyzt should ask before doing anything. */
   question: string | null;
   options: string[];
   /** Where the intent came from: the model, or the rules when the model is unavailable. */

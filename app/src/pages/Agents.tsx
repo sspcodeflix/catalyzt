@@ -218,7 +218,7 @@ function TokenUsage() {
         {u.allTime.unreported > 0 && <span className="muted" style={{ fontSize: 12.5 }}>{u.allTime.unreported} calls did not report tokens (stopped or failed)</span>}
       </div>
       {rows.length === 0 ? (
-        <p className="muted" style={{ margin: 0 }}>No model calls yet. Without DeepSeek configured, Horizon uses rules and spends no tokens.</p>
+        <p className="muted" style={{ margin: 0 }}>No model calls yet. Without DeepSeek configured, Catalyzt uses rules and spends no tokens.</p>
       ) : (
         <div className="tablewrap">
           <table className="usetable">

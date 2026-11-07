@@ -1,4 +1,4 @@
-// SVG path data for the Horizon icon set, copied from design/mockups.html.
+// SVG path data for the Catalyzt icon set, copied from design/mockups.html.
 // Each value is the inner markup of a 24x24 stroke icon.
 export const iconPaths = {
   plus: '<path d="M12 5v14M5 12h14"/>',

@@ -1,5 +1,5 @@
 /**
- * Who is using Horizon, and which application they are looking at.
+ * Who is using Catalyzt, and which application they are looking at.
  *
  * There is no sign-in in this preview. "Sign in as" picks a person from the workspace, and every
  * request carries the choice in the x-horizon-user and x-horizon-app headers (or _user and _app

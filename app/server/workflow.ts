@@ -9,7 +9,7 @@
  *   ├─ one of        Clarifier | UAT analyst (tools) | a capability specialist (model, streamed)
  *   └─ Output guard  masks secrets in the answer
  *
- * Nothing here changes anything outside Horizon; changes are proposed as approval cards.
+ * Nothing here changes anything outside Catalyzt; changes are proposed as approval cards.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -20,7 +20,7 @@ import { testTypeLabel } from '../src/lib/testType';
 import type { Capability, Citation } from '../src/lib/types';
 import { uatAnswer } from '../src/lib/uat';
 import type { AgentKind, AgentName, AgentState, RunRequest, WorkflowEvent } from '../src/lib/workflow';
-import { retrieveContext } from './context';
+import { retrieveContext, type ContextPassage } from './context';
 import type { HorizonDb } from './db';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
@@ -326,9 +326,10 @@ export async function runWorkflow(
       const unreadable = attachments.filter((a) => !a.text);
       read({ detail: [`${readable.length} readable`, ...unreadable.map((a) => `${a.filename}: ${a.note ?? 'not readable'}`)].join(' · ') });
     }
+    let passages: ContextPassage[] = [];
     if (db) {
       const look = specialist.step('tool', 'Reading App Context', 'context.retrieve');
-      const passages = retrieveContext(db, app, req.text, { limit: 4, workspace: req.scope.workspace || null });
+      passages = retrieveContext(db, app, req.text, { limit: 4, workspace: req.scope.workspace || null });
       for (const p of passages) {
         const n = sources.length + 1;
         sources.push({ n, title: `${p.sourceTitle} · ${p.locator}`, text: p.text });
@@ -343,14 +344,15 @@ export async function runWorkflow(
       const s = specialist.step('rule', 'Routing only');
       const kind = intent.testType ? ` as ${testTypeLabel(intent.testType).toLowerCase()}` : '';
       const comps = intent.components.length ? ` covering ${intent.components.join(', ')}` : '';
-      const files = sources.length ? ` It would read ${sources.length} source${sources.length > 1 ? 's' : ''} (${sources.map((x) => `[${x.n}]`).join(', ')}).` : '';
+      const what = [readable.length ? `${readable.length} attached file${readable.length > 1 ? 's' : ''}` : '', passages.length ? `${passages.length} App Context passage${passages.length > 1 ? 's' : ''}` : ''].filter(Boolean);
+      const files = what.length ? ` It would read ${what.join(' and ')} (${sources.map((x) => `[${x.n}]`).join(', ')}).` : '';
       emit({
         type: 'answer',
         citations,
         blocks: [
           {
             kind: 'prose',
-            text: `DeepSeek is not configured, so Horizon can only route this request: the ${name} would handle it${kind} for ${req.scope.appName}${comps}.${files} Add \`DEEPSEEK_API_KEY\` to \`app/.env\` and restart to get answers.`,
+            text: `DeepSeek is not configured, so Catalyzt can only route this request: the ${name} would handle it${kind} for ${req.scope.appName}${comps}.${files} Add \`DEEPSEEK_API_KEY\` to \`app/.env\` and restart to get answers.`,
           },
         ],
       });

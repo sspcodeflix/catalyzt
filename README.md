@@ -1,13 +1,22 @@
 # Horizon-lite
 
-Design for **Horizon**, an AI assistant for quality and reliability engineering: test analysis, test authoring, execution, CloudOps and security, with a person in the loop.
+**Catalyzt** (formerly Horizon), an AI assistant for quality and reliability engineering: test analysis, test authoring, execution, CloudOps and security, with a person in the loop. Confidence to ship.
 
 - `DESIGN.md`: the experience, navigation, rules and open questions.
 - `design/tokens.css`: light and dark design tokens.
 - `DATA_MODEL.md`: the data model. `POC_PLAN.md`: the CloudOps and security remediation POC.
-- `design/mockups.html`: every mock-up screen (`?scene=home|analysis|authoring|feedback|execution|cloudops|security|context|contextdetail|itemchat|huddle&theme=light|dark`).
-- `design/screenshots/`: the rendered PNGs.
-- `app/`: the web app (React, TypeScript, Vite). It imports `design/tokens.css` directly, so the app and the mock-ups share one set of tokens.
+- `design/mockups.html` and `design/screenshots/`: the original Horizon-era mock-ups, kept as a historical record (they still carry the old name and mark).
+- `app/`: the web app (React, TypeScript, Vite) and its Node API. It imports `design/tokens.css` directly, so the app and the mock-ups share one set of tokens.
+- `docs/`: the development brief, the findings matrix, deployment and migration notes, the brand reference and preview.
+
+## Brand
+The Catalyzt mark and lockup live in `app/public/brand/` (SVG with text as paths, an editable source, favicon, PNG exports and app icons, with the font license). They are generated from the geometry in `app/src/lib/brand.ts`:
+```bash
+cd app
+./node_modules/.bin/vite-node scripts/brand.ts     # SVGs
+python3 scripts/brand-preview.py                   # PNGs and docs/brand/catalyzt-preview.png
+```
+The reference sheet is `docs/brand/catalyzt-reference.png`; the wordmark uses Montserrat (OFL) as the closest licensed face available offline.
 
 ## Render the mock-ups
 ```bash

@@ -1,5 +1,5 @@
 /**
- * App Context, server side: what Horizon knows about one application and where it came from.
+ * App Context, server side: what Catalyzt knows about one application and where it came from.
  *
  * Sources are real: repositories from the workspace (their documentation is read from the local
  * clone and split into passages), the Jira feed, and what the team uploads (text formats are
@@ -458,7 +458,7 @@ export async function addUploads(db: HorizonDb, store: BlobStore, app: AppRecord
 
 /** Confluence is not connected in this build; this says so instead of pretending. */
 export function addConfluence(): never {
-  throw new RequestError(501, 'Confluence is not connected in this build. Export the page as Markdown or text and upload it, so Horizon can read it.');
+  throw new RequestError(501, 'Confluence is not connected in this build. Export the page as Markdown or text and upload it, so Catalyzt can read it.');
 }
 
 /** Re-syncs a source: a repository re-reads its documentation, Jira records the sync. Uploads have nothing to sync. */
@@ -548,7 +548,7 @@ function score(qw: Set<string>, c: { where: string; text: string }) {
 }
 
 /**
- * "Test a question": the top passages for a question, including the ones Horizon would not use
+ * "Test a question": the top passages for a question, including the ones Catalyzt would not use
  * and why, plus Jira stories and Hexa test titles so the person sees everything considered.
  */
 export function testQuestion(db: HorizonDb, app: AppRecord, question: string) {
@@ -686,7 +686,7 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
         title,
         summary: detail || `${source.title} disagrees with ${other.title}. ${excluded} passage${excluded === 1 ? '' : 's'} excluded until decided.`,
         scope: scopeLabel(app, source.scope),
-        aiSummary: `${compare[0].label}: ${compare[0].value} [1]. ${compare[1].label}: ${compare[1].value} [2]. ${source.title} (${lowerFirst(source.trust)}) ranks below ${other.title} (${lowerFirst(other.trust)}), so Horizon keeps using ${other.title} and leaves ${excluded} passage${excluded === 1 ? '' : 's'} of ${source.title} out until this is decided.`,
+        aiSummary: `${compare[0].label}: ${compare[0].value} [1]. ${compare[1].label}: ${compare[1].value} [2]. ${source.title} (${lowerFirst(source.trust)}) ranks below ${other.title} (${lowerFirst(other.trust)}), so Catalyzt keeps using ${other.title} and leaves ${excluded} passage${excluded === 1 ? '' : 's'} of ${source.title} out until this is decided.`,
         citations: [
           { n: 1, title: compare[0].label, detail: [compare[0].where, lowerFirst(source.trust)].filter(Boolean).join(' · '), href: sourceHref(source.id) },
           { n: 2, title: compare[1].label, detail: [compare[1].where, lowerFirst(other.trust)].filter(Boolean).join(' · '), href: other.href ?? sourceHref(other.id) },

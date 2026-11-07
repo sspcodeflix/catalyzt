@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { AssistantTurn } from '../components/chat/AssistantTurn';
@@ -45,10 +45,26 @@ function ChatView({ chatId }: { chatId: string }) {
   const readOnly = !!chat?.createdBy && chat.createdBy !== userId;
   const starter = readOnly ? (me?.people.find((p) => p.id === chat?.createdBy)?.name ?? 'someone else') : null;
 
+  // On a phone the report and the chat are tabs, not a stack; both stay mounted so scroll positions survive the switch.
+  const [view, setView] = useState<'chat' | 'report'>('report');
+  useEffect(() => {
+    if (panelOpen) setView('report');
+  }, [panelOpen, location.pathname]);
+
   const send = (msg: ComposerSubmit) => sendMessage(chatId, msg);
 
   return (
-    <div className={`body${panelOpen ? ' split' : ''}`}>
+    <div className={`body${panelOpen ? ` split view-${view}` : ''}`}>
+      {panelOpen && (
+        <div className="mobiletabs segctl" role="tablist" aria-label="Chat or report">
+          <button type="button" role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => setView('chat')}>
+            Chat
+          </button>
+          <button type="button" role="tab" aria-selected={view === 'report'} className={view === 'report' ? 'on' : undefined} onClick={() => setView('report')}>
+            Report
+          </button>
+        </div>
+      )}
       <div className="chatcol">
         <div className="thread">
           {!chat && !first && <ChatState load={load} onRetry={() => void loadChat(chatId, true)} />}
@@ -56,7 +72,7 @@ function ChatView({ chatId }: { chatId: string }) {
             m.role === 'user' ? (
               <Fragment key={m.id}>
                 {Boolean(m.testType || m.tickets?.length || m.components?.length || m.attachments?.length) && (
-                  <div className="msgtags" aria-label="How Horizon read this request">
+                  <div className="msgtags" aria-label="How Catalyzt read this request">
                     {m.testType && <span className="pill info">{testTypeLabel(m.testType)}</span>}
                     {m.tickets?.map((t) => (
                       <Link key={t} to={`/tickets/${t}`} className="pill mono">
@@ -69,7 +85,7 @@ function ChatView({ chatId }: { chatId: string }) {
                       </span>
                     ))}
                     {m.attachments?.map((a) => (
-                      <span key={a.id} className="pill" title={a.status === 'stored' ? 'Kept, but Horizon could not read this file' : undefined}>
+                      <span key={a.id} className="pill" title={a.status === 'stored' ? 'Kept, but Catalyzt could not read this file' : undefined}>
                         <Icon name="clip" small />
                         {a.filename}
                         {a.status === 'stored' ? ' · not readable' : ''}

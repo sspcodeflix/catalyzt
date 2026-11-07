@@ -1,5 +1,5 @@
 /**
- * Horizon's database (SQLite). Opens and migrates it, seeds it from the workspace, and exposes
+ * Catalyzt's database (SQLite). Opens and migrates it, seeds it from the workspace, and exposes
  * small repositories. Every repository is scoped to an application. The schema is in schema.ts,
  * the design in DATA_MODEL.md. Server only.
  */
@@ -1313,7 +1313,7 @@ export function openDb(path: string) {
           a.workflowRunId,
           t,
         );
-        // A citation with a place in Horizon keeps its link, so a reloaded chat opens the same passage.
+        // A citation with a place in Catalyzt keeps its link, so a reloaded chat opens the same passage.
         const cit = db.prepare('INSERT INTO citations (revision_id, n, source_type, source_ref, title, detail) VALUES (?, ?, ?, ?, ?, ?)');
         for (const c of a.citations) cit.run(revisionId, c.n, c.href ? 'link' : 'citation', c.href ?? String(c.n), c.title, c.detail);
         if (a.artifact) {
@@ -1482,6 +1482,28 @@ export function openDb(path: string) {
         return { kind: 'decided' as const, approval: getApproval(id)! };
       })();
     },
+    /** Approvals still waiting in an application, newest first, with the chat they live in. */
+    listPendingApprovals(app: string, limit = 20) {
+      return (
+        db
+          .prepare(
+            `SELECT a.id, a.action, a.target, a.created_at, ar.revision, m.chat_id, c.title AS chat_title, u.name AS asked_by FROM approvals a
+             JOIN answer_revisions ar ON ar.id = a.revision_id JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id JOIN users u ON u.id = c.created_by
+             WHERE c.application_id = ? AND a.status = 'pending' ORDER BY a.created_at DESC LIMIT ?`,
+          )
+          .all(app, limit) as Row[]
+      ).map((r) => ({
+        id: String(r.id),
+        action: String(r.action),
+        storyKey: json<{ storyKey?: string | null }>(r.target, {}).storyKey ?? null,
+        revision: Number(r.revision),
+        chatId: String(r.chat_id),
+        chatTitle: String(r.chat_title),
+        askedBy: String(r.asked_by),
+        createdAt: String(r.created_at),
+      }));
+    },
+
     /** The artifact exactly as a revision stored it. */
     getArtifact(revisionId: string, localId: string): Artifact | undefined {
       const r = db.prepare('SELECT body FROM artifacts WHERE id = ?').get(`${revisionId}/${localId}`) as Row | undefined;

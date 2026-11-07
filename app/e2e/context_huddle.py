@@ -101,7 +101,8 @@ with sync_playwright() as p:
     page.goto(BASE + '/context')
     page.wait_for_selector('.dt tbody tr .srclink', timeout=15000)
     page.wait_for_function("() => !document.querySelector('.conflict')", timeout=10000)
-    check('conflict gone from App Context; source back to Ready', 'Needs review' not in page.inner_text('.dt') and 'team-notes.md' in page.inner_text('.dt'))
+    row = page.locator('.dt tbody tr', has_text='team-notes.md').inner_text()
+    check('conflict gone from App Context; source back to Ready', 'Needs review' not in row and 'Ready' in row, row)
 
     # 7. An answer cites an App Context passage with a link that lands on the passage.
     page.goto(BASE + '/')

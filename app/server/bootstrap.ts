@@ -33,7 +33,7 @@ export function bootstrap(env: Record<string, string | undefined>, log: (line: s
 
   const root = findWorkspace(env);
   if (!root) {
-    return { db, workspace: null, summary: 'No workspace found (set HORIZON_WORKSPACE or create .myworkspace); Horizon starts empty.' };
+    return { db, workspace: null, summary: 'No workspace found (set HORIZON_WORKSPACE or create .myworkspace); Catalyzt starts empty.' };
   }
   let workspace: Workspace | null;
   try {
@@ -45,7 +45,7 @@ export function bootstrap(env: Record<string, string | undefined>, log: (line: s
     }
     throw e;
   }
-  if (!workspace) return { db, workspace: null, summary: `No workspace at ${root}; Horizon starts empty.` };
+  if (!workspace) return { db, workspace: null, summary: `No workspace at ${root}; Catalyzt starts empty.` };
 
   const counts = seedWorkspace(db, workspace);
   for (const w of workspace.warnings) log(`[horizon] workspace: ${w}`);

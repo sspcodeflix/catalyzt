@@ -7,7 +7,7 @@ import { useRecentChats } from '../lib/chatStore';
 import { useHuddle } from '../lib/huddleData';
 import { selectApp, signInAs, useSession } from '../lib/session';
 import { useTickets } from '../lib/ticketStore';
-import { HorizonMark } from './HorizonMark';
+import { BrandMark, BrandWordmark } from './BrandMark';
 import { Icon } from './Icon';
 
 interface SidebarProps {
@@ -59,11 +59,11 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   }, [open]);
 
   return (
-    <aside ref={ref} className={`sidebar${open ? ' open' : ''}`} aria-label="Horizon" role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined}>
+    <aside ref={ref} className={`sidebar${open ? ' open' : ''}`} aria-label="Catalyzt" role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined}>
       <div className="brandrow">
         <span className="brand">
-          <HorizonMark size={28} />
-          <b>Horizon</b>
+          <BrandMark size={26} />
+          <BrandWordmark />
         </span>
         <button className="icon drawer-close" aria-label="Close sidebar" onClick={onClose}>
           <Icon name="close" />
@@ -95,7 +95,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           </NavLink>
           <NavLink to="/hexa" className={navClass}>
             <Icon name="hex" />
-            Hexa
+            Hexa · Tests
           </NavLink>
         </div>
 
@@ -118,7 +118,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           </NavLink>
           <NavLink to="/huddle" className={navClass}>
             <Icon name="people" />
-            Huddle
+            Huddle · Decisions
             {openHuddleItems > 0 && (
               <span className="navcount" aria-label={`${openHuddleItems} open`}>
                 {openHuddleItems}

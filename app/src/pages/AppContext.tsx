@@ -10,7 +10,7 @@ import '../styles/pages.css';
 
 const PAGE_SIZE = 8;
 
-/** App Context: what Horizon knows about the selected application, where it came from, and what the team adds. */
+/** App Context: what Catalyzt knows about the selected application, where it came from, and what the team adds. */
 export function AppContext() {
   const { sources, conflicts, connectors, limits, loaded, error, notice } = useContextStore();
   const { me, loaded: sessionLoaded } = useSession();
@@ -42,7 +42,7 @@ export function AppContext() {
               <h1>App Context</h1>
               {!panelOpen && (
                 <p>
-                  Everything Horizon knows about this application: the documentation of its repositories, the Jira
+                  Everything Catalyzt knows about this application: the documentation of its repositories, the Jira
                   feed, and what your team uploads. Readable sources are split into passages; answers cite the
                   passages they use, found by keyword match.
                 </p>
@@ -198,7 +198,7 @@ function AddContext({ workspaces, maxUploadMb, readable, storedOnly, confluence 
         {confluence === 'not_connected' ? (
           <div className="callout" role="status">
             <Icon name="link" small />
-            <span>Not connected in this build. Export the page as Markdown or text and upload it here, so Horizon can read and cite it.</span>
+            <span>Not connected in this build. Export the page as Markdown or text and upload it here, so Catalyzt can read and cite it.</span>
           </div>
         ) : (
           <form

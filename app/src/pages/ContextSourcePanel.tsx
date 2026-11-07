@@ -55,7 +55,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
         <div className="phead">
           <div className="t">
             <b>Test a question</b>
-            <span>See which passages Horizon would use for a question in this application</span>
+            <span>See which passages Catalyzt would use for a question in this application</span>
           </div>
           {close}
         </div>
@@ -131,7 +131,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
         <Tabs.Content value="passages" className="tabpane" style={{ gap: 12 }}>
           {chunks.length === 0 && (
             <p className="muted">
-              {source.status === 'stored' ? (source.note ?? 'Horizon cannot read this file in this build.') : source.type === 'Jira' ? 'Stories are read live from the Jira feed; open a story from Jira Stories.' : 'No passages were found in this source.'}
+              {source.status === 'stored' ? (source.note ?? 'Catalyzt cannot read this file in this build.') : source.type === 'Jira' ? 'Stories are read live from the Jira feed; open a story from Jira Stories.' : 'No passages were found in this source.'}
             </p>
           )}
           {chunks.map((c) => (
@@ -246,7 +246,7 @@ function TestQuestion() {
           <label htmlFor={qId} className="sr">
             Question
           </label>
-          <input id={qId} type="search" placeholder="Type a question to see which passages Horizon would use" value={question} onChange={(e) => setQuestion(e.target.value)} />
+          <input id={qId} type="search" placeholder="Type a question to see which passages Catalyzt would use" value={question} onChange={(e) => setQuestion(e.target.value)} />
         </div>
         <button type="submit" className="btn ink" style={{ height: 44 }} disabled={!question.trim() || busy} aria-busy={busy}>
           {busy ? 'Testing…' : 'Test'}
@@ -260,7 +260,7 @@ function TestQuestion() {
       {results && (
         <div aria-live="polite" className="tabpane" style={{ gap: 12 }}>
           <div className="sechead" style={{ margin: 0 }}>
-            <h3>What Horizon would use</h3>
+            <h3>What Catalyzt would use</h3>
             <span>
               Top {results.results.length} of {results.considered.passages} passages, {results.considered.stories} stories and {results.considered.tests} tests across {sources.length} sources · keyword relevance, not correctness
             </span>
@@ -313,7 +313,7 @@ function ConflictForm({ sourceId, sourceTitle, higher }: { sourceId: string; sou
   return (
     <form className="decideform" onSubmit={submit} aria-label="Report a conflict">
       <p className="muted" style={{ margin: 0 }}>
-        When {sourceTitle} disagrees with a higher-trust source, Horizon stops using its passages until an app owner decides in Huddle.
+        When {sourceTitle} disagrees with a higher-trust source, Catalyzt stops using its passages until an app owner decides in Huddle.
       </p>
       <label htmlFor={`${id}-other`} className="blockhead">
         Disagrees with

@@ -505,7 +505,7 @@ describe('F11: App Context and Huddle through the API', () => {
     expect(((await (await api.as('u-nabih', 'IBGM').get('/api/huddle')).json()) as { items: unknown[] }).items).toEqual([]);
   });
 
-  it('three low ratings with the same reason raise one Huddle item by Horizon', async () => {
+  it('three low ratings with the same reason raise one Huddle item by Catalyzt', async () => {
     const chats = [
       ['u-ram', '1'],
       ['u-sourav', '2'],
@@ -522,7 +522,7 @@ describe('F11: App Context and Huddle through the API', () => {
     expect(raised).toHaveLength(1);
     const list = (await (await api.as('u-ram', 'ABCD').get('/api/huddle')).json()) as { items: { id: string; kind: string; raisedBy: string; affects: { href: string }[] }[] };
     expect(list.items).toHaveLength(1);
-    expect(list.items[0]).toMatchObject({ id: raised[0], kind: 'feedback', raisedBy: 'Horizon' });
+    expect(list.items[0]).toMatchObject({ id: raised[0], kind: 'feedback', raisedBy: 'Catalyzt' });
     expect(list.items[0].affects.map((a) => a.href).sort()).toEqual(['/chat/c1', '/chat/c2', '/chat/c3']);
     // A fourth low rating does not raise a second item while the first is open.
     const more = await api.as('u-ram', 'ABCD').run(uatRun('ABCD-1001', ids('4')));

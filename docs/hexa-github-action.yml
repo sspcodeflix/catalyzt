@@ -1,15 +1,15 @@
-# Sends test results to Horizon's Hexa after every merge to main.
+# Sends test results to Catalyzt's Hexa after every merge to main.
 #
 # Copy to .github/workflows/hexa.yml in the repository under test and adjust the "Run tests" step.
 # Two ways results reach Hexa, both covered here:
 #   1. Artifact: the JUnit XML is uploaded as an artifact named "test-results". Hexa's
 #      "Collect results" (Pipeline runs tab) reads it from PR merge-commit runs. Needs
-#      GITHUB_TOKEN on the Horizon server with actions:read on this repo.
-#   2. Push: the last step posts the results to Horizon. Needs Horizon reachable from GitHub,
+#      GITHUB_TOKEN on the Catalyzt server with actions:read on this repo.
+#   2. Push: the last step posts the results to Catalyzt. Needs Catalyzt reachable from GitHub,
 #      two repository secrets, HORIZON_URL (e.g. https://horizon.example.com) and
-#      HEXA_INGEST_TOKEN (the value of HEXA_INGEST_TOKEN on the Horizon server, or of
+#      HEXA_INGEST_TOKEN (the value of HEXA_INGEST_TOKEN on the Catalyzt server, or of
 #      HEXA_INGEST_TOKEN_<APP> when the application has its own token), and the repository
-#      variable HEXA_APP: the application id in Horizon this repository belongs to (for example
+#      variable HEXA_APP: the application id in Catalyzt this repository belongs to (for example
 #      IBGM). The push is skipped, with a message, when any of the three is missing.
 #      Deliveries are recorded once per application, repository, run id and attempt: posting the
 #      same run again is a no-op, and a rerun (GITHUB_RUN_ATTEMPT > 1) is a new attempt that
@@ -49,7 +49,7 @@ jobs:
           path: test-results/*.xml
           retention-days: 30
 
-      - name: Send results to Horizon
+      - name: Send results to Catalyzt
         if: always()
         env:
           HORIZON_URL: ${{ secrets.HORIZON_URL }}

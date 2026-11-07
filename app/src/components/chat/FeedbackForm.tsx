@@ -34,7 +34,7 @@ export function FeedbackForm({ stars, capability, busy, error, onSubmit, onCance
     <form className="card feedback" aria-label={`Feedback for a ${stars}-star rating`} onSubmit={submit}>
       <div className="fb-head">
         <b>{stars} of 5. What went wrong?</b>
-        <span className="muted">Sent with the answer's revision, application and sources. Feedback improves Horizon; it is not used to assess people.</span>
+        <span className="muted">Sent with the answer's revision, application and sources. Feedback improves Catalyzt; it is not used to assess people.</span>
       </div>
       <fieldset>
         <legend>Reasons (pick at least one)</legend>

@@ -1,6 +1,6 @@
 /**
  * Files attached to a chat message. The bytes go to the blob store, the metadata and any text
- * Horizon could read go to SQLite. Only text formats are read in this build; everything else is
+ * Catalyzt could read go to SQLite. Only text formats are read in this build; everything else is
  * kept and shown as "stored, not readable", never as processed. An attachment belongs to the
  * application and the person who uploaded it, and to the first chat it is used in.
  */
@@ -30,7 +30,7 @@ export interface AttachmentView {
   filename: string;
   mime: string;
   size: number;
-  /** ready: Horizon can read its text; stored: kept, but not readable in this build. */
+  /** ready: Catalyzt can read its text; stored: kept, but not readable in this build. */
   status: AttachmentStatus;
   note: string | null;
   textChars: number;
@@ -78,7 +78,7 @@ const TEXT_TYPES: Record<string, string> = {
   proto: 'text/plain',
 };
 const STORED_ONLY: Record<string, [string, string]> = {
-  pdf: ['application/pdf', 'PDF text extraction is not available in this build; the file is kept but Horizon cannot read it yet.'],
+  pdf: ['application/pdf', 'PDF text extraction is not available in this build; the file is kept but Catalyzt cannot read it yet.'],
   docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Word documents are kept but not read in this build.'],
   xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Spreadsheets are kept but not read in this build; export the sheet as CSV to make it readable.'],
   png: ['image/png', 'Images are kept but not read in this build.'],
@@ -90,11 +90,11 @@ const STORED_ONLY: Record<string, [string, string]> = {
 const ext = (name: string) => name.split('.').pop()?.toLowerCase() ?? '';
 const safeName = (name: string) => name.replace(/[\\/]/g, '_').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200) || 'file';
 
-/** Reads text from formats Horizon understands. Binary content in a "text" file is refused honestly. */
+/** Reads text from formats Catalyzt understands. Binary content in a "text" file is refused honestly. */
 export function extractText(filename: string, data: Buffer): { text: string | null; mime: string; status: AttachmentStatus; note: string | null } {
   const e = ext(filename);
   if (e in TEXT_TYPES) {
-    if (data.subarray(0, 8000).includes(0)) return { text: null, mime: 'application/octet-stream', status: 'stored', note: 'The file is not text, so Horizon cannot read it.' };
+    if (data.subarray(0, 8000).includes(0)) return { text: null, mime: 'application/octet-stream', status: 'stored', note: 'The file is not text, so Catalyzt cannot read it.' };
     let text = data.toString('utf8').replace(/\r\n?/g, '\n');
     let note: string | null = null;
     if (text.length > MAX_TEXT_CHARS) {

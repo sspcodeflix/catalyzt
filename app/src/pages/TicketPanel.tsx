@@ -142,7 +142,7 @@ export function TicketPanel() {
           </div>
           <div>
             <dt>Source</dt>
-            <dd>{t.source === 'horizon' ? `Created in Horizon${t.refinementId ? ', refined with AI' : ''}` : 'Synced from Jira'}</dd>
+            <dd>{t.source === 'horizon' ? `Created in Catalyzt${t.refinementId ? ', refined with AI' : ''}` : 'Synced from Jira'}</dd>
           </div>
           <div>
             <dt>Components</dt>
@@ -153,7 +153,7 @@ export function TicketPanel() {
         <div className="callout">
           <Icon name="lock" small />
           <span>
-            Read from Jira with a read-only service account. Horizon only writes to this ticket after you approve,
+            Read from Jira with a read-only service account. Catalyzt only writes to this ticket after you approve,
             for example to add UAT test cases.
           </span>
         </div>

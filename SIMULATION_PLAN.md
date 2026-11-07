@@ -1,7 +1,7 @@
-# Simulation plan: three real teams using Horizon
+# Simulation plan: three real teams using Catalyzt
 
 ## Goal
-Replace every placeholder with data that behaves like the real thing, then have agents use Horizon the way three application teams would, for a week of work, and fix what breaks. The outcome is a stable app and a list of what was found and what was done about it.
+Replace every placeholder with data that behaves like the real thing, then have agents use Catalyzt the way three application teams would, for a week of work, and fix what breaks. The outcome is a stable app and a list of what was found and what was done about it.
 
 ## The teams
 
@@ -53,7 +53,7 @@ Clones are shallow (`--depth 50`, enough merge history to simulate pull request 
 ISSUES.md                    # consolidated, prioritised, with what was fixed
 ```
 
-The server reads the workspace at start-up (`HORIZON_WORKSPACE=.myworkspace`) and seeds applications, people, memberships, components, Jira filters and stories from it. With no workspace, Horizon starts empty and says so. No fake data anywhere.
+The server reads the workspace at start-up (`HORIZON_WORKSPACE=.myworkspace`) and seeds applications, people, memberships, components, Jira filters and stories from it. With no workspace, Catalyzt starts empty and says so. No fake data anywhere.
 
 ## Phases
 
@@ -63,7 +63,7 @@ The server reads the workspace at start-up (`HORIZON_WORKSPACE=.myworkspace`) an
 - Write each team's backlog (10 to 15 stories per app) from the repos' real features, open issues and READMEs, with acceptance criteria. Mark which are UAT (feature) and which are regression (hardening).
 - Write 5 to 10 manual tests per team in the Octane template.
 
-### 2. Remove the dummy content and make Horizon multi-app (one day)
+### 2. Remove the dummy content and make Catalyzt multi-app (one day)
 - Delete the seed data: Payments Hub, PAY-xxxx stories, Priya and colleagues, the placeholder coverage map, the sample chat, the hard-coded recents, the seeded App Context sources and Huddle items.
 - Seed from the workspace instead.
 - Replace `DEFAULT_APP` with the selected application everywhere: Jira Stories, Hexa, Agents, App Context, Huddle, usage and chats are all scoped to the app in the composer's picker. People see the apps they belong to.
@@ -93,7 +93,7 @@ The server reads the workspace at start-up (`HORIZON_WORKSPACE=.myworkspace`) an
 - Update DESIGN.md, DATA_MODEL.md and README.md to match.
 
 ## What you get at the end
-- Horizon with no placeholder data, three real applications, eleven people with roles, everything persisted, UAT readiness driven by real test results.
+- Catalyzt with no placeholder data, three real applications, eleven people with roles, everything persisted, UAT readiness driven by real test results.
 - `.myworkspace/` as a reusable fixture: swap `team.json` and the backlog for your real teams later.
 - `ISSUES.md`: everything the simulation found, what was fixed, what is left and why.
 - Scenario logs showing how each persona used the app, useful for onboarding and for the Jira and SSO integrations later.
@@ -102,5 +102,5 @@ The server reads the workspace at start-up (`HORIZON_WORKSPACE=.myworkspace`) an
 - **Persistence refactor** is the biggest piece and touches most of the UI; it goes first so the simulation tests the real thing.
 - **Large repositories:** Juice Shop and Ghostfolio have slow installs; the CI runner uses Docker images with cached layers, and we can cap which test projects run.
 - **PiggyMetrics on Java 21:** it targets an older Java; tests run in a Java 8 Maven image instead.
-- **Model cost:** three agents plus the Horizon model calls; the token ledger will show the spend, and the simulation can run rules-only if needed.
+- **Model cost:** three agents plus the Catalyzt model calls; the token ledger will show the spend, and the simulation can run rules-only if needed.
 - **GitHub API rate limits:** cloning is git, not the API, so scans and clones are fine; "Collect results" needs the token.

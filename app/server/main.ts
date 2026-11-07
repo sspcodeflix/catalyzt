@@ -70,7 +70,7 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
   }
 
   const boot = bootstrap(env as Record<string, string | undefined>);
-  console.log(`Horizon: ${boot.summary}`);
+  console.log(`Catalyzt: ${boot.summary}`);
   const cfg = configFromEnv(env as Record<string, string>);
   const api = createApi(() => cfg, () => boot.db, {
     identity,
@@ -110,7 +110,7 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
   });
 
   server.listen(port, host, () => {
-    console.log(`Horizon API listening on http://${host}:${port} (identity: ${identity.mode}${identity.mode === 'proxy-header' ? ` via ${identity.header}` : ''}; database ${env.HORIZON_DB_PATH || 'data/horizon.db'})`);
+    console.log(`Catalyzt API listening on http://${host}:${port} (identity: ${identity.mode}${identity.mode === 'proxy-header' ? ` via ${identity.header}` : ''}; database ${env.HORIZON_DB_PATH || 'data/horizon.db'})`);
   });
 
   // Stop taking requests, checkpoint the WAL into the main file, close.

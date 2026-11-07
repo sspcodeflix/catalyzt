@@ -8,7 +8,7 @@ import { useSession } from '../lib/session';
 import { itemStatus } from './Huddle';
 import { relTime } from './Tickets';
 
-/** One Huddle decision: Horizon's cited summary, options with votes, discussion, and the owner's decision. */
+/** One Huddle decision: Catalyzt's cited summary, options with votes, discussion, and the owner's decision. */
 export function HuddleItemPanel() {
   // Remount per item so drafts and the decide form never carry over.
   const { itemId } = useParams();
@@ -155,7 +155,7 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
         <div className="aisum">
           <span className="lbl">
             <Icon name="auto" small />
-            {item.raisedByType === 'agent' ? 'Summary by Horizon · cited' : 'Summary · cited'}
+            {item.raisedByType === 'agent' ? 'Summary by Catalyzt · cited' : 'Summary · cited'}
           </span>
           <Prose text={item.aiSummary} citations={item.citations} />
         </div>

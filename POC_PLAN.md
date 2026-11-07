@@ -1,12 +1,12 @@
 # POC plan: CloudOps and security remediation on public repositories
 
 ## Goal
-Show that Horizon can find real problems in real code and infrastructure, explain them, and propose fixes that pass CI, without touching anything we own in production. Everything runs against public repositories, forks we control, and a throwaway local cluster.
+Show that Catalyzt can find real problems in real code and infrastructure, explain them, and propose fixes that pass CI, without touching anything we own in production. Everything runs against public repositories, forks we control, and a throwaway local cluster.
 
-## Can Horizon pull public GitHub repos and run through them?
+## Can Catalyzt pull public GitHub repos and run through them?
 Yes. Hexa already does the reading part today: give it `owner/repo` and it lists the tree, reads the test files and extracts test cases (a scan of `GoogleCloudPlatform/microservices-demo` found 43 Go and .NET tests in 6 files). The same access works for scanners and agents. Two rules keep it safe:
-- **Read and scan, never execute the repo's code** on the Horizon host. Scanners read files and lockfiles. Anything that runs code (tests, builds, the app itself) runs in CI on our fork or inside the throwaway cluster.
-- **Write only to forks** in a POC GitHub organisation, through a GitHub App with access to those forks only, and only after a person approves the change in Horizon.
+- **Read and scan, never execute the repo's code** on the Catalyzt host. Scanners read files and lockfiles. Anything that runs code (tests, builds, the app itself) runs in CI on our fork or inside the throwaway cluster.
+- **Write only to forks** in a POC GitHub organisation, through a GitHub App with access to those forks only, and only after a person approves the change in Catalyzt.
 
 ## Candidate repositories
 | Track | Repository | Why |
@@ -26,8 +26,8 @@ Yes. Hexa already does the reading part today: give it `owner/repo` and it lists
    - Trivy config for Dockerfiles and IaC.
 2. **Store** findings in a new `security_findings` table (repo, commit, scanner, rule, package, version, fixed version, severity, file, line, status).
 3. **Security agent** ranks them by severity, exploitability and whether a fix exists, groups by package, and proposes the smallest safe upgrade. Anything without a fix becomes a Huddle risk acceptance; nothing is suppressed.
-4. **Approval card:** fork, branch, diff, and what CI will run. On approval, Horizon opens a PR on the fork.
-5. **CI on the fork** (GitHub Actions) runs the repo's own tests. The result comes back to Horizon and is shown on the finding and in Hexa.
+4. **Approval card:** fork, branch, diff, and what CI will run. On approval, Catalyzt opens a PR on the fork.
+5. **CI on the fork** (GitHub Actions) runs the repo's own tests. The result comes back to Catalyzt and is shown on the finding and in Hexa.
 6. **Measure:** findings fixed by a PR that passes CI, wrong or unsafe proposals, time to fix, and tokens per fix.
 
 ## CloudOps flow
@@ -42,11 +42,11 @@ Two levels, so we get value before any cluster exists.
    | Failing readiness probe | Break the probe | Traffic drops |
    | Bad config | Wrong environment variable | Crash loop |
 
-   The CloudOps agent gets **read-only tools**: get and describe pods, events, logs, and the deploy diff from Git. It works out the cause, then proposes the fix as a GitOps PR to the fork. Argo CD applies the fix after a person merges it. Horizon never has write access to the cluster.
+   The CloudOps agent gets **read-only tools**: get and describe pods, events, logs, and the deploy diff from Git. It works out the cause, then proposes the fix as a GitOps PR to the fork. Argo CD applies the fix after a person merges it. Catalyzt never has write access to the cluster.
 3. **Measure:** correct root cause per injected fault, time to diagnosis, fixes that recover the service after merge, and tokens per incident.
 
 ## Hexa and test writing
-Giving Horizon the repositories is the right move. The inventory becomes the base for writing tests:
+Giving Catalyzt the repositories is the right move. The inventory becomes the base for writing tests:
 1. **Inventory (built):** scan repos for existing tests; UAT analyst proposals are added as proposed cases.
 2. **Link tests to what they cover:** a model-assisted pass suggests which story, acceptance criterion or requirement each scanned test covers, with confidence. A person confirms in Hexa. Today scanned tests start unlinked.
 3. **Gaps:** criteria and requirements with no linked, passing test.

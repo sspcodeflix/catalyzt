@@ -58,7 +58,7 @@ describe('Huddle items', () => {
     expect((db.raw.prepare("SELECT action FROM audit_log WHERE action LIKE 'huddle.%' ORDER BY id").all() as { action: string }[]).map((a) => a.action)).toEqual(['huddle.raise', 'huddle.decide']);
   });
 
-  it('the feedback-pattern rule raises one item per open pattern, by Horizon, linking the rated chats', () => {
+  it('the feedback-pattern rule raises one item per open pattern, by Catalyzt, linking the rated chats', () => {
     const db = fixtureDb();
     db.upsertChat({ id: 'c1', title: 'Coverage of refunds', agent: 'auto', workspace: 'payments', userId: 'u-ram' }, 'ABCD');
     db.addUserMessage({ id: 'm1', chatId: 'c1', text: 'coverage?', testType: null, testTypeSource: null, userId: 'u-ram', items: [] });
@@ -67,7 +67,7 @@ describe('Huddle items', () => {
     const patterns = db.lowRatingPatterns('ABCD');
     expect(patterns).toEqual([{ capability: 'analysis', reason: 'Wrong coverage', count: 3 }]);
     const item = raiseFeedbackPattern(db, db.getApp('ABCD')!, patterns[0])!;
-    expect(item).toMatchObject({ kind: 'feedback', raisedBy: 'Horizon', raisedByType: 'agent', openLabel: 'Pattern to review', title: 'Test analysis answers rated low for "Wrong coverage"' });
+    expect(item).toMatchObject({ kind: 'feedback', raisedBy: 'Catalyzt', raisedByType: 'agent', openLabel: 'Pattern to review', title: 'Test analysis answers rated low for "Wrong coverage"' });
     expect(item.affects).toEqual([{ label: 'Coverage of refunds', href: '/chat/c1' }]);
     expect(raiseFeedbackPattern(db, db.getApp('ABCD')!, patterns[0])).toBeNull();
     expect(findOpenItem(db, 'ABCD', 'feedback_pattern', 'analysis|Wrong coverage')?.id).toBe(item.id);

@@ -61,7 +61,7 @@ export function Huddle() {
       : q
         ? 'No decisions match your search.'
         : filter === 'open'
-          ? 'Nothing to decide right now. Decisions appear when someone raises one, when a source conflicts with a higher-trust source, or when Horizon finds a pattern in low ratings.'
+          ? 'Nothing to decide right now. Decisions appear when someone raises one, when a source conflicts with a higher-trust source, or when Catalyzt finds a pattern in low ratings.'
           : filter === 'decided'
             ? 'Nothing decided yet.'
             : 'Nothing open that you raised, voted on or commented on.';
@@ -78,7 +78,7 @@ export function Huddle() {
               </span>
               <h1>Huddle · Decisions</h1>
               <p>
-                Decisions Horizon won't make on its own: conflicting sources, disputed mappings, accepted risks and
+                Decisions Catalyzt won't make on its own: conflicting sources, disputed mappings, accepted risks and
                 patterns in feedback. Votes are advisory; an app owner decides, with a reason that is kept.
               </p>
             </div>

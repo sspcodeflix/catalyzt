@@ -1,6 +1,6 @@
 /**
  * Uploads for the composer. Bytes go to the server at once (POST /api/attachments); the chip the
- * person sees reflects what the server kept and whether Horizon can read it. Nothing is sent with
+ * person sees reflects what the server kept and whether Catalyzt can read it. Nothing is sent with
  * a message unless the server has it.
  */
 import { http } from './session';
@@ -10,7 +10,7 @@ export interface UploadedAttachment {
   filename: string;
   mime: string;
   size: number;
-  /** ready: Horizon can read it; stored: kept but not readable in this build. */
+  /** ready: Catalyzt can read it; stored: kept but not readable in this build. */
   status: 'ready' | 'stored' | 'failed';
   note: string | null;
   textChars: number;

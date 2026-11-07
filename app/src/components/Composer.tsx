@@ -55,7 +55,7 @@ interface ComposerProps {
  * (see lib/testType.ts). The user can switch it with one click; when the signals conflict it asks.
  */
 export function Composer({
-  placeholder = 'Reply to Horizon',
+  placeholder = 'Reply to Catalyzt',
   onSubmit,
   value,
   onValueChange,
@@ -283,7 +283,7 @@ export function Composer({
           label={agentLabel(agent)}
           ariaLabel={`Agent: ${agentLabel(agent)}`}
           items={[
-            { key: 'auto', label: 'Auto', hint: 'Horizon picks the capability' },
+            { key: 'auto', label: 'Auto', hint: 'Catalyzt picks the capability' },
             ...capabilities.map((c) => ({ key: c.id, label: c.name })),
           ]}
           selected={agent}

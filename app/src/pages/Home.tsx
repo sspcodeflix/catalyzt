@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
+import { BrandMark } from '../components/BrandMark';
 import { Composer, type ComposerSubmit } from '../components/Composer';
-import { HorizonMark } from '../components/HorizonMark';
 import { Icon } from '../components/Icon';
+import { BRAND } from '../lib/brand';
 import { capabilities } from '../lib/data';
-import { useSession } from '../lib/session';
+import { http, sessionEpoch, useSession } from '../lib/session';
 import { useTickets } from '../lib/ticketStore';
 
 const greeting = () => {
@@ -13,38 +14,97 @@ const greeting = () => {
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 };
 
+/** What is waiting in the application right now, from the server (GET /api/home). */
+interface HomeData {
+  pendingApprovals: { id: string; action: string; storyKey: string | null; revision: number; chatId: string; chatTitle: string; askedBy: string }[];
+  openDecisions: number;
+  stories: number;
+  runs: { recent: number; failed: number; latest: { id: string; repo: string | null; status: string; at: string; prNumber: number | null } | null };
+  tests: number;
+}
+
 export function Home() {
   const navigate = useNavigate();
   const [draft, setDraft] = useState('');
-  const { me } = useSession();
+  const { me, loaded } = useSession();
   const firstName = me?.user.name.split(' ')[0] ?? '';
   const story = useTickets()[0]?.key;
   const component = me?.app?.components[0]?.name;
+  const [home, setHome] = useState<HomeData | null>(null);
+
+  useEffect(() => {
+    if (!loaded || !me?.app) return;
+    const epoch = sessionEpoch();
+    setHome(null);
+    http('/api/home')
+      .then((r) => (r.ok ? (r.json() as Promise<HomeData>) : null))
+      .then((d) => {
+        if (d && epoch === sessionEpoch()) setHome(d);
+      })
+      .catch(() => undefined);
+  }, [loaded, me?.app?.id]);
+
   // Examples name real things in the application when there are any.
   const exampleFor = (id: string, fallback: string) =>
     id === 'analysis' && story ? `Is ${story} ready for UAT?` : id === 'authoring' && story ? `Write tests for ${story}` : id === 'cloudops' && component ? `Why is ${component} restarting?` : id === 'security' && me?.app ? `Fix the critical vulnerabilities in ${me.app.name}` : fallback;
 
   const start = (msg: ComposerSubmit) => {
-    // Until the API exists, a new chat gets a client-side id and carries the first message in router state.
+    // A new chat gets a client-side id; the server stores it with the first message.
     navigate(`/chat/${crypto.randomUUID()}`, { state: { first: msg } });
   };
 
+  const approval = home?.pendingApprovals[0];
   return (
     <div className="home">
       <div className="hero">
-        <HorizonMark size={54} />
+        <BrandMark size={44} />
         <h1>
-          {greeting()}{firstName ? `, ${firstName}` : ''}
+          {greeting()}
+          {firstName ? `, ${firstName}` : ''}
         </h1>
-        <p>What should we assure today?</p>
+        <p>{BRAND.tagline}</p>
       </div>
 
-      <Composer
-        placeholder="Ask Horizon to analyse, write, run, fix or secure"
-        onSubmit={start}
-        value={draft}
-        onValueChange={setDraft}
-      />
+      <Composer placeholder="Ask Catalyzt to analyse, write, run, fix or secure" onSubmit={start} value={draft} onValueChange={setDraft} />
+
+      {me?.app && (
+        <nav className="entry" aria-label="Start from your work">
+          <Link to="/tickets" className="cap">
+            <span className="tile">
+              <Icon name="doc" />
+            </span>
+            <b>Analyse a story</b>
+            <span>{home ? (home.stories ? `${home.stories} ${home.stories === 1 ? 'story' : 'stories'} in the Jira filter, ready to check against their tests.` : 'No stories in the Jira filter yet. Create one, or widen the filter in Jira Stories.') : 'Loading…'}</span>
+          </Link>
+          <Link to="/hexa?tab=runs" className="cap">
+            <span className="tile">
+              <Icon name="play" />
+            </span>
+            <b>Investigate a failed run</b>
+            <span>
+              {home
+                ? home.runs.recent
+                  ? `${home.runs.failed} of the last ${home.runs.recent} runs failed.${home.runs.latest ? ` Latest: ${home.runs.latest.prNumber ? `PR #${home.runs.latest.prNumber}` : 'a run'} on ${home.runs.latest.repo ?? 'an upload'}, ${home.runs.latest.status}.` : ''}`
+                  : 'No pipeline runs recorded yet. Push results from CI (docs/hexa-github-action.yml) or upload JUnit XML in Hexa.'
+                : 'Loading…'}
+            </span>
+          </Link>
+          <Link to={approval ? `/chat/${approval.chatId}` : '/huddle'} className="cap">
+            <span className="tile">
+              <Icon name="hand" />
+            </span>
+            <b>Review a proposed change</b>
+            <span>
+              {home
+                ? [
+                    home.pendingApprovals.length ? `${home.pendingApprovals.length} approval${home.pendingApprovals.length === 1 ? '' : 's'} waiting${approval ? ` (${approval.chatTitle}, asked by ${approval.askedBy})` : ''}` : 'No approvals waiting',
+                    home.openDecisions ? `${home.openDecisions} decision${home.openDecisions === 1 ? '' : 's'} open in Huddle` : 'nothing open in Huddle',
+                  ].join(' · ')
+                : 'Loading…'}
+            </span>
+          </Link>
+        </nav>
+      )}
 
       <div className="caps">
         {capabilities.map((c) => (
@@ -60,9 +120,9 @@ export function Home() {
       </div>
 
       <div className="fine">
-        <b>Horizon</b> · AI Quality &amp; Reliability Engineering
+        <b>{BRAND.name}</b> · AI Quality &amp; Reliability Engineering
         <br />
-        Horizon can be wrong. Check its sources. It asks before it changes anything and never sees your credentials.
+        Catalyzt can be wrong. Check its sources. It asks before it changes anything and never sees your credentials.
       </div>
     </div>
   );
