@@ -1,6 +1,6 @@
 /**
  * App Context store: the sources Horizon uses for one application. In-memory stand-in for the
- * API; each exported action maps to one endpoint. All names are placeholders.
+ * API, being replaced by a server-backed store (phase 3). No placeholder data.
  */
 import { useSyncExternalStore } from 'react';
 
@@ -47,7 +47,7 @@ export const processingSteps = [
 /** Admin settings, not constants in the product (DESIGN.md). Values here are placeholders. */
 export const adminSettings = { maxUploadMb: 50 };
 
-export const workspaces = ['App-abcd-web-ui', 'App-abcd-api', 'App-abcd-batch'];
+export const workspaces: string[] = [];
 
 export const statusLabel: Record<SourceStatus, { label: string; tone: string }> = {
   ready: { label: 'Ready', tone: 'pass' },
@@ -57,23 +57,8 @@ export const statusLabel: Record<SourceStatus, { label: string; tone: string }> 
   failed: { label: 'Failed', tone: 'crit' },
 };
 
-const seed: Source[] = [
-  { id: 'fabric', icon: 'fabric', title: 'Enterprise Knowledge Fabric', sub: 'Payments Hub space · 214 sections', type: 'Fabric', scope: 'App', trust: 'Highest', status: 'ready', content: '214 sections', updated: 'Synced 2 h ago', readOnly: true },
-  { id: 'payout-rules', icon: 'link', title: 'Payout validation rules', sub: 'confluence.example.com/ABCD/3311', type: 'Confluence', scope: 'App', trust: 'High', status: 'ready', content: '31 chunks', updated: 'rev 31 · today' },
-  { id: 'jira-uat', icon: 'apps', title: 'Jira · project PAY', sub: 'filter: status = "Ready for UAT" · synced every 15 min · last sync 10:30', type: 'Jira', scope: 'App', trust: 'Tickets', status: 'ready', content: '12 tickets', updated: 'Last sync 10:30', href: '/tickets' },
-  { id: 'pay-hub-automation', icon: 'branch', title: 'pay-hub-automation', sub: 'GitHub · discovered · @9f3e1c2', type: 'Repository', scope: 'App-abcd-web-ui', trust: 'Code', status: 'indexed', content: '1,240 files', updated: '10 min ago' },
-  { id: 'pay-hub-web', icon: 'branch', title: 'pay-hub-web', sub: 'GitHub · discovered · @71c0a9e', type: 'Repository', scope: 'App-abcd-web-ui', trust: 'Code', status: 'indexed', content: '3,410 files', updated: '10 min ago' },
-  { id: 'pay-hub-api', icon: 'branch', title: 'pay-hub-api', sub: 'GitHub · discovered · @c44d201', type: 'Repository', scope: 'App-abcd-api', trust: 'Code', status: 'indexed', content: '2,086 files', updated: '1 h ago' },
-  { id: 'pay-hub-contracts', icon: 'branch', title: 'pay-hub-contracts', sub: 'GitHub · discovered · @08be3f4', type: 'Repository', scope: 'App-abcd-api', trust: 'Code', status: 'indexed', content: '188 files', updated: '1 h ago' },
-  { id: 'legacy-batch', icon: 'codeic', title: 'legacy-batch.zip', sub: 'ZIP upload · Omar K. · sha256 4be1…', type: 'Repository', scope: 'App-abcd-batch', trust: 'Code', status: 'indexed', content: '312 files', updated: '2 days ago', addedBy: 'Omar K.' },
-  { id: 'refund-limits', icon: 'doc', title: 'Refund limits 2026.pdf', sub: '18 pages · Priya N.', type: 'PDF', scope: 'App', trust: 'Team upload', status: 'review', content: '42 chunks', updated: 'Today 10:12', addedBy: 'Priya N.', excludedChunks: 2 },
-  { id: 'onboarding-faq', icon: 'word', title: 'Merchant onboarding FAQ.docx', sub: '9 pages · Omar K.', type: 'Word', scope: 'App-abcd-web-ui', trust: 'Team upload', status: 'ready', content: '23 chunks', updated: 'Yesterday', addedBy: 'Omar K.' },
-  { id: 'refund-flow', icon: 'img', title: 'Refund screen flow.png', sub: 'Image · Priya N.', type: 'Image', scope: 'App-abcd-web-ui', trust: 'Team upload', status: 'processing', stage: 4, content: 'Text extracted', updated: 'Today 10:20', addedBy: 'Priya N.' },
-  { id: 'chargeback-guide', icon: 'link', title: 'Chargeback handling guide', sub: 'confluence.example.com/ABCD/2970', type: 'Confluence', scope: 'App', trust: 'High', status: 'ready', content: '18 chunks', updated: 'rev 12 · last week' },
-  { id: 'settlement-calendar', icon: 'doc', title: 'Settlement calendar 2026.pdf', sub: '4 pages · Sara R.', type: 'PDF', scope: 'App-abcd-api', trust: 'Team upload', status: 'ready', content: '9 chunks', updated: 'Last week', addedBy: 'Sara R.' },
-  { id: 'iban-rules', icon: 'word', title: 'IBAN validation notes.docx', sub: '3 pages · Omar K.', type: 'Word', scope: 'App-abcd-api', trust: 'Team upload', status: 'ready', content: '6 chunks', updated: '2 weeks ago', addedBy: 'Omar K.' },
-  { id: 'old-fees', icon: 'doc', title: 'Old fee schedule.pdf', sub: 'Password protected · Omar K.', type: 'PDF', scope: 'App', trust: 'Team upload', status: 'failed', content: 'Could not open', updated: '3 days ago', addedBy: 'Omar K.', failReason: 'The PDF is password protected. Upload a copy without a password.' },
-];
+/** No seeded sources: the server-backed store (phase 3) lists the repositories and knowledge base of the application. */
+const seed: Source[] = [];
 
 /** The open conflict between a team upload and a higher-trust source. */
 export interface Conflict {
@@ -91,21 +76,7 @@ interface State {
   notice: string;
 }
 
-let state: State = {
-  sources: seed,
-  conflict: {
-    sourceId: 'refund-limits',
-    huddleItemId: 'refund-window',
-    title: 'Refund limits 2026.pdf conflicts with the Enterprise Knowledge Fabric.',
-    detail:
-      'Page 4 says partial refunds are allowed for 30 days; Fabric section Refunds §3.2 says 45 days. Horizon keeps using the Fabric and leaves these 2 chunks out until someone decides.',
-    compare: [
-      { label: 'Refund limits 2026.pdf', value: '30 days', where: 'Page 4 · from the transaction date · team upload' },
-      { label: 'Enterprise Knowledge Fabric', value: '45 days', where: 'Refunds §3.2 v14 · from settlement · highest trust' },
-    ],
-  },
-  notice: '',
-};
+let state: State = { sources: seed, conflict: null, notice: '' };
 
 const listeners = new Set<() => void>();
 const set = (next: Partial<State>) => {
@@ -277,16 +248,7 @@ export interface Chunk {
 }
 
 /** A small sample of chunks; the real ranking is vector search on the server. */
-const chunks: Chunk[] = [
-  { sourceId: 'fabric', where: 'Fabric · Refunds §3.2 · v14', text: 'Partial refunds may be requested within 45 days of settlement. The total of all partial refunds must not exceed the original amount.' },
-  { sourceId: 'fabric', where: 'Fabric · Payouts §2.1 · v14', text: 'Payouts are released daily at 18:00 for settled transactions. IBAN checksum must be validated before a payout is created.' },
-  { sourceId: 'payout-rules', where: 'Confluence · Payout validation rules · rev 31', text: 'Refunds to a closed account are returned to the merchant settlement account within 2 working days.' },
-  { sourceId: 'refund-limits', where: 'Refund limits 2026.pdf · page 4', text: 'Partial refunds are allowed for 30 days after the transaction date.' },
-  { sourceId: 'onboarding-faq', where: 'Merchant onboarding FAQ.docx · page 2', text: 'A merchant can request a refund from the portal once the payment is settled.' },
-  { sourceId: 'chargeback-guide', where: 'Confluence · Chargeback handling guide · rev 12', text: 'A chargeback blocks any further refunds on the same payment until it is resolved.' },
-  { sourceId: 'jira-uat', where: 'Jira · PAY-1482', text: 'As a merchant I can issue a partial refund up to the remaining refundable amount. Ready for UAT.' },
-  { sourceId: 'iban-rules', where: 'IBAN validation notes.docx · page 1', text: 'Reject payouts when the IBAN checksum is invalid; format alone is not enough.' },
-];
+const chunks: Chunk[] = [];
 
 export interface RankedChunk extends Chunk {
   relevance: number;
