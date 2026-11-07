@@ -90,17 +90,21 @@ export function applyEvent(s: AnswerState, ev: WorkflowEvent): AnswerState {
       return { ...s, status: 'done', tokens: ev.tokens, summary: ev.tokens > 0 ? `${ev.summary} · ${ev.tokens.toLocaleString()} tokens` : ev.summary };
     case 'error':
       return finishAnswer(s, false, ev.message);
-    case 'saved':
+    case 'saved': {
+      // The server numbers approvals by their position in the full block list (answerBlocks): the run
+      // block, the prose when there is any, then the rest. Match on the same positions.
+      const offset = 1 + (s.streamed || s.text ? 1 : 0);
       return {
         ...s,
         revisionId: ev.revisionId,
         revision: ev.revision ?? s.revision,
         rest: s.rest.map((b, i) => {
           if (b.kind !== 'approval') return b;
-          const id = ev.approvals.find((a) => a.index === i)?.id;
+          const id = ev.approvals.find((a) => a.index === i + offset)?.id;
           return id ? { ...b, approval: { ...b.approval, id } } : b;
         }),
       };
+    }
     default:
       return s;
   }

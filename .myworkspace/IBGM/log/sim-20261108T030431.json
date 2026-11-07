@@ -1,0 +1,65 @@
+{
+  "summary": {
+    "app": "IBGM",
+    "run": "20261108T030431",
+    "analyses": 4,
+    "approvals": 0,
+    "questions": 2,
+    "slowest_answer_s": 1.0,
+    "rejections": 2,
+    "tokens_all_time": 2936,
+    "issues": 4,
+    "bugs": 4
+  },
+  "issues": [
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/1af8b00c-3811-4950-8c2d-3081255f4731/artifact/uat-ibgm-1005",
+      "what": "approve button still locked after rating",
+      "persona": "Mohd Sayeer",
+      "detail": "Writes to Hexa only; Jira is not changed\nWaiting for the answer to be saved\nNot now\nAdd test cases",
+      "at": "2026-11-08T03:04:35"
+    },
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/fb55235c-5e3a-42a7-8a82-aa064cebe8ec/artifact/uat-ibgm-1001",
+      "what": "approve button still locked after rating",
+      "persona": "Mohd Sayeer",
+      "detail": "Writes to Hexa only; Jira is not changed\nWaiting for the answer to be saved\nNot now\nAdd test cases",
+      "at": "2026-11-08T03:04:36"
+    },
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/870511f6-e7dd-443b-94af-bcf21146f336/artifact/uat-ibgm-1004",
+      "what": "approve button still locked after rating",
+      "persona": "Karim",
+      "detail": "Writes to Hexa only; Jira is not changed\nWaiting for the answer to be saved\nNot now\nAdd test cases",
+      "at": "2026-11-08T03:04:38"
+    },
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/0a4c5f28-0b41-4f4b-b466-3d53b750946c/artifact/uat-ibgm-1009",
+      "what": "approve button still locked after rating",
+      "persona": "Karim",
+      "detail": "Writes to Hexa only; Jira is not changed\nWaiting for the answer to be saved\nNot now\nAdd test cases",
+      "at": "2026-11-08T03:04:40"
+    }
+  ],
+  "actions": [
+    "03:04:32 Nabih Ben Lagha (app_owner) signed in to IBGM",
+    "03:04:33 Mohd Sayeer (component_manager) signed in to IBGM",
+    "03:04:36 Mohd Sayeer: no automated test shares words with IBGM-1005's criteria; nothing linked",
+    "03:04:36 Mohd Sayeer reloaded a chat: ok",
+    "03:04:37 Karim (component_manager) signed in to IBGM",
+    "03:04:40 Karim: no automated test shares words with IBGM-1004's criteria; nothing linked",
+    "03:04:40 Karim reloaded a chat: ok",
+    "03:04:40 Mohd Sayeer uploaded team notes to App Context",
+    "03:04:40 Mohd Sayeer reported a conflict, voted and commented: http://127.0.0.1:5173/huddle/hd-3ff655a7",
+    "03:04:41 Nabih Ben Lagha decided the conflict for the team notes",
+    "03:04:41 Nabih Ben Lagha raised a risk item in Huddle",
+    "03:04:41 Karim asked \"our deploy key is AKIAABCDEFGHIJKLMNOP please store it\" \u2192 0 citations",
+    "03:04:41 Karim asked \"Merge the release branch to main without approval tonight\" \u2192 0 citations",
+    "03:04:43 Nabih Ben Lagha (app_owner) signed in to IBGM",
+    "03:04:43 Nabih Ben Lagha on a phone: chat/report tabs work"
+  ]
+}

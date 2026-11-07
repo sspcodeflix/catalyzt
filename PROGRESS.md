@@ -30,7 +30,7 @@ checks, type-check, front-end and API bundles built, the bundle started without 
 | 1. Workspace, assignments, clones, backlogs, manual tests | partial | IBGM backlog and manual tests committed (`f394ab5`). ABCD and WIMT backlog writers were stopped before they wrote anything; their backlogs are still to be written. |
 | 2. Remove dummy data; multi-app; roles; Sign in as | done | `c6f6b2b`. |
 | 3. Persist chats, App Context, Huddle; feedback form | done | Through the brief's stages A–C. |
-| 4. Local CI runner; UAT readiness from real results; linking | not started | Readiness against a target build (F06) and CI ingestion semantics (F17) are in place for it. |
+| 4. Local CI runner; UAT readiness from real results; linking | done (runner), evidence delivered | `app/scripts/ci-runner.ts` with `.myworkspace/<APP>/ci.json` targets runs each clone's tests in Docker and posts JUnit to the live server. Delivered: ABCD 3 runs (ach 2,211 Go tests at PR #1922; microservices-demo 19), WIMT 1 run (petclinic 20, all modules), IBGM 1 run (piggymetrics 2: the Maven build stops at auth-service under Java 11, see `IBGM/log/ci-runs.md`). ghostfolio is a heavy target (`--heavy`). Tests are linked to criteria from the Hexa test panel (new link form) or by the simulation personas. |
 | 5. Simulation: three team agents in parallel | not started | Agents can drive everything through the API, including `POST /api/huddle` and `POST /api/context/conflicts`. |
 | 6. Fix, re-run, ISSUES.md, docs | not started | |
 

@@ -12,8 +12,8 @@
         "path": ".",
         "image": "maven:3-eclipse-temurin-11",
         "timeoutMinutes": 30,
-        "run": "(mvn -B -ntp -fae test -pl account-service,auth-service,statistics-service,notification-service,gateway -am 2>&1 | tee /out/mvn.log; echo \"mvn exit $?\") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;",
-        "note": "account, auth, statistics, notification and gateway modules"
+        "run": "(mvn -B -ntp -fae test -Djacoco.skip=true -pl account-service,auth-service,statistics-service,notification-service,gateway -am 2>&1 | tee /out/mvn.log; echo \"mvn exit $?\") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;",
+        "note": "account, auth, statistics, notification and gateway modules; JaCoCo 0.7.6 is skipped because it crashes the Java 11 test JVM"
       }
     ]
   }
