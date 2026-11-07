@@ -1,4 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+
+import { useSession } from '../lib/session';
+import { useTickets } from '../lib/ticketStore';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
@@ -389,23 +392,141 @@ export function HexaTestPanel() {
         <div>
           <div className="sechead">
             <h3>Covers</h3>
-            <span>{t.links.length ? '' : 'Not linked yet'}</span>
+            <span>{t.links.length ? 'What this test is evidence for' : 'Not linked yet'}</span>
           </div>
           <span className="covers">
-            {t.links.map((l) =>
-              l.type === 'story' ? (
-                <button key={l.type + l.ref} type="button" className="pill mono linkpill" onClick={() => navigate(`/tickets/${l.ref}`)}>
-                  {l.ref}
+            {t.links.map((l) => (
+              <span key={l.type + l.ref} className="pill mono linkpill">
+                {l.type === 'story' ? (
+                  <button type="button" className="linkbtn" onClick={() => navigate(`/tickets/${l.ref}`)}>
+                    {l.ref}
+                  </button>
+                ) : l.type === 'criterion' ? (
+                  l.ref.replace('#', ' ')
+                ) : (
+                  l.ref.replace(/^[^/]+\//, '')
+                )}
+                <button type="button" className="chipx" aria-label={`Unlink ${l.ref}`} onClick={() => void unlink(t.id, l)}>
+                  <Icon name="close" small />
                 </button>
-              ) : (
-                <span key={l.type + l.ref} className="pill mono">
-                  {l.type === 'criterion' ? l.ref.replace('#', ' ') : l.ref}
-                </span>
-              ),
-            )}
+              </span>
+            ))}
           </span>
+          <LinkForm testId={t.id} linked={t.links} />
         </div>
       </div>
     </section>
+  );
+}
+
+async function unlink(testId: string, l: { type: string; ref: string }) {
+  try {
+    await api(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type: l.type, ref: l.type === 'component' ? l.ref.replace(/^[^/]+\//, '') : l.ref, remove: true }) });
+    hexaChanged();
+  } catch {
+    /* the panel keeps showing the link; the next load tells the truth */
+  }
+}
+
+/**
+ * Links a test to a story, one of its acceptance criteria, or a component, so UAT readiness can
+ * count it as evidence. Stories and components come from the application; the server validates.
+ */
+function LinkForm({ testId, linked }: { testId: string; linked: { type: string; ref: string }[] }) {
+  const tickets = useTickets();
+  const components = useSession().me?.app?.components ?? [];
+  const [type, setType] = useState<'criterion' | 'story' | 'component'>('criterion');
+  const [story, setStory] = useState('');
+  const [ac, setAc] = useState(1);
+  const [component, setComponent] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const id = useId();
+  const chosen = tickets.find((x) => x.key === story) ?? tickets[0];
+  const storyKey = chosen?.key ?? '';
+  const criteria = chosen?.acceptanceCriteria ?? [];
+  const ref = type === 'component' ? component || components[0]?.name || '' : type === 'story' ? storyKey : storyKey ? `${storyKey}#AC${ac}` : '';
+  const already = linked.some((l) => l.type === type && (l.type === 'component' ? l.ref.endsWith(`/${ref}`) : l.ref === ref));
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!ref) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type, ref }) });
+      hexaChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="linkform" onSubmit={submit} aria-label="Link this test" style={{ marginTop: 12 }}>
+      <div className="field-row" style={{ flexWrap: 'wrap' }}>
+        <label htmlFor={`${id}-type`} className="sr">
+          Link type
+        </label>
+        <select id={`${id}-type`} value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+          <option value="criterion">Acceptance criterion</option>
+          <option value="story">Story</option>
+          <option value="component">Component</option>
+        </select>
+        {type !== 'component' && (
+          <>
+            <label htmlFor={`${id}-story`} className="sr">
+              Story
+            </label>
+            <select id={`${id}-story`} value={storyKey} onChange={(e) => setStory(e.target.value)} disabled={tickets.length === 0}>
+              {tickets.length === 0 && <option value="">No stories in the Jira filter</option>}
+              {tickets.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.key} · {t.summary.slice(0, 48)}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {type === 'criterion' && criteria.length > 0 && (
+          <>
+            <label htmlFor={`${id}-ac`} className="sr">
+              Criterion
+            </label>
+            <select id={`${id}-ac`} value={ac} onChange={(e) => setAc(Number(e.target.value))}>
+              {criteria.map((c, i) => (
+                <option key={i} value={i + 1}>
+                  AC{i + 1} · {c.slice(0, 60)}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {type === 'component' && (
+          <>
+            <label htmlFor={`${id}-component`} className="sr">
+              Component
+            </label>
+            <select id={`${id}-component`} value={component || components[0]?.name || ''} onChange={(e) => setComponent(e.target.value)}>
+              {components.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        <button type="submit" className="btn" disabled={busy || !ref || already} title={already ? 'Already linked' : undefined} aria-busy={busy}>
+          <Icon name="link" small />
+          {already ? 'Linked' : busy ? 'Linking…' : 'Link'}
+        </button>
+      </div>
+      {error && (
+        <p className="errtext" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }

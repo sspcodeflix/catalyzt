@@ -22,7 +22,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 
 import { createApi, ingestTokensFromEnv, type Identity } from './api';
-import { bootstrap } from './bootstrap';
+import { bootstrap, reseed } from './bootstrap';
 import { configFromEnv } from './deepseek';
 import { LocalBlobStore } from './storage';
 
@@ -79,6 +79,12 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
     ingestTokens: ingestTokensFromEnv(env as Record<string, string | undefined>),
     files: new LocalBlobStore(env.HORIZON_FILES_DIR?.trim() || 'data/attachments'),
     getWorkspace: () => boot.workspace,
+    reload: () => {
+      const r = reseed(boot.db, env as Record<string, string | undefined>);
+      boot.workspace = r.workspace;
+      boot.summary = r.summary;
+      return r;
+    },
   });
 
   const index = staticDir && existsSync(join(staticDir, 'index.html')) ? join(staticDir, 'index.html') : null;

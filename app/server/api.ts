@@ -153,6 +153,8 @@ export interface ApiOptions {
   /** Where attachment bytes live. Defaults to data/attachments on local disk. */
   files?: BlobStore;
   getWorkspace?: () => Workspace | null;
+  /** Re-reads the workspace into the running database (development only; an app owner asks for it). */
+  reload?: () => { summary: string };
 }
 
 /** Reads HEXA_INGEST_TOKEN_<APP> variables into { APP: token }. */
@@ -318,6 +320,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       if (url === '/api/chats' && req.method === 'GET') {
         return send(res, 200, { chats: db.listChats(appId, user.id) });
+      }
+
+      // Development only: seed the running server from the workspace again (new stories, edited manual tests).
+      if (url === '/api/workspace/reload' && req.method === 'POST') {
+        if (identity.mode !== 'dev-picker' || !opts.reload) throw new HttpError(404, 'Not found.');
+        requireRole(['app_owner'], 'reload the workspace');
+        const r = opts.reload();
+        db.audit('user', user.id, 'workspace.reload', 'workspace', 'all', {});
+        return send(res, 200, { ok: true, summary: r.summary });
       }
 
       // The home page's entry points: real work waiting in this application, never invented numbers.

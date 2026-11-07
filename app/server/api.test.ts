@@ -531,6 +531,30 @@ describe('F11: App Context and Huddle through the API', () => {
   });
 });
 
+describe('workspace reload (development only)', () => {
+  it('lets an app owner re-seed the running server and hides the route behind a proxy', async () => {
+    let calls = 0;
+    const own = await startApi(db, null, { reload: () => ({ summary: `reloaded ${++calls}` }) });
+    try {
+      expect((await own.as('u-sourav', 'ABCD').post('/api/workspace/reload', {})).status).toBe(403);
+      const ok = await own.as('u-ram', 'ABCD').post('/api/workspace/reload', {});
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toEqual({ ok: true, summary: 'reloaded 1' });
+      expect(db.raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'workspace.reload'").get()).toEqual({ n: 1 });
+    } finally {
+      await own.close();
+    }
+    const proxied = await startApi(db, null, { identity: { mode: 'proxy-header', header: 'x-forwarded-email' }, reload: () => ({ summary: 'no' }) });
+    try {
+      const res = await fetch(`${proxied.url}/api/workspace/reload`, { method: 'POST', headers: { 'x-forwarded-email': 'ram@example.com', 'Content-Type': 'application/json' }, body: '{}' });
+      expect(res.status).toBe(404);
+      expect(calls).toBe(1);
+    } finally {
+      await proxied.close();
+    }
+  });
+});
+
 describe('identity behind a sign-in proxy', () => {
   it('takes the person from the proxy header, ignores browser-chosen ids, and offers nobody to switch to', async () => {
     const proxied = await startApi(db, null, { identity: { mode: 'proxy-header', header: 'x-forwarded-email' } });
