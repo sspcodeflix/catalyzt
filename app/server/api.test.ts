@@ -247,6 +247,99 @@ describe('F04 and F14: revisions are immutable and approvals bind to one of them
   });
 });
 
+describe('F17: CI results reach the right application, once per run attempt', () => {
+  let ci: TestApi;
+  let baseline = 0;
+  const count = () => (db.raw.prepare("SELECT COUNT(*) AS n FROM test_runs WHERE source = 'webhook'").get() as { n: number }).n;
+  beforeEach(async () => {
+    ci = await startApi(db, null, { ingestToken: 't-global', ingestTokens: { IBGM: 't-ibgm' } });
+    baseline = count(); // the fixture's seed run is a webhook run too
+  });
+  afterEach(() => ci.close());
+
+  const junit = (failing: boolean) => `<testsuite name="payments.PartialRefundsTest">
+    <testcase classname="payments.PartialRefundsTest" name="aMerchantCanRefundPartOfASettledCardPayment" time="0.2"/>
+    <testcase classname="payments.PartialRefundsTest" name="aRefundAboveTheOriginalAmountIsRejectedWithAClearMessage" time="0.3">${failing ? '<failure message="expected 422"/>' : ''}</testcase>
+  </testsuite>`;
+  /** The body docs/hexa-github-action.yml sends. */
+  const payload = (over: Record<string, unknown> = {}) => ({
+    app: 'ABCD',
+    repo: 'acme/shop',
+    sha: 'abc1234',
+    branch: 'main',
+    event: 'push',
+    runId: '7001',
+    attempt: 1,
+    workflow: 'Tests (Hexa)',
+    runUrl: 'https://github.com/acme/shop/actions/runs/7001',
+    prNumber: 1482,
+    mergeCommit: true,
+    junit: [junit(true)],
+    ...over,
+  });
+  const post = (body: unknown, token: string | null = 't-global') => ci.anonymous().post('/api/hexa/results', body, token ? { Authorization: `Bearer ${token}` } : {});
+  const runs = () => count() - baseline;
+
+  it('rejects a missing or wrong token, a missing or unknown application, and the wrong token for an application', async () => {
+    expect((await post(payload(), null)).status).toBe(401);
+    expect((await post(payload(), 'nope')).status).toBe(401);
+    const missing = await post(payload({ app: undefined }));
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { error: string }).error).toMatch(/"app"/);
+    expect((await post(payload({ app: 'NOPE' }))).status).toBe(400);
+    // IBGM has its own token: the global one is not valid for it, and its token is not valid for ABCD.
+    expect((await post(payload({ app: 'IBGM' }), 't-global')).status).toBe(401);
+    expect((await post(payload({ app: 'ABCD' }), 't-ibgm')).status).toBe(401);
+    expect((await post(payload({ app: 'IBGM' }), 't-ibgm')).status).toBe(200);
+    expect(runs()).toBe(1);
+  });
+
+  it('records a delivery once, treats the same run and attempt again as a duplicate, and a rerun as a new attempt', async () => {
+    const first = await post(payload());
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ total: 2, failed: 1, matched: 2 });
+    expect(await (await post(payload())).json()).toMatchObject({ duplicate: true, runId: '7001', attempt: 1 });
+    expect(runs()).toBe(1);
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('failing');
+    // The rerun passes and becomes the target build; the first attempt stays in history.
+    const rerun = await post(payload({ attempt: 2, junit: [junit(false)] }));
+    expect(rerun.status).toBe(200);
+    expect(runs()).toBe(2);
+    expect(db.coverageFor('ABCD-1001')[1]).toMatchObject({ status: 'passing', evidence: expect.stringMatching(/PR #1482 attempt 2/) });
+    // Failures of a run are listed for the application's people.
+    const list = (await (await api.as('u-sourav', 'ABCD').get('/api/hexa/runs')).json()) as { runs: { attempt: number; failures: { message: string | null }[] }[] };
+    expect(list.runs.map((r) => r.attempt)).toEqual([2, 1, 1]);
+    expect(list.runs[1].failures[0].message).toBe('expected 422');
+  });
+
+  it('rejects malformed JUnit by file name and keeps nothing', async () => {
+    const res = await post(payload({ junit: ['<testsuite><testcase name="x"/>', 'not xml at all'] }));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/results-\d\.xml/);
+    expect(runs()).toBe(0);
+    expect((await post(payload({ junit: ['<nothing/>'] }))).status).toBe(400);
+  });
+
+  it('an older delivery arriving late does not overwrite a newer result', async () => {
+    await post(payload({ runId: '7002', startedAt: new Date(Date.now() - 60_000).toISOString(), junit: [junit(false)] }));
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+    await post(payload({ runId: '7000', startedAt: new Date(Date.now() - 3_600_000 * 48).toISOString(), junit: [junit(true)] }));
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+    expect(db.listRuns('ABCD')[0]).toMatchObject({ prNumber: 1482, status: 'passed' });
+  });
+
+  it('refuses a body over the upload limit', async () => {
+    const big = `<testsuite name="s">${'<testcase classname="c" name="n"/>'.repeat(380_000)}</testsuite>`;
+    expect(big.length).toBeGreaterThan(12 * 1024 * 1024);
+    const status = await post(payload({ junit: [big] }))
+      .then((r) => r.status)
+      .catch(() => 'closed');
+    // The server answers 413 as soon as the limit is crossed; a client still writing may see the connection close instead.
+    expect([413, 'closed']).toContain(status);
+    expect(runs()).toBe(0);
+  });
+});
+
 describe('F05: a rejected secret is nowhere in the database', () => {
   it('stores neither the message, nor a title or metadata derived from it', async () => {
     const sourav = api.as('u-sourav', 'ABCD');

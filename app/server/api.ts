@@ -133,8 +133,21 @@ function sse(res: ServerResponse) {
 
 export interface ApiOptions {
   githubToken?: string;
+  /** HEXA_INGEST_TOKEN: accepted for any application that has no token of its own. */
   ingestToken?: string;
+  /** HEXA_INGEST_TOKEN_<APP>: an application with its own token accepts only that one. */
+  ingestTokens?: Record<string, string>;
   getWorkspace?: () => Workspace | null;
+}
+
+/** Reads HEXA_INGEST_TOKEN_<APP> variables into { APP: token }. */
+export function ingestTokensFromEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    const m = /^HEXA_INGEST_TOKEN_([A-Za-z0-9_-]+)$/.exec(k);
+    if (m && v?.trim()) out[m[1]] = v.trim();
+  }
+  return out;
 }
 
 /** The UAT analyst's proposed cases become manual tests in Hexa, linked to the story and its criteria. */
@@ -180,17 +193,26 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         });
       }
 
-      // CI pushes results here after a merge (see docs/hexa-github-action.yml). Bearer HEXA_INGEST_TOKEN; the body names the application.
+      // CI pushes results here after a merge (see docs/hexa-github-action.yml). Bearer token; the body names the application.
       if (url === '/api/hexa/results' && req.method === 'POST') {
-        if (!opts.ingestToken) return send(res, 503, { error: 'Set HEXA_INGEST_TOKEN on the server to accept results from CI.' });
-        if (req.headers.authorization !== `Bearer ${opts.ingestToken}`) return send(res, 401, { error: 'Missing or wrong ingest token.' });
+        const perApp = opts.ingestTokens ?? {};
+        if (!opts.ingestToken && Object.keys(perApp).length === 0) return send(res, 503, { error: 'Set HEXA_INGEST_TOKEN (or HEXA_INGEST_TOKEN_<APP>) on the server to accept results from CI.' });
+        const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
+        // Checked against every configured token before the body is read, and against the application's own token after.
+        if (!bearer || ![opts.ingestToken, ...Object.values(perApp)].includes(bearer)) return send(res, 401, { error: 'Missing or wrong ingest token.' });
         const b = (await readJson(req, MAX_UPLOAD)) as Record<string, unknown>;
         const app = isStr(b.app) ? b.app : null;
-        if (!app || !db.getApp(app)) throw new HttpError(400, 'The body must name a known application in "app".');
+        if (!app) throw new HttpError(400, 'The body must name the application in "app" (set HEXA_APP in the workflow).');
+        if (!db.getApp(app)) throw new HttpError(400, `"${app}" is not a known application; "app" must be one of the application ids in Horizon.`);
+        const expected = perApp[app] ?? opts.ingestToken;
+        if (bearer !== expected) return send(res, 401, { error: `The token is not valid for application ${app}.` });
         const junit = (Array.isArray(b.junit) ? b.junit : [b.junit]).filter(isStr).slice(0, 50);
         const repo = isStr(b.repo) ? b.repo.slice(0, 200) : null;
         const runId = isStr(b.runId) || typeof b.runId === 'number' ? String(b.runId) : null;
-        if (runId && db.runExists('webhook', repo, runId)) return send(res, 200, { duplicate: true });
+        const attemptRaw = Number(b.attempt ?? 1);
+        const attempt = Number.isInteger(attemptRaw) && attemptRaw > 0 ? attemptRaw : 1;
+        // The same application, repository, run and attempt delivered again changes nothing.
+        if (runId && db.runExists(app, 'webhook', repo, runId, attempt)) return send(res, 200, { duplicate: true, runId, attempt });
         const pr = Number(b.prNumber);
         // Results pushed by CI are recorded as the application's owner.
         const owner = (db.raw.prepare("SELECT user_id FROM memberships WHERE application_id = ? AND role = 'app_owner' LIMIT 1").get(app) as { user_id: string } | undefined)?.user_id ?? db.defaultUser()?.id;
@@ -207,6 +229,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
               repo,
               workflow: isStr(b.workflow) ? b.workflow.slice(0, 200) : null,
               externalRunId: runId,
+              attempt,
               runUrl: isStr(b.runUrl) && /^https:\/\//.test(b.runUrl) ? b.runUrl.slice(0, 500) : null,
               event: isStr(b.event) ? b.event.slice(0, 50) : null,
               branch: isStr(b.branch) ? b.branch.slice(0, 200) : null,
@@ -491,6 +514,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
               repo,
               workflow: isStr(b.workflow) && b.workflow.trim() ? b.workflow.slice(0, 200) : null,
               externalRunId: null,
+              attempt: 1,
               runUrl: isStr(b.runUrl) && /^https:\/\//.test(b.runUrl) ? b.runUrl.slice(0, 500) : null,
               event: 'upload',
               branch: isStr(b.branch) && b.branch.trim() ? b.branch.slice(0, 200) : null,

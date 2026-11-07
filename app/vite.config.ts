@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
-import { createApi } from './server/api';
+import { createApi, ingestTokensFromEnv } from './server/api';
 import { bootstrap, type Boot } from './server/bootstrap';
 import { configFromEnv } from './server/deepseek';
 
@@ -23,6 +23,7 @@ function horizonApi(env: Record<string, string>): Plugin {
   const api = createApi(() => cfg, () => getBoot().db, {
     githubToken: env.GITHUB_TOKEN?.trim() || undefined,
     ingestToken: env.HEXA_INGEST_TOKEN?.trim() || undefined,
+    ingestTokens: ingestTokensFromEnv(env),
     getWorkspace: () => getBoot().workspace,
   });
   return {

@@ -8,7 +8,17 @@ import type { AssistantMessage, CriterionStatus, Ticket, UatArtifact } from './t
 export interface CriterionInput {
   status: CriterionStatus;
   evidence: string;
+  /** The builds the evidence was read from, when the server supplied them. */
+  builds?: { label: string; at: string }[];
 }
+
+/** "2 h ago", "3 d ago": how fresh the evidence is. */
+export const ageOf = (iso: string) => {
+  const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} d ago`;
+};
 
 export const summariseCoverage = (statuses: CriterionStatus[]): Ticket['uat'] => {
   const covered = statuses.filter((s) => s === 'passing').length;
@@ -45,7 +55,7 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
         criterion: c.id,
         steps: ['Sign in to the test environment as a test user', `Check: ${c.text.charAt(0).toLowerCase()}${c.text.slice(1)}`, 'Record the result and a screenshot'],
       })),
-      note: `Acceptance criteria are read from ${t.key} in Jira. Coverage comes from the tests linked to each criterion in Hexa and their latest pipeline results${t.requirements.length ? `; requirements: ${t.requirements.join(', ')}` : ''}. A criterion counts as covered only when a linked automated test passed in the latest run.`,
+      note: `Acceptance criteria are read from ${t.key} in Jira. Coverage comes from the tests linked to each criterion in Hexa, read against the latest merge-commit run of each test's repository (named in the evidence)${t.requirements.length ? `; requirements: ${t.requirements.join(', ')}` : ''}. A criterion counts as covered only when a linked automated test passed in that run; an earlier pass, a skipped test or a test missing from the run does not count.`,
     },
   };
 }
@@ -73,6 +83,8 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
         gaps ? `I drafted ${plural(gaps, 'UAT test case', 'UAT test cases')} for the gaps.` : failing ? 'Fix the failing tests before sign-off.' : 'Run the remaining tests before sign-off.'
       }`;
 
+  const builds = [...new Map(coverage.flatMap((c) => (c.builds ?? []).map((b) => [b.label, b] as const))).values()];
+  const linked = artifact.criteria.filter((c) => c.status !== 'no-test').length;
   const answer: AssistantMessage = {
     id: crypto.randomUUID(),
     role: 'assistant',
@@ -81,7 +93,11 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
     rating: null,
     citations: [
       { n: 1, title: `${t.key} · ${t.summary}`, detail: `Jira · ${t.status} · synced from project ${t.key.split('-')[0]}` },
-      { n: 2, title: 'Hexa: linked tests and latest pipeline results', detail: `${artifact.criteria.filter((c) => c.status !== 'no-test').length} of ${n} criteria have linked tests` },
+      {
+        n: 2,
+        title: 'Hexa: linked tests and their results in the target build',
+        detail: builds.length ? `${builds.map((b) => `${b.label}, ${ageOf(b.at)}`).join('; ')} · ${linked} of ${n} criteria have linked tests` : `${linked} of ${n} criteria have linked tests · no pipeline run recorded yet`,
+      },
     ],
     blocks: [
       {

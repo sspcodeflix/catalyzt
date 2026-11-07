@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { extractTests, humanize, isTestFile, parseRepoRef } from './github';
+import { extractTests, fetchFile, humanize, isTestFile, listTestFiles, parseRepoRef } from './github';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('parseRepoRef', () => {
   it.each([
@@ -60,5 +62,46 @@ describe('extractTests', () => {
     expect(extractTests('a_test.go', 'func TestRetryBackoff(t *testing.T) {}')[0].title).toBe('Retry backoff');
     expect(extractTests('RefundTests.cs', 'public class RefundTests {\n  [Fact]\n  public void RejectsOverRefund() {}\n}')[0]).toMatchObject({ title: 'Rejects over refund', suite: 'RefundTests' });
     expect(extractTests('a_spec.rb', "describe 'refunds' do\n  it 'needs a reason' do\n  end\nend")[0]).toMatchObject({ title: 'needs a reason', suite: 'refunds' });
+  });
+});
+
+describe('listTestFiles (F12)', () => {
+  const COMMIT = 'c'.repeat(40);
+  const TREE = 't'.repeat(40);
+
+  it('pins the scan to the commit SHA (not the tree SHA) and reads files at that commit', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        const j = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+        if (url.endsWith('/repos/acme/shop')) return j({ default_branch: 'main', html_url: 'https://github.com/acme/shop', private: false });
+        if (url.endsWith('/repos/acme/shop/commits/main')) return j({ sha: COMMIT, commit: { tree: { sha: TREE } } });
+        if (url.includes(`/git/trees/${TREE}?recursive=1`)) return j({ sha: TREE, truncated: false, tree: [{ path: 'a.test.ts', type: 'blob', size: 10 }, { path: 'src/x.ts', type: 'blob', size: 10 }, { path: 'tests', type: 'tree' }] });
+        if (url === `https://raw.githubusercontent.com/acme/shop/${COMMIT}/a.test.ts`) return new Response("it('works', () => {})", { status: 200 });
+        return new Response('nope', { status: 404 });
+      }),
+    );
+    const l = await listTestFiles({ owner: 'acme', repo: 'shop' });
+    expect(l).toMatchObject({ ref: 'main', sha: COMMIT, treeSha: TREE, truncated: false, htmlUrl: 'https://github.com/acme/shop' });
+    expect(l.files.map((f) => f.path)).toEqual(['a.test.ts']);
+    expect(calls.some((u) => u.includes('/git/trees/main'))).toBe(false);
+    // Reading at the tree SHA would 404; at the commit it works.
+    await expect(fetchFile({ owner: 'acme', repo: 'shop' }, TREE, 'a.test.ts')).rejects.toThrow(/Could not read/);
+    expect(await fetchFile({ owner: 'acme', repo: 'shop' }, l.sha, 'a.test.ts')).toContain('works');
+  });
+
+  it('reports a listing GitHub cut short', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const j = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+        if (url.endsWith('/repos/acme/shop')) return j({ default_branch: 'main', html_url: 'https://github.com/acme/shop', private: false });
+        if (url.includes('/commits/')) return j({ sha: COMMIT, commit: { tree: { sha: TREE } } });
+        return j({ sha: TREE, truncated: true, tree: [{ path: 'a.test.ts', type: 'blob', size: 10 }] });
+      }),
+    );
+    expect((await listTestFiles({ owner: 'acme', repo: 'shop' })).truncated).toBe(true);
   });
 });

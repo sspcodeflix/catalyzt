@@ -97,7 +97,10 @@ export function seedRefundTests(db: HorizonDb) {
     htmlUrl: 'https://github.com/acme/shop',
     filesFound: 1,
     filesScanned: 1,
+    filesFailed: 0,
     truncated: false,
+    readPaths: ['src/checkoutservice/PartialRefundsTest.java'],
+    listedPaths: ['src/checkoutservice/PartialRefundsTest.java'],
     tests: names.map((n, i) => ({ path: 'src/checkoutservice/PartialRefundsTest.java', title: n.replace(/([A-Z])/g, ' $1').trim(), name: n, suite: 'PartialRefundsTest', framework: 'JUnit', line: 10 + i * 10 })),
     userId: 'u-sourav',
   });
@@ -105,7 +108,7 @@ export function seedRefundTests(db: HorizonDb) {
   const ids = names.map((n) => cands.find((c) => c.codeName === n)!.id);
   ids.forEach((id, i) => db.linkTest(id, 'criterion', `ABCD-1001#AC${i + 1}`, 'u-sourav'));
   db.ingestRun(
-    { app: 'ABCD', source: 'webhook', repo: 'acme/shop', workflow: 'CI', externalRunId: 'seed-run', runUrl: null, event: 'push', branch: 'main', sha: 'seed123', prNumber: 41, isMerge: true, startedAt: new Date(Date.now() - 3_600_000).toISOString() },
+    { app: 'ABCD', source: 'webhook', repo: 'acme/shop', workflow: 'CI', externalRunId: 'seed-run', attempt: 1, runUrl: null, event: 'push', branch: 'main', sha: 'seed123', prNumber: 41, isMerge: true, startedAt: new Date(Date.now() - 3_600_000).toISOString() },
     [
       { testCaseId: ids[0], status: 'passed', durationMs: 120, message: null },
       { testCaseId: ids[1], status: 'passed', durationMs: 80, message: null },

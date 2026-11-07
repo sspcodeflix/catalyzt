@@ -33,6 +33,9 @@ export interface ScanRow {
   testsNew: number | null;
   testsRemoved: number | null;
   truncated: boolean;
+  filesFailed: number | null;
+  /** False for a partial scan (unread files, or a listing GitHub cut short): nothing unread was removed. */
+  complete: boolean | null;
   error: string | null;
   startedBy: string;
   startedAt: string;
@@ -75,6 +78,7 @@ export interface RunRow {
   branch: string | null;
   sha: string | null;
   prNumber: number | null;
+  attempt: number;
   isMerge: boolean;
   status: 'passed' | 'failed';
   total: number;

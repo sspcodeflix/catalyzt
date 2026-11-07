@@ -156,7 +156,8 @@ export function extractTests(path: string, content: string): FoundTest[] {
 
 export class GitHubError extends Error {}
 
-const MAX_FILES = 200;
+/** A scan reads at most this many test files; the listing says how many there are. */
+export const MAX_FILES = 200;
 const MAX_BYTES = 256 * 1024;
 
 function headers(token?: string): Record<string, string> {
@@ -181,24 +182,33 @@ async function gh<T>(url: string, token: string | undefined, signal?: AbortSigna
 
 export interface RepoTestFiles {
   ref: string;
+  /** The commit the scan is pinned to. Files are read at this commit, and links point at it. */
   sha: string;
+  treeSha: string;
   htmlUrl: string;
+  /** Every test file in the tree (the caller decides how many to read). */
   files: { path: string; size: number }[];
-  totalFiles: number;
+  /** True when GitHub cut the tree listing short, so `files` is not the whole repository. */
   truncated: boolean;
 }
 
-/** Lists a repo's test files from its tree (2 API calls). */
+/**
+ * Lists a repo's test files at one commit (3 API calls: repository, commit, tree). The ref is
+ * resolved to a commit first: the trees API answers with a tree SHA, which raw.githubusercontent.com
+ * cannot serve, so reads and links must use the commit SHA.
+ */
 export async function listTestFiles(r: RepoRef, token?: string, signal?: AbortSignal): Promise<RepoTestFiles> {
   const meta = await gh<{ default_branch: string; html_url: string; private: boolean }>(`https://api.github.com/repos/${r.owner}/${r.repo}`, token, signal);
   const ref = r.ref ?? meta.default_branch;
+  const commit = await gh<{ sha: string; commit: { tree: { sha: string } } }>(`https://api.github.com/repos/${r.owner}/${r.repo}/commits/${encodeURIComponent(ref)}`, token, signal);
+  if (!/^[0-9a-f]{40}$/i.test(commit.sha) || !commit.commit?.tree?.sha) throw new GitHubError(`GitHub did not return a commit for ${ref}.`);
   const tree = await gh<{ sha: string; truncated: boolean; tree: { path: string; type: string; size?: number }[] }>(
-    `https://api.github.com/repos/${r.owner}/${r.repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`,
+    `https://api.github.com/repos/${r.owner}/${r.repo}/git/trees/${commit.commit.tree.sha}?recursive=1`,
     token,
     signal,
   );
   const files = tree.tree.filter((t) => t.type === 'blob' && isTestFile(t.path) && (t.size ?? 0) <= MAX_BYTES).map((t) => ({ path: t.path, size: t.size ?? 0 }));
-  return { ref, sha: tree.sha, htmlUrl: meta.html_url, files: files.slice(0, MAX_FILES), totalFiles: files.length, truncated: tree.truncated || files.length > MAX_FILES };
+  return { ref, sha: commit.sha, treeSha: tree.sha, htmlUrl: meta.html_url, files, truncated: !!tree.truncated };
 }
 
 /** Fetches one file's text at a commit. */

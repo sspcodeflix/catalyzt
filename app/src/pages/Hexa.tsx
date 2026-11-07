@@ -429,7 +429,9 @@ function ScanBox({ scans, onStarted, onShowRepo }: { scans: ScanRow[]; onStarted
                   ? 'Scanning…'
                   : s.status === 'failed'
                     ? s.error
-                    : `${s.testsFound} tests in ${s.filesScanned} files · ${s.testsNew} new${s.testsRemoved ? ` · ${s.testsRemoved} removed` : ''}${s.truncated ? ' · first 200 files only' : ''}`}
+                    : `${s.testsFound} tests in ${s.filesScanned} files · ${s.testsNew} new${s.testsRemoved ? ` · ${s.testsRemoved} removed` : ''}${
+                        s.complete === false ? ` · partial scan (${s.filesFailed ? `${s.filesFailed} files could not be read` : 'not every file was listed or read'}): tests in unread files were kept` : ''
+                      }`}
                 {' · '}
                 {s.startedBy}, {relTime(s.startedAt)}
               </span>

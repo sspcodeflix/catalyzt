@@ -1,4 +1,5 @@
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
+import { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 
 import { useAgentActivity } from '../lib/agentsStore';
@@ -26,9 +27,39 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const openHuddleItems = useHuddle().filter((i) => !i.decision).length;
   const waiting = useTickets().filter((t) => t.uat.state === 'not-analysed').length;
   const recents = useRecentChats();
+  const ref = useRef<HTMLElement>(null);
+
+  // As a drawer (below 900px) the sidebar is modal: focus moves in, Tab stays inside, and focus
+  // returns to whatever opened it when it closes. Escape and the inert background are the shell's.
+  useEffect(() => {
+    const aside = ref.current;
+    if (!open || !aside) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusables = () => [...aside.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])')].filter((el) => el.offsetParent !== null);
+    (aside.querySelector<HTMLElement>('.drawer-close') ?? focusables()[0])?.focus();
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const f = focusables();
+      if (f.length === 0) return;
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !aside.contains(document.activeElement))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !aside.contains(document.activeElement))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    aside.addEventListener('keydown', trap);
+    return () => {
+      aside.removeEventListener('keydown', trap);
+      opener?.focus();
+    };
+  }, [open]);
 
   return (
-    <aside className={`sidebar${open ? ' open' : ''}`} aria-label="Horizon">
+    <aside ref={ref} className={`sidebar${open ? ' open' : ''}`} aria-label="Horizon" role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined}>
       <div className="brandrow">
         <span className="brand">
           <HorizonMark size={28} />

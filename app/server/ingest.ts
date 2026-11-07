@@ -117,6 +117,7 @@ interface GhRun {
   head_branch: string;
   event: string;
   run_started_at: string;
+  run_attempt?: number;
   conclusion: string | null;
   artifacts_url: string;
 }
@@ -154,7 +155,8 @@ export async function syncGitHubActions(db: HorizonDb, app: string, input: strin
 
     const out = { checked: runs.length, ingested: 0, already: 0, notMerge: 0, noResults: 0, results: 0, failed: 0 };
     for (const run of runs) {
-      if (db.runExists('github_actions', repo, String(run.id))) {
+      const attempt = Number.isInteger(run.run_attempt) && run.run_attempt! > 0 ? run.run_attempt! : 1;
+      if (db.runExists(app, 'github_actions', repo, String(run.id), attempt)) {
         out.already++;
         continue;
       }
@@ -189,7 +191,7 @@ export async function syncGitHubActions(db: HorizonDb, app: string, input: strin
       }
       const r = storeRun(
         db,
-        { app, source: 'github_actions', repo, workflow: run.name, externalRunId: String(run.id), runUrl: run.html_url, event: run.event, branch: run.head_branch, sha: run.head_sha, prNumber: pr.number, isMerge: true, startedAt: run.run_started_at },
+        { app, source: 'github_actions', repo, workflow: run.name, externalRunId: String(run.id), attempt, runUrl: run.html_url, event: run.event, branch: run.head_branch, sha: run.head_sha, prNumber: pr.number, isMerge: true, startedAt: run.run_started_at },
         cases,
         userId,
       );

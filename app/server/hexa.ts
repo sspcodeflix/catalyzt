@@ -1,11 +1,13 @@
 /**
- * Hexa: the Repo scanner agent. Reads a public GitHub repo's test files and updates the test case
- * inventory. Runs in the background as a recorded agent (it shows on the Agents page while it works).
+ * Hexa: the Repo scanner agent. Reads a public GitHub repo's test files at one commit and updates
+ * the test case inventory. Runs in the background as a recorded agent (it shows on the Agents
+ * page while it works). A scan that could not read everything says so and removes nothing it
+ * did not see; a scan that read nothing fails instead of touching the inventory.
  */
 import { randomUUID } from 'node:crypto';
 
 import type { HorizonDb } from './db';
-import { extractTests, fetchFile, GitHubError, listTestFiles, parseRepoRef, type FoundTest } from './github';
+import { extractTests, fetchFile, GitHubError, listTestFiles, MAX_FILES, parseRepoRef, type FoundTest } from './github';
 
 export class ScanError extends Error {}
 
@@ -34,41 +36,62 @@ export function startRepoScan(db: HorizonDb, app: string, input: string, userId:
     try {
       current = step('Listing the repository tree', 'github.get_tree');
       const listing = await listTestFiles(ref, token);
-      current('done', `${listing.totalFiles} test files at ${listing.sha.slice(0, 7)}${listing.truncated ? ` · reading the first ${listing.files.length}` : ''}`);
+      const toRead = listing.files.slice(0, MAX_FILES);
+      const truncated = listing.truncated || listing.files.length > MAX_FILES;
+      current('done', `${listing.files.length} test files at ${listing.sha.slice(0, 7)}${truncated ? ` · reading the first ${toRead.length}` : ''}${listing.truncated ? ' · the listing was cut short by GitHub' : ''}`);
 
-      current = step(`Reading ${listing.files.length} test files`, 'github.read_files');
+      current = step(`Reading ${toRead.length} test files at ${listing.sha.slice(0, 7)}`, 'github.read_files');
       const found: (FoundTest & { path: string })[] = [];
-      let read = 0;
-      const queue = [...listing.files];
+      const readPaths: string[] = [];
+      const failed: { path: string; error: string }[] = [];
+      const queue = [...toRead];
       // Eight files at a time.
       await Promise.all(
         Array.from({ length: 8 }, async () => {
           for (let f = queue.shift(); f; f = queue.shift()) {
             try {
               const text = await fetchFile(ref, listing.sha, f.path, token);
-              read++;
+              readPaths.push(f.path);
               for (const t of extractTests(f.path, text)) found.push({ ...t, path: f.path });
-            } catch {
-              /* skip a file that cannot be read */
+            } catch (e) {
+              failed.push({ path: f.path, error: (e as Error).message });
             }
           }
         }),
       );
-      current('done', `${read} of ${listing.files.length} read`);
+      if (toRead.length > 0 && readPaths.length === 0) {
+        throw new ScanError(`None of the ${toRead.length} test files could be read (${failed[0]?.error ?? 'unknown error'}). The inventory was left as it was.`);
+      }
+      current('done', `${readPaths.length} of ${toRead.length} read${failed.length ? ` · ${failed.length} failed (${failed[0].path}: ${failed[0].error})` : ''}`);
 
       current = step('Extracting test cases', 'parse.extract_tests');
       const frameworks = [...new Set(found.map((t) => t.framework))];
       current('done', `${found.length} tests${frameworks.length ? ` · ${frameworks.join(', ')}` : ''}`);
 
       current = step('Updating the inventory', 'hexa.update_inventory');
-      const r = db.completeScan({ id: scanId, app, repo, ref: listing.ref, sha: listing.sha, htmlUrl: listing.htmlUrl, filesFound: listing.totalFiles, filesScanned: read, truncated: listing.truncated, tests: found, userId });
-      current('done', `${r.added} new · ${r.found - r.added} already known · ${r.removed} removed`);
+      const r = db.completeScan({
+        id: scanId,
+        app,
+        repo,
+        ref: listing.ref,
+        sha: listing.sha,
+        htmlUrl: listing.htmlUrl,
+        filesFound: listing.files.length,
+        filesScanned: readPaths.length,
+        filesFailed: failed.length,
+        truncated: truncated || failed.length > 0,
+        readPaths,
+        listedPaths: listing.truncated ? null : listing.files.map((f) => f.path),
+        tests: found,
+        userId,
+      });
+      current('done', `${r.added} new · ${r.found - r.added} already known · ${r.removed} removed${r.complete ? '' : ' · partial scan: tests in files not read were kept'}`);
       current = null;
 
-      db.finishAgent(agentId, { status: 'done', result: `${r.found} test cases in ${repo}` });
+      db.finishAgent(agentId, { status: 'done', result: `${r.found} test cases in ${repo}${r.complete ? '' : ' (partial scan)'}` });
       db.finishWorkflow(wf, 'done', `Scanned ${repo}`);
     } catch (e) {
-      const msg = e instanceof GitHubError ? e.message : `The scan failed: ${(e as Error).message}`;
+      const msg = e instanceof GitHubError || e instanceof ScanError ? e.message : `The scan failed: ${(e as Error).message}`;
       current?.('failed', msg);
       db.failScan(scanId, msg);
       db.finishAgent(agentId, { status: 'failed', error: msg });

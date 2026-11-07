@@ -3,7 +3,19 @@ import { describe, expect, it } from 'vitest';
 import { seedWorkspace } from './db';
 import { FIXTURE, fixtureDb, seedRefundTests } from './fixture';
 
-const scan = (db: ReturnType<typeof fixtureDb>, id: string, tests: { path: string; title: string }[], app = 'ABCD') => {
+interface ScanOpts {
+  app?: string;
+  readPaths?: string[];
+  listedPaths?: string[] | null;
+  filesFailed?: number;
+  truncated?: boolean;
+}
+
+/** A complete scan by default: every file that holds a given test was listed and read. */
+const scan = (db: ReturnType<typeof fixtureDb>, id: string, tests: { path: string; title: string }[], o: ScanOpts | string = {}) => {
+  const opts: ScanOpts = typeof o === 'string' ? { app: o } : o;
+  const app = opts.app ?? 'ABCD';
+  const paths = [...new Set(tests.map((t) => t.path))];
   db.startWorkflow({ id: `w-${id}`, app, chatId: null, messageId: null, revision: 1, userId: 'u-ram' });
   db.startScan({ id, app, repo: 'acme/shop', ref: null, workflowRunId: `w-${id}`, userId: 'u-ram' });
   return db.completeScan({
@@ -13,13 +25,35 @@ const scan = (db: ReturnType<typeof fixtureDb>, id: string, tests: { path: strin
     ref: 'main',
     sha: 'abc1234',
     htmlUrl: 'https://github.com/acme/shop',
-    filesFound: 2,
-    filesScanned: 2,
-    truncated: false,
+    filesFound: (opts.listedPaths ?? paths).length,
+    filesScanned: (opts.readPaths ?? paths).length,
+    filesFailed: opts.filesFailed ?? 0,
+    truncated: opts.truncated ?? false,
+    readPaths: opts.readPaths ?? paths,
+    listedPaths: opts.listedPaths === undefined ? paths : opts.listedPaths,
     tests: tests.map((t, i) => ({ ...t, suite: null, framework: 'Jest/Mocha', line: i + 1 })),
     userId: 'u-ram',
   });
 };
+
+describe('F12: a scan only removes what it can prove is gone', () => {
+  it('keeps tests in files it could not read or list; a complete scan removes absent tests', () => {
+    const db = fixtureDb();
+    scan(db, 's1', [{ path: 'a.test.ts', title: 'adds item' }, { path: 'b.test.ts', title: 'pays' }, { path: 'b.test.ts', title: 'refunds' }]);
+    expect(db.listTests('ABCD').total).toBe(3);
+    // b.test.ts could not be read: nothing from it is found, nothing from it is removed.
+    const partial = scan(db, 's2', [{ path: 'a.test.ts', title: 'adds item' }], { readPaths: ['a.test.ts'], listedPaths: ['a.test.ts', 'b.test.ts'], filesFailed: 1, truncated: true });
+    expect(partial).toMatchObject({ found: 1, removed: 0, complete: false });
+    expect(db.listTests('ABCD').total).toBe(3);
+    expect(db.listScans('ABCD')[0]).toMatchObject({ complete: false, filesFailed: 1, testsRemoved: 0 });
+    // A listing GitHub cut short cannot prove a file is gone either.
+    expect(scan(db, 's3', [{ path: 'a.test.ts', title: 'adds item' }], { readPaths: ['a.test.ts'], listedPaths: null, truncated: true })).toMatchObject({ removed: 0, complete: false });
+    expect(db.listTests('ABCD').total).toBe(3);
+    // A complete scan whose listing no longer has b.test.ts removes its two tests.
+    expect(scan(db, 's4', [{ path: 'a.test.ts', title: 'adds item' }], { readPaths: ['a.test.ts'], listedPaths: ['a.test.ts'] })).toMatchObject({ removed: 2, complete: true });
+    expect(db.listTests('ABCD').rows.map((r) => r.title)).toEqual(['adds item']);
+  });
+});
 
 describe('Hexa inventory', () => {
   it('starts empty and fills from scans, links and runs', () => {
@@ -44,8 +78,8 @@ describe('Hexa inventory', () => {
 
   it('adds, updates and removes scanned tests without duplicates', () => {
     const db = fixtureDb();
-    expect(scan(db, 's1', [{ path: 'a.test.ts', title: 'adds item' }, { path: 'a.test.ts', title: 'removes item' }, { path: 'a.test.ts', title: 'adds item' }])).toEqual({ found: 2, added: 2, removed: 0 });
-    expect(scan(db, 's2', [{ path: 'a.test.ts', title: 'adds item' }, { path: 'b.test.ts', title: 'pays' }])).toEqual({ found: 2, added: 1, removed: 1 });
+    expect(scan(db, 's1', [{ path: 'a.test.ts', title: 'adds item' }, { path: 'a.test.ts', title: 'removes item' }, { path: 'a.test.ts', title: 'adds item' }])).toEqual({ found: 2, added: 2, removed: 0, complete: true });
+    expect(scan(db, 's2', [{ path: 'a.test.ts', title: 'adds item' }, { path: 'b.test.ts', title: 'pays' }])).toEqual({ found: 2, added: 1, removed: 1, complete: true });
     const { rows, total } = db.listTests('ABCD', { repo: 'acme/shop' });
     expect(total).toBe(2);
     expect(rows.every((r) => r.url?.startsWith('https://github.com/acme/shop/blob/abc1234/'))).toBe(true);

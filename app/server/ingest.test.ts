@@ -16,6 +16,7 @@ const meta = (o: Partial<Parameters<typeof ingestJUnit>[2]> = {}) => ({
   repo: 'acme/shop',
   workflow: null,
   externalRunId: null,
+  attempt: 1,
   runUrl: null,
   event: 'upload',
   branch: 'main',
@@ -78,6 +79,62 @@ describe('results reach the right tests', () => {
     expect(db.listTests('ABCD', { q: 'without a reason' }).total).toBe(1);
     // A manual test linked to AC3 counts as "not run", not as covered.
     expect(db.coverageFor('ABCD-1001')[2].status).toBe('not-run');
+  });
+});
+
+describe('F06: evidence is read from the target build, never from a cached last result', () => {
+  const only = (names: string[], skip = false) =>
+    `<testsuite name="payments.PartialRefundsTest">${names.map((n) => `<testcase classname="payments.PartialRefundsTest" name="${n}" time="0.1">${skip ? '<skipped/>' : ''}</testcase>`).join('')}</testsuite>`;
+
+  it('a test missing from the latest merge run is not covered by its earlier pass', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db); // run PR #41: AC1 and AC2 passed
+    await ingestJUnit(db, [{ filename: 'n.xml', xml: only(['aMerchantCanRefundPartOfASettledCardPayment']) }], meta({ startedAt: at(-1), prNumber: 1500 }), 'u-sourav');
+    const cov = db.coverageFor('ABCD-1001');
+    expect(cov.map((c) => c.status)).toEqual(['passing', 'not-run', 'not-run', 'no-test']);
+    expect(cov[0].evidence).toBe('1 test passed in PR #1500 (abc1234, main)'.replace('1 test', cov[0].tests[0].id));
+    expect(cov[1].tests[0].result).toBe('missing');
+    expect(cov[1].evidence).toMatch(/not in PR #1500 \(abc1234, main\); an earlier pass does not count/);
+    expect(cov[0].builds[0]).toMatchObject({ prNumber: 1500, sha: 'abc1234', branch: 'main' });
+    // The Hexa list still shows the test's own last result; coverage does not use it.
+    expect(db.getTest(cov[1].tests[0].id)?.lastResult).toBe('passed');
+  });
+
+  it('a failure is never hidden by another linked test that passed', async () => {
+    const db = fixtureDb();
+    const [, ac2] = seedRefundTests(db);
+    db.linkTest(ac2, 'criterion', 'ABCD-1001#AC1', 'u-sourav');
+    await ingestJUnit(db, [{ filename: 'f.xml', xml: junit(true) }], meta({ startedAt: at(-1), prNumber: 1501 }), 'u-sourav');
+    const ac1 = db.coverageFor('ABCD-1001')[0];
+    expect(ac1.status).toBe('failing');
+    expect(ac1.evidence).toMatch(/failed in PR #1501/);
+    expect(ac1.tests.map((t) => t.result).sort()).toEqual(['failed', 'passed']);
+  });
+
+  it('skipped and never-run are explicit, not covered', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    await ingestJUnit(db, [{ filename: 's.xml', xml: only(['aMerchantCanRefundPartOfASettledCardPayment'], true) }], meta({ startedAt: at(-1), prNumber: 1502 }), 'u-sourav');
+    const cov = db.coverageFor('ABCD-1001');
+    expect(cov[0]).toMatchObject({ status: 'not-run', evidence: expect.stringMatching(/skipped in PR #1502/) });
+    // A repository with no recorded run at all.
+    expect(db.targetBuild('ABCD', 'acme/other')).toBeNull();
+    expect(db.targetBuild('IBGM', 'acme/shop')).toBeNull();
+  });
+
+  it('a rerun is a new attempt and becomes the target build', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    await ingestJUnit(db, [{ filename: 'a1.xml', xml: junit(true) }], meta({ source: 'webhook', externalRunId: '9001', attempt: 1, startedAt: at(-2), prNumber: 1503 }), 'u-sourav');
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('failing');
+    expect(db.runExists('ABCD', 'webhook', 'acme/shop', '9001', 1)).toBe(true);
+    expect(db.runExists('ABCD', 'webhook', 'acme/shop', '9001', 2)).toBe(false);
+    expect(db.runExists('IBGM', 'webhook', 'acme/shop', '9001', 1)).toBe(false);
+    await ingestJUnit(db, [{ filename: 'a2.xml', xml: junit(false) }], meta({ source: 'webhook', externalRunId: '9001', attempt: 2, startedAt: at(-1), prNumber: 1503 }), 'u-sourav');
+    const ac2 = db.coverageFor('ABCD-1001')[1];
+    expect(ac2.status).toBe('passing');
+    expect(ac2.evidence).toMatch(/PR #1503 attempt 2/);
+    expect(db.listRuns('ABCD').map((r) => r.attempt)).toEqual([2, 1, 1]);
   });
 });
 

@@ -627,4 +627,16 @@ export const MIGRATIONS: string[] = [
     FROM test_cases WHERE kind = 'proposed' AND id LIKE 'UAT-%';
   UPDATE test_cases SET status = 'removed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE kind = 'proposed' AND id LIKE 'UAT-%';
   `,
+  // 8: evidence against a build. Test runs carry the attempt (a rerun of the same CI run is a new
+  //    row) and are unique per application, source, repository, run and attempt, so two applications
+  //    watching one repository never swallow each other's deliveries. Scans record whether they were
+  //    complete and how many files could not be read, so a partial scan never removes tests.
+  `
+  ALTER TABLE test_runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1;
+  DROP INDEX test_runs_external;
+  CREATE UNIQUE INDEX test_runs_external ON test_runs (application_id, source, repo, external_run_id, attempt) WHERE external_run_id IS NOT NULL;
+  CREATE INDEX test_runs_repo ON test_runs (application_id, repo, is_merge);
+  ALTER TABLE repo_scans ADD COLUMN files_failed INTEGER;
+  ALTER TABLE repo_scans ADD COLUMN complete INTEGER;
+  `,
 ];

@@ -139,6 +139,8 @@ export interface RunMeta {
   repo: string | null;
   workflow: string | null;
   externalRunId: string | null;
+  /** CI attempt of the same run (a rerun is a new attempt). 1 for uploads. */
+  attempt: number;
   runUrl: string | null;
   event: string | null;
   branch: string | null;
@@ -159,17 +161,39 @@ export interface ScanRow {
   testsNew: number | null;
   testsRemoved: number | null;
   truncated: boolean;
+  /** Files the scan could not read. */
+  filesFailed: number | null;
+  /** True when every test file was listed and read; only then can absent tests be removed. */
+  complete: boolean | null;
   error: string | null;
   startedBy: string;
   startedAt: string;
   endedAt: string | null;
 }
 
+/** The run a criterion's evidence is read from: the latest merge-commit run of the test's repository. */
+export interface EvidenceBuild {
+  runId: string;
+  repo: string | null;
+  sha: string | null;
+  branch: string | null;
+  prNumber: number | null;
+  attempt: number;
+  at: string;
+  /** For people: "PR #1482 (abc1234, main)". */
+  label: string;
+}
+
+/** A linked test's result in the target build. `missing`: the test was not in that run, so an older pass does not count. */
+export type EvidenceResult = 'passed' | 'failed' | 'skipped' | 'missing' | 'not_run' | 'manual';
+
 /** What Hexa knows about one acceptance criterion. */
 export interface CriterionCoverage {
   status: CriterionStatus;
   evidence: string;
-  tests: { id: string; title: string; kind: string; lastResult: string | null }[];
+  tests: { id: string; title: string; kind: string; result: EvidenceResult }[];
+  /** The builds the evidence comes from, one per repository with a recorded run. */
+  builds: EvidenceBuild[];
 }
 
 type Row = Record<string, unknown>;
@@ -740,8 +764,10 @@ export function openDb(path: string) {
     },
 
     /**
-     * Replaces a repo's scanned tests with what this scan found: new tests are added, known ones
-     * updated, and tests no longer in the repo marked removed (kept for history).
+     * Records what a scan found: new tests are added, known ones updated. A test is marked removed
+     * (kept for history) only when the scan establishes it is gone: its file was read in this scan
+     * and no longer holds it, or the complete file listing no longer has its file. Tests in files
+     * the scan could not read, or beyond a truncated listing, are left as they are.
      */
     completeScan(s: {
       id: string;
@@ -752,7 +778,13 @@ export function openDb(path: string) {
       htmlUrl: string;
       filesFound: number;
       filesScanned: number;
+      filesFailed: number;
+      /** True when the scan did not read every listed file (limit or failures). */
       truncated: boolean;
+      /** Paths read successfully in this scan. */
+      readPaths: string[];
+      /** Every test file in the tree, or null when the listing itself was cut short. */
+      listedPaths: string[] | null;
       tests: { path: string; title: string; name?: string; suite: string | null; framework: string; line: number }[];
       userId: string;
     }) {
@@ -773,15 +805,18 @@ export function openDb(path: string) {
           if (!exists.get(id)) added++;
           up.run({ id, app: s.app, title: x.title.slice(0, 300), suite: x.suite, code: x.name ?? null, framework: x.framework, repo: s.repo, ref: s.ref, path: x.path, line: x.line, url: `${s.htmlUrl}/blob/${s.sha}/${x.path}#L${x.line}`, scan: s.id, user: s.userId, t });
         }
-        const old = db.prepare("SELECT id FROM test_cases WHERE application_id = ? AND repo = ? AND origin = 'repo_scan' AND status = 'active'").all(s.app, s.repo) as { id: string }[];
-        const gone = old.filter((o) => !seen.has(o.id));
+        const read = new Set(s.readPaths);
+        const listed = s.listedPaths ? new Set(s.listedPaths) : null;
+        const old = db.prepare("SELECT id, path FROM test_cases WHERE application_id = ? AND repo = ? AND origin = 'repo_scan' AND status = 'active'").all(s.app, s.repo) as { id: string; path: string | null }[];
+        const gone = old.filter((o) => !seen.has(o.id) && !!o.path && (read.has(o.path) || (listed !== null && !listed.has(o.path))));
         const rm = db.prepare("UPDATE test_cases SET status = 'removed', updated_at = ? WHERE id = ?");
         for (const g of gone) rm.run(t, g.id);
+        const complete = !s.truncated && s.filesFailed === 0 && listed !== null;
         db.prepare(
-          "UPDATE repo_scans SET status = 'done', sha = ?, ref = ?, files_found = ?, files_scanned = ?, tests_found = ?, tests_new = ?, tests_removed = ?, truncated = ?, ended_at = ? WHERE id = ?",
-        ).run(s.sha, s.ref, s.filesFound, s.filesScanned, seen.size, added, gone.length, s.truncated ? 1 : 0, t, s.id);
-        audit('user', s.userId, 'hexa.scan', 'repository', s.repo, { app: s.app, found: seen.size, added, removed: gone.length });
-        return { found: seen.size, added, removed: gone.length };
+          "UPDATE repo_scans SET status = 'done', sha = ?, ref = ?, files_found = ?, files_scanned = ?, files_failed = ?, tests_found = ?, tests_new = ?, tests_removed = ?, truncated = ?, complete = ?, ended_at = ? WHERE id = ?",
+        ).run(s.sha, s.ref, s.filesFound, s.filesScanned, s.filesFailed, seen.size, added, gone.length, s.truncated ? 1 : 0, complete ? 1 : 0, t, s.id);
+        audit('user', s.userId, 'hexa.scan', 'repository', s.repo, { app: s.app, found: seen.size, added, removed: gone.length, complete });
+        return { found: seen.size, added, removed: gone.length, complete };
       })();
     },
 
@@ -801,6 +836,8 @@ export function openDb(path: string) {
         testsNew: r.tests_new == null ? null : Number(r.tests_new),
         testsRemoved: r.tests_removed == null ? null : Number(r.tests_removed),
         truncated: Number(r.truncated) === 1,
+        filesFailed: r.files_failed == null ? null : Number(r.files_failed),
+        complete: r.complete == null ? null : Number(r.complete) === 1,
         error: (r.error as string) ?? null,
         startedBy: String(r.user_name),
         startedAt: String(r.started_at),
@@ -907,8 +944,9 @@ export function openDb(path: string) {
       return rows.map((r) => ({ id: String(r.id), suite: (r.suite as string) ?? null, codeName: (r.code_name as string) ?? null, title: String(r.title), path: (r.path as string) ?? null }));
     },
 
-    runExists(source: string, repo: string | null, externalRunId: string) {
-      return !!db.prepare('SELECT 1 FROM test_runs WHERE source = ? AND repo IS ? AND external_run_id = ?').get(source, repo, externalRunId);
+    /** Whether this delivery was already recorded: the same application, source, repository, run and attempt. */
+    runExists(app: string, source: string, repo: string | null, externalRunId: string, attempt = 1) {
+      return !!db.prepare('SELECT 1 FROM test_runs WHERE application_id = ? AND source = ? AND repo IS ? AND external_run_id = ? AND attempt = ?').get(app, source, repo, externalRunId, attempt);
     },
 
     /**
@@ -922,7 +960,7 @@ export function openDb(path: string) {
     ) {
       return db.transaction(() => {
         const t = now();
-        const runId = createHash('sha1').update(`${meta.app}|${meta.source}|${meta.repo}|${meta.externalRunId ?? t}|${Math.random()}`).digest('hex').slice(0, 16);
+        const runId = createHash('sha1').update(`${meta.app}|${meta.source}|${meta.repo}|${meta.externalRunId ?? t}|${meta.attempt}|${Math.random()}`).digest('hex').slice(0, 16);
         const runAt = meta.startedAt ?? t;
         let created = 0;
         let matched = 0;
@@ -949,9 +987,9 @@ export function openDb(path: string) {
         const total = seen.size;
         const duration = [...seen.values()].reduce((a, r) => a + (r.durationMs ?? 0), 0);
         db.prepare(
-          `INSERT INTO test_runs (id, application_id, source, repo, workflow, external_run_id, run_url, event, branch, sha, pr_number, is_merge, status, total, passed, failed, skipped, duration_ms, started_at, ingested_by, ingested_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(runId, meta.app, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, runAt, userId, t);
+          `INSERT INTO test_runs (id, application_id, source, repo, workflow, external_run_id, attempt, run_url, event, branch, sha, pr_number, is_merge, status, total, passed, failed, skipped, duration_ms, started_at, ingested_by, ingested_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(runId, meta.app, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.attempt, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, runAt, userId, t);
         const res = db.prepare('INSERT INTO test_results (run_id, test_case_id, status, duration_ms, message) VALUES (?, ?, ?, ?, ?)');
         const last = db.prepare('UPDATE test_cases SET last_result = ?, last_run_at = ?, updated_at = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)');
         for (const r of seen.values()) {
@@ -977,6 +1015,7 @@ export function openDb(path: string) {
         branch: (r.branch as string) ?? null,
         sha: (r.sha as string) ?? null,
         prNumber: r.pr_number == null ? null : Number(r.pr_number),
+        attempt: Number(r.attempt ?? 1),
         isMerge: Number(r.is_merge) === 1,
         status: String(r.status),
         total: Number(r.total),
@@ -1062,36 +1101,80 @@ export function openDb(path: string) {
     },
 
     /**
-     * What Hexa knows about each acceptance criterion of a story: covered when a linked automated
-     * test passed in its latest run; failing when the latest run failed; not run when linked tests
-     * (automated without a result, or manual) exist; no test otherwise. Proposed UAT cases are
-     * drafts, not tests, so they never count as coverage.
+     * The build evidence is read from for a repository: its latest merge-commit run (the latest
+     * attempt), or the latest run of any kind when no merge run was recorded. Null when nothing ran.
+     */
+    targetBuild(app: string, repo: string | null): EvidenceBuild | null {
+      const r = db
+        .prepare(
+          `SELECT id, repo, sha, branch, pr_number, external_run_id, attempt, COALESCE(started_at, ingested_at) AS at
+           FROM test_runs WHERE application_id = ? AND repo IS ? ORDER BY is_merge DESC, at DESC, attempt DESC, rowid DESC LIMIT 1`,
+        )
+        .get(app, repo) as Row | undefined;
+      if (!r) return null;
+      const pr = r.pr_number == null ? null : Number(r.pr_number);
+      const attempt = Number(r.attempt ?? 1);
+      const sha = (r.sha as string) ?? null;
+      const branch = (r.branch as string) ?? null;
+      const where = [sha ? sha.slice(0, 7) : null, branch].filter(Boolean).join(', ');
+      const label = `${pr ? `PR #${pr}` : `run ${(r.external_run_id as string) ?? String(r.id).slice(0, 7)}`}${attempt > 1 ? ` attempt ${attempt}` : ''}${where ? ` (${where})` : ''}`;
+      return { runId: String(r.id), repo: (r.repo as string) ?? null, sha, branch, prNumber: pr, attempt, at: String(r.at), label };
+    },
+
+    /**
+     * What Hexa knows about each acceptance criterion of a story, read against the target build of
+     * each linked test's repository, never from a cached last result:
+     *   failing   a linked automated test failed in the target build (a failure is never hidden by another test's pass)
+     *   passing   a linked automated test passed in the target build
+     *   not-run   linked tests exist but none passed there: skipped, missing from that build (an older pass does not
+     *             count), no run recorded for the repository, or only manual tests
+     *   no-test   nothing linked. Proposed UAT cases are drafts and never count.
      */
     coverageFor(storyKey: string): CriterionCoverage[] {
       const story = getStory(storyKey);
       if (!story) return [];
       const linked = db.prepare(
-        `SELECT t.id, t.title, t.kind, t.last_result FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id
+        `SELECT t.id, t.title, t.kind, t.repo FROM test_case_links l JOIN test_cases t ON t.id = l.test_case_id
          WHERE l.entity_type = 'criterion' AND l.entity_ref = ? AND t.status = 'active' AND t.kind != 'proposed' ORDER BY t.kind, t.title`,
       );
+      const inRun = db.prepare('SELECT status FROM test_results WHERE run_id = ? AND test_case_id = ?');
+      const builds = new Map<string, EvidenceBuild | null>();
+      const buildFor = (repo: string | null) => {
+        const key = repo ?? '';
+        if (!builds.has(key)) builds.set(key, this.targetBuild(story.applicationId, repo));
+        return builds.get(key) ?? null;
+      };
+      const one = (list: { id: string }[]) => (list.length === 1 ? list[0].id : `${list.length} tests`);
       return story.acceptanceCriteria.map((_, i) => {
-        const tests = (linked.all(`${storyKey}#AC${i + 1}`) as Row[]).map((r) => ({ id: String(r.id), title: String(r.title), kind: String(r.kind), lastResult: (r.last_result as string) ?? null }));
-        const auto = tests.filter((t) => t.kind === 'automated');
-        const one = (list: typeof tests) => (list.length === 1 ? list[0].id : `${list.length} tests`);
-        if (auto.some((t) => t.lastResult === 'passed')) {
-          const ok = auto.filter((t) => t.lastResult === 'passed');
-          return { status: 'passing', evidence: `${one(ok)} passed in the latest pipeline run`, tests };
+        const rows = linked.all(`${storyKey}#AC${i + 1}`) as Row[];
+        const tests = rows.map((r) => {
+          const kind = String(r.kind);
+          if (kind !== 'automated') return { id: String(r.id), title: String(r.title), kind, result: 'manual' as EvidenceResult, build: null };
+          const build = buildFor((r.repo as string) ?? null);
+          const res = build ? (inRun.get(build.runId, r.id) as { status: EvidenceResult } | undefined) : undefined;
+          const result: EvidenceResult = !build ? 'not_run' : (res?.status ?? 'missing');
+          return { id: String(r.id), title: String(r.title), kind, result, build };
+        });
+        const used = [...new Map(tests.flatMap((t) => (t.build ? [[t.build.runId, t.build] as const] : []))).values()];
+        const out = (status: CriterionStatus, evidence: string): CriterionCoverage => ({ status, evidence, tests: tests.map(({ build: _b, ...t }) => t), builds: used });
+        const by = (result: EvidenceResult) => tests.filter((t) => t.result === result);
+        const label = (t: { build: EvidenceBuild | null }) => t.build?.label ?? 'the target build';
+        const failed = by('failed');
+        if (failed.length) return out('failing', `${one(failed)} failed in ${label(failed[0])}`);
+        const passed = by('passed');
+        const missing = by('missing');
+        const skipped = by('skipped');
+        if (passed.length) {
+          const rest = [missing.length && `${one(missing)} not in that run`, skipped.length && `${one(skipped)} skipped`].filter(Boolean).join('; ');
+          return out('passing', `${one(passed)} passed in ${label(passed[0])}${rest ? ` (${rest})` : ''}`);
         }
-        if (auto.some((t) => t.lastResult === 'failed')) {
-          const bad = auto.filter((t) => t.lastResult === 'failed');
-          return { status: 'failing', evidence: `${one(bad)} failed in the latest pipeline run`, tests };
-        }
-        if (tests.length) {
-          const manual = tests.filter((t) => t.kind === 'manual');
-          const evidence = auto.length ? `${one(auto)} exist${auto.length === 1 ? 's' : ''} but ha${auto.length === 1 ? 's' : 've'} no result yet` : `${one(manual)} manual, no automated result`;
-          return { status: 'not-run', evidence, tests };
-        }
-        return { status: 'no-test', evidence: 'No test linked to this criterion', tests };
+        if (missing.length) return out('not-run', `${one(missing)} not in ${label(missing[0])}; an earlier pass does not count`);
+        if (skipped.length) return out('not-run', `${one(skipped)} skipped in ${label(skipped[0])}`);
+        const noRun = by('not_run');
+        if (noRun.length) return out('not-run', `${one(noRun)} exist${noRun.length === 1 ? 's' : ''} but no run has been recorded for the repository`);
+        const manual = by('manual');
+        if (manual.length) return out('not-run', `${one(manual)} manual, no automated result`);
+        return out('no-test', 'No test linked to this criterion');
       });
     },
 

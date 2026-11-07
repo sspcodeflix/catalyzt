@@ -6,8 +6,14 @@
 #      "Collect results" (Pipeline runs tab) reads it from PR merge-commit runs. Needs
 #      GITHUB_TOKEN on the Horizon server with actions:read on this repo.
 #   2. Push: the last step posts the results to Horizon. Needs Horizon reachable from GitHub,
-#      and two repository secrets: HORIZON_URL (e.g. https://horizon.example.com) and
-#      HEXA_INGEST_TOKEN (the same value as on the Horizon server). Skipped if they are not set.
+#      two repository secrets, HORIZON_URL (e.g. https://horizon.example.com) and
+#      HEXA_INGEST_TOKEN (the value of HEXA_INGEST_TOKEN on the Horizon server, or of
+#      HEXA_INGEST_TOKEN_<APP> when the application has its own token), and the repository
+#      variable HEXA_APP: the application id in Horizon this repository belongs to (for example
+#      IBGM). The push is skipped, with a message, when any of the three is missing.
+#      Deliveries are recorded once per application, repository, run id and attempt: posting the
+#      same run again is a no-op, and a rerun (GITHUB_RUN_ATTEMPT > 1) is a new attempt that
+#      becomes the build UAT readiness is judged against.
 
 name: Tests (Hexa)
 
@@ -48,19 +54,23 @@ jobs:
         env:
           HORIZON_URL: ${{ secrets.HORIZON_URL }}
           HEXA_INGEST_TOKEN: ${{ secrets.HEXA_INGEST_TOKEN }}
+          HEXA_APP: ${{ vars.HEXA_APP }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$HORIZON_URL" ] || [ -z "$HEXA_INGEST_TOKEN" ]; then
-            echo "HORIZON_URL or HEXA_INGEST_TOKEN not set; skipping the push (the artifact is still there)."
+          if [ -z "$HORIZON_URL" ] || [ -z "$HEXA_INGEST_TOKEN" ] || [ -z "$HEXA_APP" ]; then
+            echo "HORIZON_URL, HEXA_INGEST_TOKEN or HEXA_APP not set; skipping the push (the artifact is still there)."
             exit 0
           fi
           # Finds the merged pull request this commit belongs to, then posts every JUnit file in one request.
+          # Required fields: app, junit. The rest lets Hexa name the build the results belong to.
           python3 - <<'PY'
           import glob, json, os, urllib.request
           pr = os.popen(f'gh api repos/{os.environ["GITHUB_REPOSITORY"]}/commits/{os.environ["GITHUB_SHA"]}/pulls --jq \'[.[] | select(.merge_commit_sha == "{os.environ["GITHUB_SHA"]}")][0].number // empty\'').read().strip()
           body = {
+              "app": os.environ["HEXA_APP"],
               "repo": os.environ["GITHUB_REPOSITORY"], "sha": os.environ["GITHUB_SHA"], "branch": os.environ["GITHUB_REF_NAME"],
-              "event": os.environ["GITHUB_EVENT_NAME"], "runId": os.environ["GITHUB_RUN_ID"], "workflow": os.environ["GITHUB_WORKFLOW"],
+              "event": os.environ["GITHUB_EVENT_NAME"], "runId": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
+              "workflow": os.environ["GITHUB_WORKFLOW"],
               "runUrl": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
               "prNumber": int(pr) if pr.isdigit() else None, "mergeCommit": pr.isdigit(),
               "junit": [open(f, encoding="utf-8").read() for f in glob.glob("test-results/*.xml")],
