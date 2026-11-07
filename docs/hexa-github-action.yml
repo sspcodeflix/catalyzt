@@ -1,0 +1,71 @@
+# Sends test results to Horizon's Hexa after every merge to main.
+#
+# Copy to .github/workflows/hexa.yml in the repository under test and adjust the "Run tests" step.
+# Two ways results reach Hexa, both covered here:
+#   1. Artifact: the JUnit XML is uploaded as an artifact named "test-results". Hexa's
+#      "Collect results" (Pipeline runs tab) reads it from PR merge-commit runs. Needs
+#      GITHUB_TOKEN on the Horizon server with actions:read on this repo.
+#   2. Push: the last step posts the results to Horizon. Needs Horizon reachable from GitHub,
+#      and two repository secrets: HORIZON_URL (e.g. https://horizon.example.com) and
+#      HEXA_INGEST_TOKEN (the same value as on the Horizon server). Skipped if they are not set.
+
+name: Tests (Hexa)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Replace with your stack. The only requirement is JUnit XML in test-results/.
+      - name: Run tests
+        run: |
+          mkdir -p test-results
+          # Java (Maven):  mvn -B test  &&  cp target/surefire-reports/*.xml test-results/
+          # Python:        pytest --junitxml=test-results/pytest.xml
+          # Node (Jest):   npx jest --ci --reporters=default --reporters=jest-junit  (JEST_JUNIT_OUTPUT_DIR=test-results)
+          # Go:            go test -v ./... 2>&1 | go run github.com/jstemmer/go-junit-report/v2@latest > test-results/go.xml
+          echo "Configure your test command here" && exit 1
+
+      - name: Keep results as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/*.xml
+          retention-days: 30
+
+      - name: Send results to Horizon
+        if: always()
+        env:
+          HORIZON_URL: ${{ secrets.HORIZON_URL }}
+          HEXA_INGEST_TOKEN: ${{ secrets.HEXA_INGEST_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$HORIZON_URL" ] || [ -z "$HEXA_INGEST_TOKEN" ]; then
+            echo "HORIZON_URL or HEXA_INGEST_TOKEN not set; skipping the push (the artifact is still there)."
+            exit 0
+          fi
+          # Finds the merged pull request this commit belongs to, then posts every JUnit file in one request.
+          python3 - <<'PY'
+          import glob, json, os, urllib.request
+          pr = os.popen(f'gh api repos/{os.environ["GITHUB_REPOSITORY"]}/commits/{os.environ["GITHUB_SHA"]}/pulls --jq \'[.[] | select(.merge_commit_sha == "{os.environ["GITHUB_SHA"]}")][0].number // empty\'').read().strip()
+          body = {
+              "repo": os.environ["GITHUB_REPOSITORY"], "sha": os.environ["GITHUB_SHA"], "branch": os.environ["GITHUB_REF_NAME"],
+              "event": os.environ["GITHUB_EVENT_NAME"], "runId": os.environ["GITHUB_RUN_ID"], "workflow": os.environ["GITHUB_WORKFLOW"],
+              "runUrl": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              "prNumber": int(pr) if pr.isdigit() else None, "mergeCommit": pr.isdigit(),
+              "junit": [open(f, encoding="utf-8").read() for f in glob.glob("test-results/*.xml")],
+          }
+          req = urllib.request.Request(os.environ["HORIZON_URL"].rstrip("/") + "/api/hexa/results", data=json.dumps(body).encode(),
+                                       headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["HEXA_INGEST_TOKEN"]})
+          print(urllib.request.urlopen(req, timeout=60).read().decode())
+          PY

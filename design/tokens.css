@@ -1,0 +1,106 @@
+/* Horizon design tokens. Theme: data-theme="light|dark" on <html>, or follow the OS when unset.
+   The brand red is the accent, used sparingly: the mark, the send button, the active step and
+   unread dots. Primary buttons are ink. Red as a status is reserved for critical security findings
+   and failed runs; a coverage gap is not an alarm. */
+:root {
+  --hz-bg: #FBFAF8;
+  --hz-sidebar: #F4F3EF;
+  --hz-surface: #FFFFFF;
+  --hz-surface-muted: #F1EFEA;
+  --hz-surface-sunken: #F7F6F2;
+  --hz-hover: rgb(23 24 28 / 0.06);
+  --hz-border: rgb(23 24 28 / 0.12);
+  --hz-border-strong: rgb(23 24 28 / 0.24);
+  --hz-divider: rgb(23 24 28 / 0.08);
+
+  --hz-text: #17181C;
+  --hz-text-secondary: #4A4D55;
+  --hz-text-muted: #666A73;
+  --hz-text-placeholder: #6F737C;
+
+  --hz-ink: #17181C;
+  --hz-on-ink: #FBFAF8;
+  --hz-ink-hover: #2E3036;
+
+  --hz-accent: #C8102E;
+  --hz-accent-text: #B00E28;
+  --hz-accent-tint: #FCECEE;
+  --hz-on-accent: #FFFFFF;
+  /* The mark only: dawn over the horizon line. */
+  --hz-dawn-1: #F0603F;
+  --hz-dawn-2: #C8102E;
+  --hz-dawn-3: #8E0B20;
+  --hz-dawn: linear-gradient(160deg, var(--hz-dawn-1) 0%, var(--hz-dawn-2) 55%, var(--hz-dawn-3) 100%);
+
+  /* Status: always with a text label. */
+  --hz-pass: #1F7A4D;
+  --hz-pass-tint: #E5F2EA;
+  --hz-pass-text: #17633E;
+  --hz-warn: #B7791F;
+  --hz-warn-tint: #FBF1DC;
+  --hz-warn-text: #8A5A12;
+  --hz-high: #C2410C;
+  --hz-high-tint: #FCEBDF;
+  --hz-high-text: #9A3412;
+  --hz-crit: #C8102E;
+  --hz-crit-tint: #FCECEE;
+  --hz-crit-text: #A30D26;
+  --hz-info: #2F5DA8;
+  --hz-info-tint: #E8EEF8;
+  --hz-info-text: #24497F;
+  --hz-neutral: #C9C6BD;
+  --hz-neutral-ring: #A7A49B;
+  --hz-track: #ECEAE4;
+
+  --hz-font-display: 'IBM Plex Serif', Georgia, serif;
+  --hz-font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --hz-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --hz-radius-sm: 8px;
+  --hz-radius-md: 10px;
+  --hz-radius-lg: 14px;
+  --hz-radius-xl: 18px;
+  --hz-radius-2xl: 22px;
+  --hz-radius-pill: 999px;
+
+  --hz-shadow-card: 0 1px 2px rgb(23 24 28 / 0.04);
+  --hz-shadow-composer: 0 1px 2px rgb(23 24 28 / 0.04), 0 10px 30px rgb(23 24 28 / 0.06);
+
+  --hz-sidebar-w: 264px;
+  --hz-thread-max: 760px;
+  --hz-thread-max-split: 600px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hz-bg: #121316; --hz-sidebar: #0E0F11; --hz-surface: #1A1C20; --hz-surface-muted: #24262B; --hz-surface-sunken: #15171A;
+    --hz-hover: rgb(236 237 239 / 0.07); --hz-border: rgb(236 237 239 / 0.13); --hz-border-strong: rgb(236 237 239 / 0.26); --hz-divider: rgb(236 237 239 / 0.08);
+    --hz-text: #ECEDEF; --hz-text-secondary: #BDC0C7; --hz-text-muted: #9EA2AB; --hz-text-placeholder: #868A93;
+    --hz-ink: #ECEDEF; --hz-on-ink: #121316; --hz-ink-hover: #FFFFFF;
+    --hz-accent: #D3243F; --hz-accent-text: #FF7A8C; --hz-accent-tint: #3A1419; --hz-on-accent: #FFFFFF;
+    --hz-pass: #2E9E66; --hz-pass-tint: #10291C; --hz-pass-text: #7ADBA6;
+    --hz-warn: #D69A2D; --hz-warn-tint: #33270A; --hz-warn-text: #F2C46B;
+    --hz-high: #EA6A2A; --hz-high-tint: #36190C; --hz-high-text: #FFA673;
+    --hz-crit: #E0243F; --hz-crit-tint: #3A1419; --hz-crit-text: #FF8A98;
+    --hz-info: #6E9BE6; --hz-info-tint: #172238; --hz-info-text: #A9C4F2;
+    --hz-neutral: #4A4D55; --hz-neutral-ring: #6E727B; --hz-track: #2A2C31;
+    --hz-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px rgb(0 0 0 / 0.3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --hz-bg: #121316; --hz-sidebar: #0E0F11; --hz-surface: #1A1C20; --hz-surface-muted: #24262B; --hz-surface-sunken: #15171A;
+  --hz-hover: rgb(236 237 239 / 0.07); --hz-border: rgb(236 237 239 / 0.13); --hz-border-strong: rgb(236 237 239 / 0.26); --hz-divider: rgb(236 237 239 / 0.08);
+  --hz-text: #ECEDEF; --hz-text-secondary: #BDC0C7; --hz-text-muted: #9EA2AB; --hz-text-placeholder: #868A93;
+  --hz-ink: #ECEDEF; --hz-on-ink: #121316; --hz-ink-hover: #FFFFFF;
+  --hz-accent: #D3243F; --hz-accent-text: #FF7A8C; --hz-accent-tint: #3A1419; --hz-on-accent: #FFFFFF;
+  --hz-pass: #2E9E66; --hz-pass-tint: #10291C; --hz-pass-text: #7ADBA6;
+  --hz-warn: #D69A2D; --hz-warn-tint: #33270A; --hz-warn-text: #F2C46B;
+  --hz-high: #EA6A2A; --hz-high-tint: #36190C; --hz-high-text: #FFA673;
+  --hz-crit: #E0243F; --hz-crit-tint: #3A1419; --hz-crit-text: #FF8A98;
+  --hz-info: #6E9BE6; --hz-info-tint: #172238; --hz-info-text: #A9C4F2;
+  --hz-neutral: #4A4D55; --hz-neutral-ring: #6E727B; --hz-track: #2A2C31;
+  --hz-shadow-composer: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px rgb(0 0 0 / 0.3);
+  color-scheme: dark;
+}

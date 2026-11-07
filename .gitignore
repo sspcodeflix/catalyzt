@@ -1,0 +1,12 @@
+node_modules/
+reference/
+.DS_Store
+dist/
+.env
+.env.*
+!.env.example
+app/data/
+.serena/
+# Simulation workspace: team configs, backlogs and logs are kept; clones and test output are not.
+.myworkspace/*/repos/
+.myworkspace/*/results/

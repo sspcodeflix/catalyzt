@@ -1,0 +1,12 @@
+{
+  "name": "horizon-lite",
+  "private": true,
+  "description": "Horizon: AI Quality & Reliability Engineering. Design and web app.",
+  "scripts": {
+    "postinstall": "npm --prefix app install && npm --prefix design install",
+    "dev": "npm --prefix app run dev",
+    "build": "npm --prefix app run build",
+    "preview": "npm --prefix app run preview",
+    "typecheck": "npm --prefix app run typecheck"
+  }
+}
