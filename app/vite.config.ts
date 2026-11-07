@@ -43,10 +43,15 @@ function horizonApi(env: Record<string, string>): Plugin {
 export default defineConfig(({ mode }) => {
   // '' loads every variable from .env files and the process environment, not just VITE_*.
   const env = loadEnv(mode, process.cwd(), '');
+  // With HORIZON_API_URL set, Vite only serves the front end and proxies /api to the standalone
+  // API (server/main.ts); otherwise the API runs inside the dev server, as before.
+  const apiUrl = env.HORIZON_API_URL?.trim();
+  const proxy = apiUrl ? { '/api': { target: apiUrl, changeOrigin: false } } : undefined;
   return {
-    plugins: [react(), horizonApi(env)],
+    plugins: [react(), ...(apiUrl ? [] : [horizonApi(env)])],
     // The design tokens live in ../design/tokens.css and are imported directly, so the app
     // and the mock-ups always share one source of truth.
-    server: { fs: { allow: ['..'] } },
+    server: { fs: { allow: ['..'] }, proxy },
+    preview: { proxy },
   };
 });

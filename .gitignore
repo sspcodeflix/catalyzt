@@ -10,3 +10,4 @@ app/data/
 # Simulation workspace: team configs, backlogs and logs are kept; clones and test output are not.
 .myworkspace/*/repos/
 .myworkspace/*/results/
+server-dist/

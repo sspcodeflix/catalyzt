@@ -40,7 +40,7 @@ import { CAPABILITIES } from '../src/lib/intent';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
 import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
-import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type Role, type StoredStory } from './db';
+import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
 import { LocalBlobStore, type BlobStore } from './storage';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
@@ -134,7 +134,15 @@ function sse(res: ServerResponse) {
   };
 }
 
+/**
+ * Where the person comes from. `dev-picker` trusts the browser's x-horizon-user header (the
+ * "Sign in as" picker) and is for development only. `proxy-header` is for a shared deployment
+ * behind a sign-in proxy that sets a header with the signed-in email; browser-chosen ids are ignored.
+ */
+export type Identity = { mode: 'dev-picker' } | { mode: 'proxy-header'; header: string };
+
 export interface ApiOptions {
+  identity?: Identity;
   githubToken?: string;
   /** HEXA_INGEST_TOKEN: accepted for any application that has no token of its own. */
   ingestToken?: string;
@@ -251,9 +259,20 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       /* ---------- Who, and which application ---------- */
       if (db.isEmpty()) return send(res, 503, { error: 'No workspace is loaded, so Horizon has no people or applications. See SIMULATION_PLAN.md.' });
-      const userHeader = req.headers['x-horizon-user'];
-      const userId = (isStr(userHeader) ? userHeader : full.searchParams.get('_user')) ?? '';
-      const user = (userId && db.getUser(userId)) || db.defaultUser()!;
+      const identity: Identity = opts.identity ?? { mode: 'dev-picker' };
+      let user: PersonRecord;
+      if (identity.mode === 'proxy-header') {
+        const v = req.headers[identity.header.toLowerCase()];
+        const email = (Array.isArray(v) ? v[0] : v)?.trim().toLowerCase() ?? '';
+        if (!email) throw new HttpError(401, `Not signed in: the ${identity.header} header is missing. Horizon must be reached through the sign-in proxy.`);
+        const found = db.getUserByEmail(email);
+        if (!found) throw new HttpError(403, `${email} is not a member of this Horizon workspace.`);
+        user = found;
+      } else {
+        const userHeader = req.headers['x-horizon-user'];
+        const userId = (isStr(userHeader) ? userHeader : full.searchParams.get('_user')) ?? '';
+        user = (userId && db.getUser(userId)) || db.defaultUser()!;
+      }
       const apps = db.appsFor(user.id);
       const appHeader = req.headers['x-horizon-app'];
       const wantedApp = (isStr(appHeader) ? appHeader : full.searchParams.get('_app')) ?? '';
@@ -268,7 +287,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       };
 
       if (url === '/api/me' && req.method === 'GET') {
-        return send(res, 200, { user, apps, app: app ?? null, people: db.listPeople() });
+        // The people list exists only for the development picker; behind a proxy there is nobody to switch to.
+        return send(res, 200, { user, apps, app: app ?? null, people: identity.mode === 'dev-picker' ? db.listPeople() : [], identity: identity.mode === 'dev-picker' ? 'dev' : 'proxy' });
       }
       if (!app) throw new HttpError(403, `${user.name} is not a member of any application.`);
       const appId = app.id;

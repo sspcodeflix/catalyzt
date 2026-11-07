@@ -1,38 +1,42 @@
-# Overnight run: progress
+# Progress
 
-Plan: [SIMULATION_PLAN.md](SIMULATION_PLAN.md). Assignments: [.myworkspace/ASSIGNMENTS.md](.myworkspace/ASSIGNMENTS.md). Findings: ISSUES.md (written in phase 6).
+Two tracks share this repository: the overnight simulation plan ([SIMULATION_PLAN.md](SIMULATION_PLAN.md))
+and the development brief ([docs/CLAUDE_DEVELOPMENT_BRIEF.md](docs/CLAUDE_DEVELOPMENT_BRIEF.md)), which
+took over on 8 November 2026 with the finding list F01–F17. The finding-by-finding matrix is
+[docs/FINDINGS.md](docs/FINDINGS.md).
+
+## Brief stages
+
+| Stage | Status | Notes |
+|---|---|---|
+| A. Isolation, identity collisions, secret persistence, approval integrity | done | F01–F05, F13, F14. Commit `6b66a3b`. API test harness (`server/api-harness.ts`). |
+| B. HTTP/SSE contracts kept, standalone API, SQLite hardening, backups | done | `server/main.ts`, identity modes, `server/sqlite.test.ts`, `scripts/backup.ts`, `scripts/restore-check.ts`, `docs/DEPLOYMENT.md`, `docs/MIGRATION_NOTE.md`. |
+| C. Server-backed chats, ratings, approvals, scoped caches, attachments; readiness, scans, routing, CI ingestion | mostly done | F06–F10, F12, F15–F17 done. **Open: F11** (App Context and Huddle on the server with real extraction and retrieval; the low-rating → Huddle rule). |
+| D. Catalyzt branding, UI refinements, browser and keyboard verification, local production start | not started | Logo reference: `docs/brand/catalyzt-reference.png`. |
+
+## Simulation plan phases (paused while the brief is implemented)
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0. Decisions, initial commit | done | Commit `dc7f20f` on `main`, local only. DeepSeek key: not configured at start (see below). |
-| 1. Workspace, assignments, clones, backlogs, manual tests | in progress | Scaffold, personas, team configs and ASSIGNMENTS.md written; 5 repos cloned (shallow). Backlogs and manual tests being written by three agents, one per team, from the cloned repositories. |
-| 2. Remove dummy data; multi-app; roles; Sign in as | done | 124 unit tests and a 27-check browser smoke test pass; first real DeepSeek answer recorded (deepseek-v4-pro, 1,408 tokens). |
-| 3. Persist chats, App Context, Huddle; minimal feedback form | in progress | Server side of chat persistence done (see Handoff). App Context and Huddle: a background agent is moving them to the server; their placeholder seeds are already emptied. |
-| 4. Local CI runner; UAT readiness from real results; linking | not started | |
-| 5. Simulation: three team agents in parallel | not started | |
+| 0. Decisions, initial commit | done | `dc7f20f`, local only. |
+| 1. Workspace, assignments, clones, backlogs, manual tests | partial | IBGM backlog and manual tests committed (`f394ab5`). ABCD and WIMT backlog writers were stopped before they wrote anything; their backlogs are still to be written. |
+| 2. Remove dummy data; multi-app; roles; Sign in as | done | `c6f6b2b`. |
+| 3. Persist chats, App Context, Huddle; feedback form | chats done; context and Huddle open | See F11. |
+| 4. Local CI runner; UAT readiness from real results; linking | not started | Readiness against a target build (F06) and CI ingestion semantics (F17) are in place for it. |
+| 5. Simulation: three team agents in parallel | not started | Agents will use the Huddle API once F11 lands. |
 | 6. Fix, re-run, ISSUES.md, docs | not started | |
 
-## Blockers and notes
-- **DeepSeek key:** you added it to `app/.env` during phase 2, with `DEEPSEEK_MODEL=deepseek-v4-pro`. That model costs about four times deepseek-flash, so expect $8 to $15 for the night rather than $2 to $4. Setting `DEEPSEEK_INTENT_MODEL=deepseek-flash` would put the routing calls on the cheap model. The Agents page shows the actual spend.
-- **Application names:** decided during phase 2: ABCD is Ram's Portfolio, IBGM is Nabih's Portfolio, WIMT is Jacques's Portfolio. Workspaces are the repository names. No invented domain names anywhere.
+## Notes
+- **DeepSeek:** the key is in `app/.env` with `DEEPSEEK_MODEL=deepseek-v4-pro`. Tests and browser checks run without a key (rules routing), so they cost nothing.
+- **Application names:** ABCD is Ram's Portfolio, IBGM is Nabih's Portfolio, WIMT is Jacques's Portfolio; workspaces are repository names.
+- **Identity:** the "Sign in as" picker is development-only (`HORIZON_DEV_IDENTITY=1`); a shared deployment names people through the sign-in proxy's header (`HORIZON_IDENTITY_HEADER`).
 
-## Handoff: where phase 3 stands (for whoever continues, in this session or the next)
-
-Done, server side (committed as "Phase 3 WIP"):
-- `app/src/lib/answerReducer.ts`: one reducer turns workflow events into an answer; the browser renders with it and the server stores with it.
-- `POST /api/run` now reduces the events, saves the final answer as a revision (`answer_revisions`, `citations`, `artifacts`, `approvals` with ids) when the browser sends `chatId`, `messageId` and `answerId`, and emits a final `saved` event with the revision id and approval ids.
-- `GET /api/chats/:id` returns a chat with messages, latest revisions, my rating and approval states. `POST /api/answers/:revisionId/rating` stores a rating (below 4 stars needs a reason and a comment of 10+ characters). `POST /api/approvals/:id/decision` enforces the rating gate and the owner/component-manager rule server-side and carries out `add_uat_cases` itself.
-- `db.lowRatingPatterns(app)` finds low-rating reasons shared 3+ times in 7 days, for the feedback-pattern Huddle rule.
-
-Next, in order:
-1. `app/src/lib/chatStore.ts`: rewrite `runAnswer` on `applyEvent`/`answerBlocks`/`finishAnswer`; send `answerId` in the run request; keep reading events after `done` so the `saved` event arrives; add `loadChat(id)` from `GET /api/chats/:id`; make `rateAnswer` and `decideApproval` call the server (remove the client-side `carryOut`); drop the local rating gate in favour of the server's.
-2. `app/src/components/chat/AssistantTurn.tsx`: below 4 stars show a small feedback form (reasons per capability from DESIGN.md plus "what did you expect", 10+ characters) before the rating is sent; approvals need `approval.id` (saved) and a rating.
-3. `app/src/pages/Chat.tsx`: when a chat is not in memory, load it from the server; show a clear message when it does not exist in this application.
-4. When the App Context/Huddle agent reports: in the rating route, call `raiseHuddleItem` for each new low-rating pattern (kind `feedback`, raised by "Horizon"); in `server/workflow.ts`, call `retrieveContext(db, app, text)` before the specialist writes and add the chunks to the prompt as numbered sources, emitting them as citations.
-5. Smoke-test: reload keeps a chat; a second sign-in sees the same chat; rating gate and approval work from the database; Huddle and App Context start empty per portfolio.
-6. Commit "Phase 3", then phase 4 (local CI runner, linking UI, UAT from results) and phase 5 (the three team simulations).
-
-Background agents started in this session: three backlog writers (one per team) and the App Context/Huddle persistence agent. They belong to this conversation; a brand-new session would lose them. To change the model, use `/model` in this conversation and continue.
-
-## Commits
-- `dc7f20f` Horizon: design, React app, agent workflow, Hexa and docs
+## Commits (newest first)
+- Stage B: standalone API, identity modes, SQLite tests, backup and restore tooling, docs
+- `0e5ff56` F15 attachments; Hexa stale-scope guard
+- `2a9ebe4` F06, F12, F16, F17
+- `6b66a3b` Stage A and browser-side chat persistence (F01–F05, F07–F10, F13, F14)
+- `f394ab5` IBGM backlog and manual tests
+- `1f6e31f`, `1cf35bf` Phase 3 WIP; seeds emptied
+- `c6f6b2b` Phase 2
+- `dc7f20f` Initial

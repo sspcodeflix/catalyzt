@@ -21,9 +21,28 @@ python3 render.py                # writes design/screenshots/
 From the repo root (or from `app/`):
 ```bash
 npm install                      # installs app/ and design/
-npm run dev                      # http://localhost:5173
+npm run dev                      # http://localhost:5173 (API inside the Vite dev server)
 npm run build                    # type-checks, then builds to app/dist/
 ```
+
+### Run it as a service (no Vite)
+```bash
+cd app
+npm run build && npm run build:api            # dist/ and server-dist/main.mjs
+HORIZON_IDENTITY_HEADER=x-forwarded-email npm start   # behind a sign-in proxy
+HORIZON_DEV_IDENTITY=1 npm start                      # or: the development "Sign in as" picker
+```
+One host, one process, one SQLite file. Environment, data paths, backups and upgrades are in
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md); `npm run backup` and `npm run restore-check` are the
+backup tools. The future-migration note is [docs/MIGRATION_NOTE.md](docs/MIGRATION_NOTE.md).
+
+### Tests
+```bash
+cd app
+npm test                         # unit and API tests (vitest)
+./e2e/run.sh                     # browser checks (Playwright for Python) against a throwaway server
+```
+The review findings and what fixed them: [docs/FINDINGS.md](docs/FINDINGS.md).
 
 ### Connect DeepSeek (optional)
 ```bash

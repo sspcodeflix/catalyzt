@@ -9,7 +9,13 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "api": "vite-node server/main.ts",
+    "build:api": "esbuild server/main.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outfile=server-dist/main.mjs --sourcemap",
+    "start": "node server-dist/main.mjs",
+    "backup": "vite-node scripts/backup.ts",
+    "restore-check": "vite-node scripts/restore-check.ts",
+    "validate-workspace": "vite-node scripts/validate-workspace.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

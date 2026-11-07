@@ -451,6 +451,29 @@ describe('F15: attachments are stored, scoped, and readable only when they reall
   });
 });
 
+describe('identity behind a sign-in proxy', () => {
+  it('takes the person from the proxy header, ignores browser-chosen ids, and offers nobody to switch to', async () => {
+    const proxied = await startApi(db, null, { identity: { mode: 'proxy-header', header: 'x-forwarded-email' } });
+    try {
+      const call = (headers: Record<string, string>) => fetch(`${proxied.url}/api/me`, { headers });
+      expect((await call({})).status).toBe(401);
+      expect((await call({ 'x-horizon-user': 'u-ram' })).status).toBe(401);
+      expect((await call({ 'x-forwarded-email': 'stranger@example.com' })).status).toBe(403);
+      const me = (await (await call({ 'x-forwarded-email': 'Sourav@Example.com', 'x-horizon-user': 'u-ram' })).json()) as { user: { id: string }; people: unknown[]; identity: string };
+      expect(me.user.id).toBe('u-sourav');
+      expect(me.people).toEqual([]);
+      expect(me.identity).toBe('proxy');
+      // A run is written under the proxied person, whatever the browser claims.
+      const res = await fetch(`${proxied.url}/api/run`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-email': 'sourav@example.com', 'x-horizon-user': 'u-ram', 'x-horizon-app': 'ABCD' }, body: JSON.stringify(uatRun('ABCD-1001', ids('p1'))) });
+      expect(res.status).toBe(200);
+      await res.text();
+      expect(db.getChat('cp1')?.createdBy).toBe('u-sourav');
+    } finally {
+      await proxied.close();
+    }
+  });
+});
+
 describe('F05: a rejected secret is nowhere in the database', () => {
   it('stores neither the message, nor a title or metadata derived from it', async () => {
     const sourav = api.as('u-sourav', 'ABCD');

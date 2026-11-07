@@ -42,8 +42,10 @@ export interface Me {
   apps: AppInfo[];
   /** The application the session is looking at. */
   app: AppInfo | null;
-  /** Everyone in the workspace, for the POC "Sign in as" picker. */
+  /** Everyone in the workspace, for the development "Sign in as" picker; empty behind a sign-in proxy. */
   people: (Person & { apps: { id: string; role: string }[] })[];
+  /** dev: the browser picks the person; proxy: the sign-in proxy names them. */
+  identity?: 'dev' | 'proxy';
 }
 
 interface SessionState {

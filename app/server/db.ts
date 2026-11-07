@@ -428,6 +428,10 @@ export function openDb(path: string) {
 
     /* ---------- People and applications ---------- */
     getUser,
+    /** The person a sign-in proxy names by email. */
+    getUserByEmail(email: string) {
+      return db.prepare('SELECT id, name, initials, email FROM users WHERE lower(email) = lower(?)').get(email.trim()) as PersonRecord | undefined;
+    },
     rolesFor,
     getApp,
     listComponents,
