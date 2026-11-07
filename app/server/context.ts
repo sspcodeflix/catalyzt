@@ -1,0 +1,728 @@
+/**
+ * App Context, server side: what Horizon knows about one application and where it came from.
+ *
+ * Sources are real: repositories from the workspace (their documentation is read from the local
+ * clone and split into passages), the Jira feed, and what the team uploads (text formats are
+ * read and split; other formats are kept and marked "stored, not readable"). Retrieval ranks
+ * passages by keyword overlap; there are no embeddings in this build, and nothing says there are.
+ * Confluence and an Enterprise Knowledge Fabric are not connected, and the API says so.
+ *
+ * A source that disagrees with a higher-trust source goes to review: its passages are excluded
+ * until an application owner decides the conflict in Huddle.
+ */
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
+import type { AppRecord, HorizonDb, PersonRecord } from './db';
+import { createItem } from './huddle';
+import type { BlobStore } from './storage';
+import type { Workspace } from './workspace';
+
+/** Thrown for a request the caller got wrong; the route layer turns it into that HTTP status. */
+export class RequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export const MAX_UPLOAD_MB = MAX_ATTACHMENT_BYTES / 1024 / 1024;
+/** Documentation files read from a clone, and how much of it. */
+const MAX_DOC_FILES = 60;
+const MAX_DOC_BYTES = 512 * 1024;
+const MAX_CHUNKS_PER_SOURCE = 400;
+const MIN_CHUNK_CHARS = 40;
+const TARGET_CHUNK_CHARS = 900;
+
+export type SourceType = 'Repository' | 'Jira' | 'Confluence' | 'Text' | 'PDF' | 'Word' | 'Image' | 'ZIP' | 'File';
+/** Trust order: Confluence > Jira > code > team uploads. There is no Fabric here. */
+export type Trust = 'High' | 'Tickets' | 'Code' | 'Team upload';
+export type SourceStatus = 'ready' | 'indexed' | 'review' | 'processing' | 'failed' | 'stored';
+export type ScopeKind = 'app' | 'workspace' | 'chat';
+
+const TRUST_RANK: Record<Trust, number> = { High: 4, Tickets: 3, Code: 2, 'Team upload': 1 };
+
+export interface SourceView {
+  id: string;
+  type: SourceType;
+  title: string;
+  sub: string;
+  /** 'App' for the whole application, otherwise the workspace name. */
+  scope: string;
+  trust: Trust;
+  status: SourceStatus;
+  content: string;
+  /** Why a source is not readable, or what to know about it. */
+  note: string | null;
+  /** Rows that open somewhere other than the source panel (Jira opens the ticket list). */
+  href: string | null;
+  addedBy: string | null;
+  size: number | null;
+  mime: string | null;
+  /** Bumps when the indexed text changes; citations carry it. */
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  syncedAt: string | null;
+  chunks: number;
+  excludedChunks: number;
+  /** The open conflict this source is in, if any. */
+  conflictId: string | null;
+}
+
+export interface ChunkView {
+  id: string;
+  seq: number;
+  locator: string;
+  text: string;
+  excludedReason: string | null;
+}
+
+export interface CompareRow {
+  label: string;
+  value: string;
+  where: string;
+}
+
+export interface ConflictView {
+  id: string;
+  sourceId: string;
+  sourceTitle: string;
+  otherSourceId: string;
+  otherTitle: string;
+  huddleItemId: string | null;
+  title: string;
+  detail: string;
+  compare: CompareRow[];
+  status: 'open' | 'resolved';
+  resolution: 'keep_higher' | 'use_upload' | null;
+  createdAt: string;
+}
+
+export interface RankedChunk {
+  chunkId: string | null;
+  sourceId: string | null;
+  sourceTitle: string;
+  where: string;
+  text: string;
+  /** 0 to 1, relevance to the question, not correctness. */
+  relevance: number;
+  used: boolean;
+  reason: string | null;
+  href: string | null;
+}
+
+/** A passage an answer may cite. */
+export interface ContextPassage {
+  chunkId: string;
+  sourceId: string;
+  sourceTitle: string;
+  sourceType: SourceType;
+  version: number;
+  locator: string;
+  text: string;
+  href: string;
+}
+
+type Row = Record<string, unknown>;
+const iso = (ms: number) => new Date(ms).toISOString();
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+const nullable = (v: unknown) => (typeof v === 'string' ? v : null);
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+
+export const repoSourceId = (app: string, repo: string) => `${app}-repo-${repo}`;
+export const jiraSourceId = (app: string) => `${app}-jira`;
+export const sourceHref = (sourceId: string) => `/context/source/${encodeURIComponent(sourceId)}`;
+export const chunkHref = (sourceId: string, seq: number) => `${sourceHref(sourceId)}#chunk-${seq}`;
+
+/* ---------- Reading ---------- */
+
+const SELECT = `
+  SELECT s.*, u.name AS added_by,
+    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id) AS chunk_count,
+    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id AND c.excluded_reason IS NOT NULL) AS excluded,
+    (SELECT k.id FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' ORDER BY k.created_at LIMIT 1) AS conflict_id
+  FROM context_sources s LEFT JOIN users u ON u.id = s.created_by`;
+
+function toView(r: Row): SourceView {
+  return {
+    id: str(r.id),
+    type: r.type as SourceType,
+    title: str(r.title),
+    sub: str(r.subtitle),
+    scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
+    trust: r.trust as Trust,
+    status: r.status as SourceStatus,
+    content: str(r.content),
+    note: nullable(r.note),
+    href: nullable(r.href),
+    addedBy: nullable(r.added_by),
+    size: r.size_bytes == null ? null : Number(r.size_bytes),
+    mime: nullable(r.mime),
+    version: Number(r.version ?? 1),
+    createdAt: str(r.created_at),
+    updatedAt: str(r.updated_at),
+    syncedAt: nullable(r.synced_at),
+    chunks: Number(r.chunk_count ?? 0),
+    excludedChunks: Number(r.excluded ?? 0),
+    conflictId: nullable(r.conflict_id),
+  };
+}
+
+export function listSources(db: HorizonDb, app: string): SourceView[] {
+  return (db.raw.prepare(`${SELECT} WHERE s.application_id = ? ORDER BY s.created_at DESC, s.rowid DESC`).all(app) as Row[]).map(toView);
+}
+
+/** A source of this application, or null (a source of another application is not found either). */
+export function getSource(db: HorizonDb, app: string, id: string): SourceView | null {
+  const r = db.raw.prepare(`${SELECT} WHERE s.application_id = ? AND s.id = ?`).get(app, id) as Row | undefined;
+  return r ? toView(r) : null;
+}
+
+export function listChunks(db: HorizonDb, app: string, sourceId: string): ChunkView[] {
+  return (db.raw.prepare('SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ? AND c.source_id = ? ORDER BY c.seq, c.rowid').all(app, sourceId) as Row[]).map((c) => ({
+    id: str(c.id),
+    seq: Number(c.seq),
+    locator: str(c.locator),
+    text: str(c.text),
+    excludedReason: nullable(c.excluded_reason),
+  }));
+}
+
+function mustGet(db: HorizonDb, app: string, id: string) {
+  const s = getSource(db, app, id);
+  if (!s) throw new RequestError(404, 'This source does not exist in this application.');
+  return s;
+}
+
+/* ---------- Text into passages ---------- */
+
+export interface Doc {
+  /** Relative path, used in locators. */
+  path: string;
+  text: string;
+}
+
+/**
+ * Splits documents into passages: paragraphs (blank-line separated), short ones merged with the
+ * next up to about 900 characters, anything under 40 characters dropped. Locators are
+ * "<path> ¶<n>" so a citation can be opened at the passage.
+ */
+export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: string; text: string }[] {
+  const out: { locator: string; text: string }[] = [];
+  for (const d of docs) {
+    let n = 0;
+    let buf = '';
+    const flush = () => {
+      const t = buf.replace(/\s+/g, ' ').trim();
+      buf = '';
+      if (t.length < MIN_CHUNK_CHARS) return;
+      n++;
+      out.push({ locator: `${d.path} ¶${n}`, text: t.length > 2000 ? `${t.slice(0, 1997)}…` : t });
+    };
+    for (const para of d.text.split(/\r?\n\s*\r?\n/)) {
+      const p = para.trim();
+      if (!p) continue;
+      if (buf && buf.length + p.length > TARGET_CHUNK_CHARS) flush();
+      buf = buf ? `${buf}\n${p}` : p;
+      if (buf.length >= TARGET_CHUNK_CHARS) flush();
+      if (out.length >= max) return out;
+    }
+    flush();
+    if (out.length >= max) return out;
+  }
+  return out;
+}
+
+const DOC_NAME = /^(readme|changelog|changes|contributing|architecture|design|security|testing|api)(\.|$)/i;
+const DOC_EXT = /\.(md|markdown|rst|txt|proto)$/i;
+const SPEC_NAME = /(openapi|swagger)[^/]*\.(ya?ml|json)$/i;
+const SKIP_DIR = /^(node_modules|vendor|third_party|dist|build|out|target|\.git|\.github|\.venv|venv|site-packages)$/;
+
+/** Documentation worth indexing in a clone: top-level READMEs and the like, docs/ markdown, protos, API specs. */
+export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
+  const found: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    if (found.length >= maxFiles || depth > 4) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      if (found.length >= maxFiles) return;
+      const p = join(dir, name);
+      let st;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        if (!SKIP_DIR.test(name)) walk(p, depth + 1);
+        continue;
+      }
+      if (st.size === 0 || st.size > MAX_DOC_BYTES) continue;
+      const rel = relative(cloneDir, p);
+      const top = depth === 0;
+      const inDocs = /^docs?\//i.test(rel);
+      const isDoc = (DOC_NAME.test(name) && (DOC_EXT.test(name) || !name.includes('.'))) || (DOC_EXT.test(name) && (top || inDocs || /\.proto$/i.test(name))) || SPEC_NAME.test(name);
+      if (isDoc) found.push(p);
+    }
+  };
+  walk(cloneDir, 0);
+  return found
+    .map((p) => {
+      const buf = readFileSync(p);
+      if (buf.subarray(0, 4000).includes(0)) return null;
+      return { path: relative(cloneDir, p), text: buf.toString('utf8') };
+    })
+    .filter((d): d is Doc => !!d);
+}
+
+/**
+ * Replaces a source's passages, keeping exclusions by locator so a decided conflict survives a
+ * re-index. The version bumps only when the text actually changed. Returns the chunk count.
+ */
+function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string; text: string }[], at: number): { chunks: number; version: number; changed: boolean } {
+  const digest = sha(chunks.map((c) => `${c.locator}\n${c.text}`).join('\n\u0000'));
+  const cur = db.raw.prepare('SELECT version, sha256 FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null };
+  const changed = cur.sha256 !== digest;
+  const version = cur.sha256 && changed ? cur.version + 1 : cur.version;
+  db.raw.transaction(() => {
+    const kept = new Map((db.raw.prepare('SELECT locator, excluded_reason FROM source_chunks WHERE source_id = ? AND excluded_reason IS NOT NULL').all(sourceId) as Row[]).map((r) => [str(r.locator), str(r.excluded_reason)]));
+    db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ?').run(sourceId);
+    const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    chunks.forEach((c, i) => ins.run(`${sourceId}#${i + 1}`, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length));
+    db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
+  })();
+  return { chunks: chunks.length, version, changed };
+}
+
+/* ---------- Seeding from the workspace ---------- */
+
+const jiraSubtitle = (db: HorizonDb, app: string) => {
+  const f = db.getFilter(app);
+  return `filter: project = ${f.project} AND status in (${f.statuses.map((s) => `"${s}"`).join(', ')}) · synced every ${f.everyMinutes} min`;
+};
+
+const UPSERT = `
+  INSERT INTO context_sources (id, application_id, scope_type, scope_ref, type, title, subtitle, trust, status, stage, content, note, href, location, created_by, created_at, updated_at, synced_at)
+  VALUES (@id, @app, 'app', NULL, @type, @title, @subtitle, @trust, @status, NULL, @content, @note, @href, @location, NULL, @at, @at, @at)
+  ON CONFLICT(id) DO UPDATE SET title = excluded.title, subtitle = excluded.subtitle, status = CASE WHEN context_sources.status = 'review' THEN 'review' ELSE excluded.status END,
+    content = excluded.content, note = excluded.note, href = excluded.href, location = excluded.location, updated_at = excluded.updated_at, synced_at = excluded.synced_at`;
+
+const describeDocs = (files: number, chunks: number) => (chunks ? `${chunks} passage${chunks === 1 ? '' : 's'} from ${files} documentation file${files === 1 ? '' : 's'}` : 'No documentation found to index');
+
+/**
+ * Seeds one Repository source per team repo (its documentation indexed from the clone when there
+ * is one) and one Jira source per application. Idempotent: rows are updated in place, passages are
+ * re-read on every seed so edits are picked up, decided exclusions are kept. Nothing is removed.
+ */
+export function seedContext(db: HorizonDb, ws: Workspace, at = Date.now()) {
+  const counts = { repos: 0, indexed: 0, chunks: 0, jira: 0 };
+  const upsert = db.raw.prepare(UPSERT);
+  for (const team of ws.teams) {
+    if (!db.getApp(team.id)) continue;
+    for (const repo of team.repos) {
+      const cloneDir = join(team.dir, 'repos', repo.name);
+      const cloned = repo.clone && existsSync(cloneDir);
+      const id = repoSourceId(team.id, repo.name);
+      const parts = [repo.languages.length ? `Languages: ${repo.languages.join(', ')}` : '', repo.testFrameworks.length ? `Tests: ${repo.testFrameworks.join(', ')}` : ''].filter(Boolean);
+      const docs = cloned ? collectDocs(cloneDir) : [];
+      const chunks = chunkDocs(docs);
+      upsert.run({
+        id,
+        app: team.id,
+        type: 'Repository',
+        title: repo.name,
+        subtitle: `GitHub · ${repo.github}${parts.length ? ` · ${parts.join(' · ')}` : ''}`,
+        trust: 'Code',
+        status: cloned ? 'indexed' : 'ready',
+        content: cloned ? describeDocs(docs.length, chunks.length) : 'Not indexed',
+        note: cloned ? (repo.note ?? null) : ['Scanned through GitHub only; there is no local clone to index.', repo.note].filter(Boolean).join(' '),
+        href: null,
+        location: cloned ? cloneDir : null,
+        at: iso(at),
+      });
+      counts.repos++;
+      if (cloned) {
+        counts.indexed++;
+        counts.chunks += indexSource(db, id, chunks, at).chunks;
+      }
+    }
+    upsert.run({
+      id: jiraSourceId(team.id),
+      app: team.id,
+      type: 'Jira',
+      title: `Jira · project ${team.jiraProject}`,
+      subtitle: jiraSubtitle(db, team.id),
+      trust: 'Tickets',
+      status: 'ready',
+      content: `${db.listStories(team.id).length} tickets in the filter`,
+      note: 'Stories are retrieved live from the Jira feed; they are not split into passages here.',
+      href: '/tickets',
+      location: null,
+      at: iso(at),
+    });
+    counts.jira++;
+  }
+  return counts;
+}
+
+/* ---------- Adding context ---------- */
+
+interface Scope {
+  kind: ScopeKind;
+  ref: string | null;
+}
+
+function scopeOf(app: AppRecord, kind: unknown, workspace: unknown): Scope {
+  if (kind === 'chat') throw new RequestError(400, 'Files for one chat go with the message: use the attach button in the composer.');
+  if (kind !== 'app' && kind !== 'workspace') throw new RequestError(400, 'scope must be app or workspace.');
+  if (kind !== 'workspace') return { kind, ref: null };
+  if (typeof workspace !== 'string' || !app.workspaces.includes(workspace)) {
+    throw new RequestError(400, `Choose one of this application's workspaces: ${app.workspaces.join(', ')}.`);
+  }
+  return { kind, ref: workspace };
+}
+
+export const scopeLabel = (app: AppRecord, scope: string) => `${app.name} · ${scope === 'App' ? 'whole app' : scope}`;
+
+const typeForUpload = (name: string, readable: boolean): SourceType => {
+  const e = name.split('.').pop()?.toLowerCase() ?? '';
+  if (readable) return 'Text';
+  if (e === 'pdf') return 'PDF';
+  if (e === 'doc' || e === 'docx') return 'Word';
+  if (e === 'png' || e === 'jpg' || e === 'jpeg') return 'Image';
+  if (e === 'zip') return 'ZIP';
+  return 'File';
+};
+
+export interface UploadInput {
+  filename: string;
+  data: Buffer;
+}
+
+/**
+ * Stores uploads for an application or one of its workspaces. Text formats are read and split
+ * into passages at once (status ready); other formats are kept with their bytes and marked
+ * stored, with the reason they cannot be read. Returns one message per refused file.
+ */
+export async function addUploads(db: HorizonDb, store: BlobStore, app: AppRecord, user: PersonRecord, files: UploadInput[], kind: unknown, workspace: unknown, at = Date.now()) {
+  const scope = scopeOf(app, kind, workspace);
+  if (files.length === 0) throw new RequestError(400, 'Choose at least one file.');
+  if (files.length > 10) throw new RequestError(400, 'Add at most 10 files at a time.');
+  const errors: string[] = [];
+  const sources: SourceView[] = [];
+  for (const f of files) {
+    const name = f.filename.replace(/[\\/]/g, '_').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 200) || 'file';
+    if (f.data.length === 0) {
+      errors.push(`${name}: the file is empty.`);
+      continue;
+    }
+    if (f.data.length > MAX_ATTACHMENT_BYTES) {
+      errors.push(`${name} is over the ${MAX_UPLOAD_MB} MB limit.`);
+      continue;
+    }
+    const id = `src-${randomUUID().slice(0, 8)}`;
+    const key = `${app.id}/${id}`;
+    const { text, mime, status, note } = extractText(name, f.data);
+    try {
+      await store.put(key, f.data);
+    } catch (e) {
+      errors.push(`${name}: could not be stored (${(e as Error).message}).`);
+      continue;
+    }
+    const chunks = text ? chunkDocs([{ path: name, text }]) : [];
+    const type = typeForUpload(name, status === 'ready');
+    db.raw.transaction(() => {
+      db.raw
+        .prepare(
+          `INSERT INTO context_sources (id, application_id, scope_type, scope_ref, type, title, subtitle, trust, status, stage, content, note, href, location, size_bytes, created_by, created_at, updated_at, synced_at, storage_key, mime)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'Team upload', ?, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, ?, ?)`,
+        )
+        .run(id, app.id, scope.kind, scope.ref, type, name, `${type === 'Text' ? 'Upload' : `${type} upload`} · ${user.name}`, status === 'ready' ? 'ready' : 'stored', status === 'ready' ? `${chunks.length} passage${chunks.length === 1 ? '' : 's'}` : 'Kept, not readable', note, f.data.length, user.id, iso(at), iso(at), key, mime);
+      db.audit('user', user.id, 'context.upload', 'context_source', id, { app: app.id, filename: name, status, size: f.data.length });
+    })();
+    if (chunks.length) indexSource(db, id, chunks, at);
+    sources.push(getSource(db, app.id, id)!);
+  }
+  return { sources, errors, notice: sources.length ? `Added ${sources.map((s) => s.title).join(', ')}.` : '' };
+}
+
+/** Confluence is not connected in this build; this says so instead of pretending. */
+export function addConfluence(): never {
+  throw new RequestError(501, 'Confluence is not connected in this build. Export the page as Markdown or text and upload it, so Horizon can read it.');
+}
+
+/** Re-syncs a source: a repository re-reads its documentation, Jira records the sync. Uploads have nothing to sync. */
+export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now()) {
+  const s = mustGet(db, app, id);
+  const location = (db.raw.prepare('SELECT location FROM context_sources WHERE id = ?').get(id) as { location: string | null }).location;
+  let notice: string;
+  if (s.type === 'Repository') {
+    if (!location || !existsSync(location)) notice = `${s.title} is scanned through GitHub only; there is nothing local to re-index.`;
+    else {
+      const docs = collectDocs(location);
+      const r = indexSource(db, id, chunkDocs(docs), at);
+      db.raw.prepare('UPDATE context_sources SET content = ? WHERE id = ?').run(describeDocs(docs.length, r.chunks), id);
+      notice = `${s.title} synced: ${r.chunks} passage${r.chunks === 1 ? '' : 's'}${r.changed ? `, now version ${r.version}` : ', unchanged'}.`;
+    }
+  } else if (s.type === 'Jira') {
+    db.markSynced(app);
+    db.raw.prepare('UPDATE context_sources SET subtitle = ?, content = ? WHERE id = ?').run(jiraSubtitle(db, app), `${db.listStories(app).length} tickets in the filter`, id);
+    notice = `${s.title} synced.`;
+  } else {
+    throw new RequestError(400, `${s.title} is an upload and has nothing to sync. Upload a new version instead.`);
+  }
+  db.raw.prepare('UPDATE context_sources SET synced_at = ?, updated_at = ? WHERE id = ?').run(iso(at), iso(at), id);
+  return { source: getSource(db, app, id)!, notice };
+}
+
+/* ---------- Retrieval ---------- */
+
+/** Words that carry no meaning for matching; without them "the" alone would make any passage relevant. */
+const STOP = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'why', 'did', 'does', 'get', 'got', 'let', 'say', 'she', 'too', 'use', 'with', 'this', 'that', 'what', 'when', 'where', 'which', 'while', 'from', 'into', 'than', 'then', 'them', 'they', 'their', 'there', 'these', 'those', 'will', 'would', 'should', 'could', 'about', 'after', 'before', 'being', 'been', 'were', 'your', 'ours', 'also', 'just', 'like', 'over', 'such', 'only', 'other', 'some', 'very', 'each', 'make', 'made', 'most', 'much', 'many', 'more', 'here', 'please', 'show', 'tell', 'give', 'need', 'want', 'know', 'does', 'is', 'it', 'in', 'on', 'of', 'to', 'be', 'as', 'at', 'by', 'or', 'an', 'if', 'do', 'so', 'we', 'he', 'me', 'my', 'no', 'up', 'us']);
+const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g)?.filter((w) => w.length > 2 && !STOP.has(w)) ?? [];
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+function exclusionReason(r: Row): string | null {
+  if (r.excluded_reason) return `Excluded: ${lowerFirst(str(r.excluded_reason))}`;
+  if (r.conflicted) return 'Excluded: unresolved conflict';
+  if (r.status === 'processing') return 'Excluded: not ready';
+  if (r.status === 'failed') return 'Excluded: the source failed';
+  if (r.status === 'stored') return 'Excluded: not readable';
+  if (r.status === 'review') return 'Excluded: needs review';
+  return null;
+}
+
+interface Cand {
+  chunkId: string | null;
+  sourceId: string | null;
+  sourceTitle: string;
+  sourceType: SourceType;
+  version: number;
+  locator: string;
+  where: string;
+  text: string;
+  reason: string | null;
+  href: string | null;
+  scope: string;
+}
+
+function candidates(db: HorizonDb, app: string): Cand[] {
+  const rows = db.raw
+    .prepare(
+      `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
+         (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted
+       FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ?`,
+    )
+    .all(app) as Row[];
+  return rows.map((r) => ({
+    chunkId: str(r.id),
+    sourceId: str(r.sid),
+    sourceTitle: str(r.title),
+    sourceType: r.type as SourceType,
+    version: Number(r.version ?? 1),
+    locator: str(r.locator),
+    where: `${str(r.title)} · ${str(r.locator)}`,
+    text: str(r.text),
+    reason: exclusionReason(r),
+    href: chunkHref(str(r.sid), Number(r.seq)),
+    scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
+  }));
+}
+
+function score(qw: Set<string>, c: { where: string; text: string }) {
+  const cw = words(`${c.where} ${c.text}`);
+  if (cw.length === 0) return 0;
+  const hits = cw.filter((w) => qw.has(w));
+  const matched = new Set(hits).size;
+  return matched ? 0.7 * (matched / qw.size) + 0.3 * Math.min(1, hits.length / Math.sqrt(cw.length)) : 0;
+}
+
+/**
+ * "Test a question": the top passages for a question, including the ones Horizon would not use
+ * and why, plus Jira stories and Hexa test titles so the person sees everything considered.
+ */
+export function testQuestion(db: HorizonDb, app: AppRecord, question: string) {
+  const qw = new Set(words(question));
+  const cands: Cand[] = candidates(db, app.id);
+  const stories = db.listStories(app.id);
+  for (const s of stories) cands.push({ chunkId: null, sourceId: jiraSourceId(app.id), sourceTitle: 'Jira', sourceType: 'Jira', version: 1, locator: s.key, where: `Jira · ${s.key}`, text: [s.summary, ...s.acceptanceCriteria].join(' '), reason: null, href: `/tickets/${s.key}`, scope: 'App' });
+  const tests = db.listTests(app.id, { limit: 200 }).rows;
+  for (const t of tests) cands.push({ chunkId: null, sourceId: null, sourceTitle: 'Hexa', sourceType: 'File', version: 1, locator: t.id, where: `Hexa · ${t.id}`, text: t.suite ? `${t.title} (${t.suite})` : t.title, reason: null, href: `/hexa/test/${t.id}`, scope: 'App' });
+  const considered = { passages: cands.filter((c) => c.chunkId).length, stories: stories.length, tests: tests.length };
+  if (qw.size === 0) return { results: [] as RankedChunk[], considered };
+  const results: RankedChunk[] = cands
+    .map((c) => ({ c, score: score(qw, c) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.c.where.localeCompare(b.c.where))
+    .slice(0, 5)
+    .map(({ c, score: sc }) => ({ chunkId: c.chunkId, sourceId: c.sourceId, sourceTitle: c.sourceTitle, where: c.where, text: c.text, relevance: Math.round(Math.min(1, sc) * 100) / 100, used: !c.reason, reason: c.reason, href: c.href }));
+  return { results, considered };
+}
+
+/**
+ * The passages an answer may use for a request: usable ones only (no excluded, review, stored or
+ * failed sources), scoped to the whole application or the given workspace, best first. Empty when
+ * nothing clears the relevance bar, so the specialist is not fed noise.
+ */
+export function retrieveContext(db: HorizonDb, app: string, query: string, opts: { limit?: number; workspace?: string | null; minRelevance?: number } = {}): ContextPassage[] {
+  const qw = new Set(words(query));
+  if (qw.size === 0) return [];
+  const limit = opts.limit ?? 4;
+  const min = opts.minRelevance ?? 0.2;
+  return candidates(db, app)
+    .filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace))
+    .map((c) => ({ c, score: score(qw, c) }))
+    .filter((x) => x.score >= min)
+    .sort((a, b) => b.score - a.score || a.c.where.localeCompare(b.c.where))
+    .slice(0, limit)
+    .map(({ c }) => ({ chunkId: c.chunkId!, sourceId: c.sourceId!, sourceTitle: c.sourceTitle, sourceType: c.sourceType, version: c.version, locator: c.locator, text: c.text, href: c.href! }));
+}
+
+/* ---------- Conflicts ---------- */
+
+function toConflict(r: Row): ConflictView {
+  let compare: CompareRow[] = [];
+  try {
+    compare = JSON.parse(str(r.compare) || '[]') as CompareRow[];
+  } catch {
+    compare = [];
+  }
+  return {
+    id: str(r.id),
+    sourceId: str(r.source_id),
+    sourceTitle: str(r.source_title),
+    otherSourceId: str(r.other_source_id),
+    otherTitle: str(r.other_title),
+    huddleItemId: nullable(r.huddle_item_id),
+    title: str(r.title),
+    detail: str(r.detail),
+    compare,
+    status: r.status as ConflictView['status'],
+    resolution: (nullable(r.resolution) as ConflictView['resolution']) ?? null,
+    createdAt: str(r.created_at),
+  };
+}
+
+const CONFLICT_SELECT = `
+  SELECT k.*, s.title AS source_title, o.title AS other_title FROM conflicts k
+  JOIN context_sources s ON s.id = k.source_id LEFT JOIN context_sources o ON o.id = k.other_source_id`;
+
+export function listConflicts(db: HorizonDb, app: string, status: 'open' | 'all' = 'open'): ConflictView[] {
+  const rows = db.raw.prepare(`${CONFLICT_SELECT} WHERE s.application_id = ? ${status === 'open' ? "AND k.status = 'open'" : ''} ORDER BY k.created_at DESC`).all(app) as Row[];
+  return rows.map(toConflict);
+}
+
+export function getConflict(db: HorizonDb, app: string, id: string): ConflictView | null {
+  const r = db.raw.prepare(`${CONFLICT_SELECT} WHERE s.application_id = ? AND k.id = ?`).get(app, id) as Row | undefined;
+  return r ? toConflict(r) : null;
+}
+
+export interface ConflictInput {
+  sourceId: string;
+  otherSourceId: string;
+  title: string;
+  detail: string;
+  compare: Partial<CompareRow>[];
+}
+
+const finalStatus = (type: SourceType): SourceStatus => (type === 'Repository' ? 'indexed' : 'ready');
+
+/**
+ * Raises a conflict between a source and a higher-trust source. The source goes to review with
+ * its passages excluded (plus one passage for the disputed claim, so a question shows it), and a
+ * Huddle item of kind conflict is created with two options: keep the higher-trust source, or use
+ * the upload. Deciding the item resolves the conflict.
+ */
+export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord, input: ConflictInput, at = Date.now()) {
+  const source = mustGet(db, app.id, str(input.sourceId));
+  const other = getSource(db, app.id, str(input.otherSourceId));
+  if (!other) throw new RequestError(400, 'Choose the higher-trust source this one disagrees with.');
+  if (other.id === source.id) throw new RequestError(400, 'A source cannot conflict with itself.');
+  if (TRUST_RANK[other.trust] <= TRUST_RANK[source.trust]) throw new RequestError(400, `${other.title} (${other.trust}) does not rank above ${source.title} (${source.trust}); a conflict is always with a higher-trust source.`);
+  if (source.status === 'processing' || source.status === 'failed' || source.status === 'stored') throw new RequestError(400, `${source.title} is ${source.status === 'stored' ? 'not readable' : source.status}; a conflict can only be raised on a readable source.`);
+  if (source.conflictId) throw new RequestError(409, `${source.title} already has an open conflict. Decide it in Huddle first.`);
+  const title = str(input.title).trim().slice(0, 200);
+  if (!title) throw new RequestError(400, 'Say what the conflict is about (title).');
+  const detail = str(input.detail).trim().slice(0, 2000);
+  const rows = Array.isArray(input.compare) ? input.compare : [];
+  const compare: CompareRow[] = [source, other].map((s, i) => {
+    const c = (rows[i] ?? {}) as Partial<CompareRow>;
+    return { label: str(c.label).trim().slice(0, 120) || s.title, value: str(c.value).trim().slice(0, 300), where: str(c.where).trim().slice(0, 200) };
+  });
+  if (!compare[0].value || !compare[1].value) throw new RequestError(400, 'Give what each source says (two compare rows with a value).');
+
+  const id = `cf-${randomUUID().slice(0, 8)}`;
+  const reason = `Unresolved conflict with ${other.title}`;
+  let itemId = '';
+  db.raw.transaction(() => {
+    const claimLocator = compare[0].where || 'disputed claim';
+    const exists = db.raw.prepare('SELECT 1 FROM source_chunks WHERE source_id = ? AND text = ?').get(source.id, compare[0].value);
+    if (!exists) {
+      const { n } = db.raw.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM source_chunks WHERE source_id = ?').get(source.id) as { n: number };
+      db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)').run(`${source.id}#${n}`, source.id, claimLocator, compare[0].value, n, source.version, compare[0].value.length);
+    }
+    db.raw.prepare('UPDATE source_chunks SET excluded_reason = ? WHERE source_id = ?').run(reason, source.id);
+    db.raw.prepare("UPDATE context_sources SET status = 'review', updated_at = ? WHERE id = ?").run(iso(at), source.id);
+    db.raw
+      .prepare('INSERT INTO conflicts (id, source_id, other_source_id, summary, huddle_item_id, status, title, detail, compare, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)')
+      .run(id, source.id, other.id, detail || title, 'open', title, detail, JSON.stringify(compare), iso(at));
+    const excluded = (db.raw.prepare('SELECT COUNT(*) AS n FROM source_chunks WHERE source_id = ?').get(source.id) as { n: number }).n;
+    const item = createItem(
+      db,
+      app,
+      { type: 'user', ref: user.id },
+      {
+        kind: 'conflict',
+        title,
+        summary: detail || `${source.title} disagrees with ${other.title}. ${excluded} passage${excluded === 1 ? '' : 's'} excluded until decided.`,
+        scope: scopeLabel(app, source.scope),
+        aiSummary: `${compare[0].label}: ${compare[0].value} [1]. ${compare[1].label}: ${compare[1].value} [2]. ${source.title} (${lowerFirst(source.trust)}) ranks below ${other.title} (${lowerFirst(other.trust)}), so Horizon keeps using ${other.title} and leaves ${excluded} passage${excluded === 1 ? '' : 's'} of ${source.title} out until this is decided.`,
+        citations: [
+          { n: 1, title: compare[0].label, detail: [compare[0].where, lowerFirst(source.trust)].filter(Boolean).join(' · '), href: sourceHref(source.id) },
+          { n: 2, title: compare[1].label, detail: [compare[1].where, lowerFirst(other.trust)].filter(Boolean).join(' · '), href: other.href ?? sourceHref(other.id) },
+        ],
+        options: [
+          { title: `Keep ${other.title}: ${compare[1].value}`, detail: `${source.title} stays excluded for this point; ask its author to update it.`, keepsUpload: false },
+          { title: `Use ${source.title}: ${compare[0].value}`, detail: `Its passages are used again; ask the owners of ${other.title} to update.`, keepsUpload: true },
+        ],
+        affects: [
+          { label: source.title, href: sourceHref(source.id) },
+          { label: other.title, href: other.href ?? sourceHref(other.id) },
+        ],
+        sourceId: source.id,
+      },
+      iso(at),
+    );
+    itemId = item.id;
+    db.raw.prepare('UPDATE conflicts SET huddle_item_id = ? WHERE id = ?').run(itemId, id);
+    db.audit('user', user.id, 'context.conflict', 'context_source', source.id, { conflictId: id, huddleItemId: itemId, other: other.id });
+  })();
+  return { conflict: getConflict(db, app.id, id)!, huddleItemId: itemId };
+}
+
+/**
+ * Applies a Huddle decision to the conflict it came from. When the upload wins its passages are
+ * used again; otherwise they stay excluded. The source leaves review either way. Returns the
+ * conflict, or null when the item has none.
+ */
+export function resolveConflictForItem(db: HorizonDb, itemId: string, keepsUpload: boolean, at = Date.now()): ConflictView | null {
+  const r = db.raw.prepare("SELECT k.id, k.source_id, s.application_id, s.type FROM conflicts k JOIN context_sources s ON s.id = k.source_id WHERE k.huddle_item_id = ? AND k.status = 'open'").get(itemId) as Row | undefined;
+  if (!r) return null;
+  const sourceId = str(r.source_id);
+  db.raw.transaction(() => {
+    db.raw.prepare("UPDATE conflicts SET status = 'resolved', resolution = ?, resolved_at = ? WHERE id = ?").run(keepsUpload ? 'use_upload' : 'keep_higher', iso(at), r.id);
+    if (keepsUpload) db.raw.prepare('UPDATE source_chunks SET excluded_reason = NULL WHERE source_id = ?').run(sourceId);
+    db.raw.prepare('UPDATE context_sources SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus(r.type as SourceType), iso(at), sourceId);
+  })();
+  return getConflict(db, str(r.application_id), str(r.id));
+}

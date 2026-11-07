@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Block, UatArtifact } from '../src/lib/types';
 import type { WorkflowEvent } from '../src/lib/workflow';
 import { RunRefused, startApi, type TestApi } from './api-harness';
+import { seedContext } from './context';
 import { openDb, seedWorkspace, type HorizonDb } from './db';
 import { FIXTURE, fixtureDb, seedRefundTests } from './fixture';
 import { LocalBlobStore, MemoryBlobStore } from './storage';
@@ -50,6 +51,8 @@ let api: TestApi;
 beforeEach(async () => {
   db = fixtureDb();
   seedRefundTests(db);
+  // App Context as bootstrap seeds it: the fixture has no clone, so its repository is scan-only.
+  seedContext(db, FIXTURE);
   api = await startApi(db);
 });
 afterEach(() => api.close());
@@ -448,6 +451,83 @@ describe('F15: attachments are stored, scoped, and readable only when they reall
       await second.close();
       db2.raw.close();
     }
+  });
+});
+
+describe('F11: App Context and Huddle through the API', () => {
+  it('lists only the application’s sources, says what is not connected, and refuses a foreign source', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const ctx = (await (await sourav.get('/api/context')).json()) as { sources: { id: string; type: string; status: string }[]; connectors: Record<string, string>; retrieval: string };
+    expect(ctx.sources.map((s) => [s.type, s.status])).toEqual([
+      ['Jira', 'ready'],
+      ['Repository', 'ready'],
+    ]);
+    expect(ctx.connectors).toMatchObject({ confluence: 'not_connected', fabric: 'none' });
+    expect(ctx.retrieval).toBe('keyword');
+    expect((await sourav.post('/api/context/confluence', { url: 'https://wiki.example.com/x' })).status).toBe(501);
+    const nabih = api.as('u-nabih', 'IBGM');
+    expect((await nabih.get(`/api/context/sources/${encodeURIComponent(ctx.sources[1].id)}`)).status).toBe(404);
+    expect(((await (await nabih.get('/api/context')).json()) as { sources: unknown[] }).sources).toHaveLength(1);
+  });
+
+  it('uploads through the route, tests a question, and a teammate sees the passage', async () => {
+    const own = await startApi(db, null, { files: new MemoryBlobStore() });
+    try {
+      const sourav = own.as('u-sourav', 'ABCD');
+      const up = await sourav.post('/api/context/uploads', { files: [{ filename: 'runbook.md', contentBase64: Buffer.from('Restart checkoutservice with a rollout restart when it crashloops after a config change.').toString('base64') }], scope: 'app' });
+      expect(up.status).toBe(200);
+      const { sources } = (await up.json()) as { sources: { id: string; status: string; chunks: number }[] };
+      expect(sources[0]).toMatchObject({ status: 'ready', chunks: 1 });
+      const test = (await (await own.as('u-ram', 'ABCD').post('/api/context/test', { question: 'checkoutservice crashloops after config change' })).json()) as { results: { where: string; used: boolean }[] };
+      expect(test.results[0]).toMatchObject({ where: 'runbook.md · runbook.md ¶1', used: true });
+      const detail = (await (await own.as('u-ram', 'ABCD').get(`/api/context/sources/${sources[0].id}`)).json()) as { chunks: { locator: string }[] };
+      expect(detail.chunks.map((c) => c.locator)).toEqual(['runbook.md ¶1']);
+    } finally {
+      await own.close();
+    }
+  });
+
+  it('only an app owner decides; anyone in the application votes and comments; other applications see nothing', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const raised = await sourav.post('/api/huddle', { kind: 'mapping', title: 'Who owns refunds?', summary: 'Two candidates.', options: ['checkoutservice', 'paymentservice'], affects: [{ label: 'ABCD-1001', href: '/tickets/ABCD-1001' }] });
+    expect(raised.status).toBe(201);
+    const { item } = (await raised.json()) as { item: { id: string; options: { id: string }[] } };
+    expect((await api.as('u-devi', 'ABCD').post(`/api/huddle/${item.id}/vote`, { optionId: item.options[1].id })).status).toBe(200);
+    expect((await api.as('u-devi', 'ABCD').post(`/api/huddle/${item.id}/comments`, { text: 'The tests live in paymentservice.' })).status).toBe(200);
+    expect((await api.as('u-devi', 'ABCD').post(`/api/huddle/${item.id}/decide`, { optionId: item.options[1].id, reason: 'because' })).status).toBe(403);
+    expect((await sourav.post(`/api/huddle/${item.id}/decide`, { optionId: item.options[1].id, reason: 'because' })).status).toBe(403);
+    expect((await api.as('u-nabih', 'IBGM').get(`/api/huddle/${item.id}`)).status).toBe(404);
+    expect((await api.as('u-nabih', 'IBGM').post(`/api/huddle/${item.id}/vote`, { optionId: item.options[0].id })).status).toBe(404);
+    const decided = await api.as('u-ram', 'ABCD').post(`/api/huddle/${item.id}/decide`, { optionId: item.options[1].id, reason: 'The tests and page objects are there.' });
+    expect(decided.status).toBe(200);
+    expect(((await decided.json()) as { item: { decision: { by: string } } }).item.decision.by).toBe('Ram Kumar');
+    expect((await sourav.post(`/api/huddle/${item.id}/vote`, { optionId: item.options[0].id })).status).toBe(409);
+    expect(((await (await api.as('u-nabih', 'IBGM').get('/api/huddle')).json()) as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it('three low ratings with the same reason raise one Huddle item by Horizon', async () => {
+    const chats = [
+      ['u-ram', '1'],
+      ['u-sourav', '2'],
+      ['u-devi', '3'],
+    ] as const;
+    let raised: string[] = [];
+    for (const [who, n] of chats) {
+      const c = api.as(who, 'ABCD');
+      const events = await c.run(uatRun('ABCD-1001', ids(n)));
+      const res = await c.post(`/api/answers/${saved(events)!.revisionId}/rating`, { stars: 2, reasons: ['Wrong coverage'], comment: 'The linked tests were not the ones that passed.' });
+      expect(res.status).toBe(200);
+      raised = ((await res.json()) as { raised: string[] }).raised;
+    }
+    expect(raised).toHaveLength(1);
+    const list = (await (await api.as('u-ram', 'ABCD').get('/api/huddle')).json()) as { items: { id: string; kind: string; raisedBy: string; affects: { href: string }[] }[] };
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({ id: raised[0], kind: 'feedback', raisedBy: 'Horizon' });
+    expect(list.items[0].affects.map((a) => a.href).sort()).toEqual(['/chat/c1', '/chat/c2', '/chat/c3']);
+    // A fourth low rating does not raise a second item while the first is open.
+    const more = await api.as('u-ram', 'ABCD').run(uatRun('ABCD-1001', ids('4')));
+    const again = await api.as('u-ram', 'ABCD').post(`/api/answers/${saved(more)!.revisionId}/rating`, { stars: 1, reasons: ['Wrong coverage'], comment: 'Same problem as before here.' });
+    expect(((await again.json()) as { raised: string[] }).raised).toEqual([]);
   });
 });
 

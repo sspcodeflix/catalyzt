@@ -17,9 +17,10 @@ import { checkInput, containsSecret, policyFromModel, redactSecrets, streamSafeL
 import { validateIntent, type Intent, type IntentRequest } from '../src/lib/intent';
 import { rulesIntent } from '../src/lib/routing';
 import { testTypeLabel } from '../src/lib/testType';
-import type { Capability } from '../src/lib/types';
+import type { Capability, Citation } from '../src/lib/types';
 import { uatAnswer } from '../src/lib/uat';
 import type { AgentKind, AgentName, AgentState, RunRequest, WorkflowEvent } from '../src/lib/workflow';
+import { retrieveContext } from './context';
 import type { HorizonDb } from './db';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
@@ -315,24 +316,37 @@ export async function runWorkflow(
     router.finish('done', { result: `Assigned to the ${name}`, ...routerUsage });
     const specialist = root.spawn(name, 'specialist', intent.action, cfg?.chatModel);
 
-    // Attached files the specialist can read become numbered sources; the rest are named as unreadable.
+    // Sources the specialist may cite, numbered: attached files it can read first, then the best
+    // passages from App Context. Unreadable files are named, never pretended.
     const readable = attachments.filter((a) => a.text);
     const sources = readable.map((a, i) => ({ n: i + 1, title: a.filename, text: a.text! }));
+    const citations: Citation[] = sources.map((s) => ({ n: s.n, title: s.title, detail: 'Attached file' }));
     if (attachments.length) {
       const read = specialist.step('tool', `Reading ${attachments.length} attached file${attachments.length > 1 ? 's' : ''}`, 'attachments.read');
       const unreadable = attachments.filter((a) => !a.text);
       read({ detail: [`${readable.length} readable`, ...unreadable.map((a) => `${a.filename}: ${a.note ?? 'not readable'}`)].join(' · ') });
-      emit({ type: 'citations', citations: sources.map((s) => ({ n: s.n, title: s.title, detail: 'Attached file' })) });
     }
+    if (db) {
+      const look = specialist.step('tool', 'Reading App Context', 'context.retrieve');
+      const passages = retrieveContext(db, app, req.text, { limit: 4, workspace: req.scope.workspace || null });
+      for (const p of passages) {
+        const n = sources.length + 1;
+        sources.push({ n, title: `${p.sourceTitle} · ${p.locator}`, text: p.text });
+        citations.push({ n, title: p.sourceTitle, detail: `App Context · ${p.locator} · v${p.version}`, href: p.href });
+      }
+      const from = new Set(passages.map((p) => p.sourceTitle)).size;
+      look({ detail: passages.length ? `${passages.length} passage${passages.length > 1 ? 's' : ''} from ${from} source${from > 1 ? 's' : ''} (keyword match)` : 'Nothing relevant in App Context' });
+    }
+    if (citations.length) emit({ type: 'citations', citations });
 
     if (!cfg) {
       const s = specialist.step('rule', 'Routing only');
       const kind = intent.testType ? ` as ${testTypeLabel(intent.testType).toLowerCase()}` : '';
       const comps = intent.components.length ? ` covering ${intent.components.join(', ')}` : '';
-      const files = sources.length ? ` It would read ${sources.length} attached file${sources.length > 1 ? 's' : ''} (${sources.map((x) => `[${x.n}]`).join(', ')}).` : '';
+      const files = sources.length ? ` It would read ${sources.length} source${sources.length > 1 ? 's' : ''} (${sources.map((x) => `[${x.n}]`).join(', ')}).` : '';
       emit({
         type: 'answer',
-        citations: sources.map((x) => ({ n: x.n, title: x.title, detail: 'Attached file' })),
+        citations,
         blocks: [
           {
             kind: 'prose',

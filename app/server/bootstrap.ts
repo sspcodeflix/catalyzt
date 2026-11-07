@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { seedContext } from './context';
 import { openDb, seedWorkspace, type HorizonDb } from './db';
 import { parseCsv, readOctaneRows } from './octane';
 import { loadWorkspace, WorkspaceError, type Workspace } from './workspace';
@@ -65,6 +66,8 @@ export function bootstrap(env: Record<string, string | undefined>, log: (line: s
     for (const p of r.problems.slice(0, 5)) log(`[horizon] ${team.id}/manual-tests.csv: ${p.message}`);
   }
 
-  const summary = `Workspace ${root}: ${counts.apps} applications, ${counts.people} people, ${counts.components} components, ${counts.stories} new stories, ${manual} new manual tests.`;
+  // App Context: each repository's documentation from its clone, and the Jira feed, per application.
+  const ctx = seedContext(db, workspace);
+  const summary = `Workspace ${root}: ${counts.apps} applications, ${counts.people} people, ${counts.components} components, ${counts.stories} new stories, ${manual} new manual tests; App Context: ${ctx.indexed} of ${ctx.repos} repositories indexed (${ctx.chunks} passages).`;
   return { db, workspace, summary };
 }

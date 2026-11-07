@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 
 import { Prose } from '../components/chat/Prose';
 import { Icon } from '../components/Icon';
-import { addComment, decide, kindInfo, markNeedsInput, me, useHuddle, vote } from '../lib/huddleData';
+import { addComment, decide, fetchItem, kindInfo, markNeedsInput, me, useHuddle, vote } from '../lib/huddleData';
+import { useSession } from '../lib/session';
 import { itemStatus } from './Huddle';
+import { relTime } from './Tickets';
 
 /** One Huddle decision: Horizon's cited summary, options with votes, discussion, and the owner's decision. */
 export function HuddleItemPanel() {
@@ -13,19 +15,37 @@ export function HuddleItemPanel() {
   return <ItemPanel key={itemId} itemId={itemId} />;
 }
 
+const when = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : `${relTime(iso)} (${d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })})`;
+};
+
 function ItemPanel({ itemId }: { itemId: string | undefined }) {
   const items = useHuddle();
   const item = items.find((i) => i.id === itemId);
-  const navigate = useNavigate();
+  const { loaded: sessionLoaded } = useSession();
   const ref = useRef<HTMLElement>(null);
+  const [lookup, setLookup] = useState<'idle' | 'loading' | 'missing' | 'error'>('idle');
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
   const [choice, setChoice] = useState<string>('');
   const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const commentId = useId();
   const reasonId = useId();
   const voteName = useId();
   const decideName = useId();
+
+  // Not in the list yet (a deep link, a reload): ask the server.
+  useEffect(() => {
+    if (!itemId || item || !sessionLoaded || lookup !== 'idle') return;
+    setLookup('loading');
+    fetchItem(itemId).then(
+      (i) => setLookup(i ? 'idle' : 'missing'),
+      () => setLookup('error'),
+    );
+  }, [itemId, item, sessionLoaded, lookup]);
 
   useEffect(() => {
     if (window.matchMedia('(max-width: 899px)').matches) ref.current?.scrollIntoView({ block: 'start' });
@@ -38,12 +58,13 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   );
 
   if (!item) {
+    const missing = lookup === 'missing' || lookup === 'error';
     return (
-      <section ref={ref} className="panel" aria-label="Not found">
+      <section ref={ref} className="panel" aria-label={missing ? 'Not found' : 'Loading'} aria-busy={!missing}>
         <div className="phead">
           <div className="t">
-            <b>Not found</b>
-            <span>This decision doesn't exist or you don't have access.</span>
+            <b>{lookup === 'error' ? 'Could not load this decision' : missing ? 'Not found' : 'Loading…'}</b>
+            <span>{missing ? "This decision doesn't exist in this application." : ''}</span>
           </div>
           {close}
         </div>
@@ -52,14 +73,31 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   }
 
   const st = itemStatus(item);
-  const myVote = item.options.find((o) => o.votes.includes(me.initials))?.id;
+  const myVote = item.myVote;
   const leading = [...item.options].sort((a, b) => b.votes.length - a.votes.length)[0];
   const decidedOption = item.decision && item.options.find((o) => o.id === item.decision!.optionId);
 
+  const run = async (what: string, fn: () => Promise<unknown>) => {
+    setBusy(what);
+    setError(null);
+    try {
+      await fn();
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const post = (e?: FormEvent) => {
     e?.preventDefault();
-    addComment(item.id, draft);
-    setDraft('');
+    if (!draft.trim()) return;
+    void run('comment', async () => {
+      await addComment(item.id, draft);
+      setDraft('');
+    });
   };
   const onCommentKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) post();
@@ -72,8 +110,10 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   const confirmDecide = (e: FormEvent) => {
     e.preventDefault();
     if (!choice || !reason.trim()) return;
-    decide(item.id, choice, reason);
-    setDeciding(false);
+    void run('decide', async () => {
+      await decide(item.id, choice, reason);
+      setDeciding(false);
+    });
   };
 
   return (
@@ -82,14 +122,9 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
         <div className="t">
           <b>{item.title}</b>
           <span>
-            {kindInfo[item.kind].label} · {item.scope} · raised by {item.raisedBy} {item.raisedAt}
+            {kindInfo[item.kind].label} · {item.scope} · raised by {item.raisedBy} {relTime(item.raisedAt)}
           </span>
         </div>
-        {/* TODO: open a chat scoped to this item (item chip in the composer). */}
-        <button type="button" className="ghost" aria-label="Ask about this" onClick={() => navigate('/')}>
-          <Icon name="chat" small />
-          <span className="hidem">Ask about this</span>
-        </button>
         {close}
       </div>
 
@@ -98,15 +133,21 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
           <span className={`pill ${st.tone}`}>{st.label}</span>
         </div>
 
+        {error && (
+          <p className="errtext" role="alert">
+            {error}
+          </p>
+        )}
+
         {item.decision && decidedOption && (
           <div className="decision" role="status">
             <Icon name="check" small />
             <div>
               <b>Decided: {decidedOption.title}</b>
               <span>
-                {item.decision.by} · {item.decision.at}. Reason: {item.decision.reason}
+                {item.decision.by} · {when(item.decision.at)}. Reason: {item.decision.reason}
               </span>
-              <span className="muted">Kept with every affected item. Horizon applies it.</span>
+              <span className="muted">Kept with every affected item. {item.kind === 'conflict' ? 'Applied to App Context.' : ''}</span>
             </div>
           </div>
         )}
@@ -114,39 +155,35 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
         <div className="aisum">
           <span className="lbl">
             <Icon name="auto" small />
-            Summary by Horizon · both sides, cited
+            {item.raisedByType === 'agent' ? 'Summary by Horizon · cited' : 'Summary · cited'}
           </span>
           <Prose text={item.aiSummary} citations={item.citations} />
         </div>
 
-        <div className="block">
-          <span className="blockhead">Affects</span>
-          <div className="chips">
-            {item.affects.map((a) =>
-              a.href ? (
-                <Link key={a.label} to={a.href} className="pill">
-                  {a.label}
-                </Link>
-              ) : (
-                <span key={a.label} className="pill">
-                  {a.label}
-                </span>
-              ),
-            )}
+        {item.affects.length > 0 && (
+          <div className="block">
+            <span className="blockhead">Affects</span>
+            <div className="chips">
+              {item.affects.map((a) =>
+                a.href ? (
+                  <Link key={`${a.label}${a.href}`} to={a.href} className="pill">
+                    {a.label}
+                  </Link>
+                ) : (
+                  <span key={a.label} className="pill">
+                    {a.label}
+                  </span>
+                ),
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        <fieldset className="block options" disabled={!!item.decision}>
+        <fieldset className="block options" disabled={!!item.decision || busy === 'vote'}>
           <legend className="blockhead">Options {item.decision ? '' : '· your vote'}</legend>
           {item.options.map((o) => (
             <label key={o.id} className={`option${myVote === o.id || decidedOption?.id === o.id ? ' on' : ''}`}>
-              <input
-                type="radio"
-                name={voteName}
-                value={o.id}
-                checked={myVote === o.id}
-                onChange={() => vote(item.id, o.id)}
-              />
+              <input type="radio" name={voteName} value={o.id} checked={myVote === o.id} onChange={() => void run('vote', () => vote(item.id, o.id))} />
               <div>
                 <b>{o.title}</b>
                 <span className="muted">{o.detail}</span>
@@ -171,7 +208,7 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
               </span>
               <div>
                 <b>{c.who.name}</b>
-                <time>{c.at}</time>
+                <time dateTime={c.at}>{relTime(c.at)}</time>
                 <p>{c.text}</p>
               </div>
             </div>
@@ -180,16 +217,9 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
             <label htmlFor={commentId} className="sr">
               Reply
             </label>
-            <textarea
-              id={commentId}
-              rows={2}
-              placeholder="Reply, or @mention someone"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onCommentKey}
-            />
-            <button type="submit" className="btn" disabled={!draft.trim()}>
-              Post
+            <textarea id={commentId} rows={2} placeholder="Reply" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={onCommentKey} disabled={busy === 'comment'} />
+            <button type="submit" className="btn" disabled={!draft.trim() || busy === 'comment'} aria-busy={busy === 'comment'}>
+              {busy === 'comment' ? 'Posting…' : 'Post'}
             </button>
           </form>
         </div>
@@ -204,7 +234,7 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
                 </span>
                 {me.role === 'owner' && (
                   <div className="acts">
-                    <button type="button" className="btn plain" disabled={item.needsInput} onClick={() => markNeedsInput(item.id)}>
+                    <button type="button" className="btn plain" disabled={item.needsInput || busy === 'input'} onClick={() => void run('input', () => markNeedsInput(item.id))}>
                       {item.needsInput ? 'Asked for more input' : 'Needs more input'}
                     </button>
                     <button type="button" className="btn ink" onClick={startDecide}>
@@ -229,11 +259,11 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
                 </label>
                 <textarea id={reasonId} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required />
                 <div className="acts">
-                  <button type="button" className="btn plain" onClick={() => setDeciding(false)}>
+                  <button type="button" className="btn plain" onClick={() => setDeciding(false)} disabled={busy === 'decide'}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn ink" disabled={!reason.trim()}>
-                    Confirm decision
+                  <button type="submit" className="btn ink" disabled={!reason.trim() || busy === 'decide'} aria-busy={busy === 'decide'}>
+                    {busy === 'decide' ? 'Recording…' : 'Confirm decision'}
                   </button>
                 </div>
               </form>

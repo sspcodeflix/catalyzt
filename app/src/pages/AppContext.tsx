@@ -1,39 +1,33 @@
-import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { acceptedFileTypes, addConfluence, iconFor, loadContext, statusLabel, uploadFiles, useContextStore, type Conflict, type ScopeKind, type Source, type SourceStatus } from '../lib/contextData';
 import { useSession } from '../lib/session';
 import { useJiraSync, useTickets } from '../lib/ticketStore';
 import { relTime } from './Tickets';
-import {
-  acceptedFileTypes,
-  addConfluence,
-  addFiles,
-  adminSettings,
-  processingSteps,
-  statusLabel,
-  useContextStore,
-  workspaces,
-  type ScopeKind,
-  type Source,
-  type SourceStatus,
-} from '../lib/contextData';
 import '../styles/pages.css';
 
 const PAGE_SIZE = 8;
 
-/** App Context: what Horizon knows about the selected application, and what the team adds. */
+/** App Context: what Horizon knows about the selected application, where it came from, and what the team adds. */
 export function AppContext() {
-  const { sources, conflict, notice } = useContextStore();
-  const app = useSession().me?.app;
+  const { sources, conflicts, connectors, limits, loaded, error, notice } = useContextStore();
+  const { me, loaded: sessionLoaded } = useSession();
+  const app = me?.app;
   const location = useLocation();
   const panelOpen = location.pathname.startsWith('/context/source/');
   const selectedId = panelOpen ? decodeURIComponent(location.pathname.split('/')[3] ?? '') : undefined;
 
-  const repos = sources.filter((s) => s.type === 'Repository').length;
+  useEffect(() => {
+    if (sessionLoaded) void loadContext();
+  }, [sessionLoaded]);
+
+  const repos = sources.filter((s) => s.type === 'Repository');
+  const indexed = repos.filter((s) => s.status === 'indexed').length;
+  const uploads = sources.filter((s) => s.trust === 'Team upload');
+  const passages = sources.reduce((a, s) => a + s.chunks, 0);
   const review = sources.filter((s) => s.status === 'review').length;
-  const processing = sources.filter((s) => s.status === 'processing');
-  const fabric = sources.find((s) => s.type === 'Fabric');
 
   return (
     <div className={`body${panelOpen ? ' split' : ''}`}>
@@ -48,13 +42,13 @@ export function AppContext() {
               <h1>App Context</h1>
               {!panelOpen && (
                 <p>
-                  Everything Horizon knows about this application: the Enterprise Knowledge Fabric, code discovered
-                  through GitHub, and what your team adds. New sources are embedded automatically and used in every
-                  answer, test and scan for this app.
+                  Everything Horizon knows about this application: the documentation of its repositories, the Jira
+                  feed, and what your team uploads. Readable sources are split into passages; answers cite the
+                  passages they use, found by keyword match.
                 </p>
               )}
             </div>
-            <Link className="btn" to="/context/source/fabric">
+            <Link className="btn" to="/context/source/test">
               <Icon name="search" small />
               Test a question
             </Link>
@@ -66,35 +60,32 @@ export function AppContext() {
                 <div className="card ctile ekf">
                   <div className="row">
                     <span className="tile">
-                      <Icon name="fabric" />
+                      <Icon name="lib" />
                     </span>
                     <div>
-                      <div style={{ fontWeight: 600 }}>Enterprise Knowledge Fabric</div>
-                      <span>Read only · {fabric?.updated.toLowerCase() ?? 'synced'} · v14</span>
+                      <div style={{ fontWeight: 600 }}>Knowledge sources</div>
+                      <span>{connectors ? `Confluence: ${connectors.confluence === 'not_connected' ? 'not connected' : connectors.confluence} · Knowledge Fabric: ${connectors.fabric === 'none' ? 'none' : connectors.fabric}` : 'Checking connectors…'}</span>
                     </div>
                   </div>
-                  <span>The source of truth for {app?.name ?? 'this application'}. Highest trust; your uploads never overwrite it.</span>
+                  <span>No Enterprise Knowledge Fabric or Confluence is connected in this build. Repositories, the Jira feed and your uploads are the sources.</span>
                 </div>
                 <div className="card ctile">
-                  <b>{sources.length}</b>
+                  <b>{passages}</b>
                   <span>
-                    Sources: {repos} repositories from GitHub and ZIPs, {sources.length - repos} documents, pages and
-                    feeds
+                    Passages, from {indexed} of {repos.length} repositor{repos.length === 1 ? 'y' : 'ies'} and {uploads.length} upload{uploads.length === 1 ? '' : 's'}
                   </span>
                 </div>
                 <div className="card ctile">
                   <b>{review}</b>
-                  <span>Needs review: conflicts with the Fabric</span>
+                  <span>Needs review: open conflicts with a higher-trust source, decided in Huddle</span>
                 </div>
               </div>
 
-              <AddContext />
+              <AddContext workspaces={app?.workspaces ?? []} maxUploadMb={limits?.maxUploadMb ?? 8} readable={limits?.readable ?? []} storedOnly={limits?.storedOnly ?? []} confluence={connectors?.confluence ?? 'not_connected'} />
 
-              {processing.map((s) => (
-                <Pipeline key={s.id} source={s} />
+              {conflicts.map((c) => (
+                <ConflictBanner key={c.id} conflict={c} />
               ))}
-
-              {conflict && <ConflictBanner />}
             </>
           )}
 
@@ -106,8 +97,13 @@ export function AppContext() {
               {notice}
             </p>
           )}
+          {error && (
+            <p className="errtext" role="alert">
+              Could not load the sources: {error}
+            </p>
+          )}
 
-          <SourceTable sources={sources} compact={panelOpen} selectedId={selectedId} />
+          <SourceTable sources={sources} loaded={loaded} compact={panelOpen} selectedId={selectedId} />
         </div>
       </div>
       <Outlet />
@@ -117,38 +113,41 @@ export function AppContext() {
 
 /* ---------- Add context ---------- */
 
-function AddContext() {
-  const who = useSession().me?.user.name ?? 'Someone';
+function AddContext({ workspaces, maxUploadMb, readable, storedOnly, confluence }: { workspaces: string[]; maxUploadMb: number; readable: string[]; storedOnly: string[]; confluence: string }) {
   const [kind, setKind] = useState<ScopeKind>('app');
-  const [workspace, setWorkspace] = useState(workspaces[0]);
-  const [link, setLink] = useState('');
-  const [linkError, setLinkError] = useState<string | null>(null);
+  const [workspace, setWorkspace] = useState(workspaces[0] ?? '');
   const [fileErrors, setFileErrors] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [link, setLink] = useState('');
+  const [linkMessage, setLinkMessage] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const linkId = useId();
   const wsId = useId();
+  const linkId = useId();
 
-  const take = (files: FileList | null) => {
+  useEffect(() => {
+    if (!workspace && workspaces[0]) setWorkspace(workspaces[0]);
+  }, [workspaces, workspace]);
+
+  const take = async (files: FileList | null) => {
     if (!files?.length) return;
-    setFileErrors(addFiles(Array.from(files), kind, workspace, who));
+    setUploading(true);
+    setFileErrors([]);
+    try {
+      setFileErrors(await uploadFiles(Array.from(files), kind, workspace));
+    } finally {
+      setUploading(false);
+    }
   };
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    take(e.dataTransfer.files);
-  };
-
-  const submitLink = (e: FormEvent) => {
-    e.preventDefault();
-    const err = addConfluence(link, kind, workspace);
-    setLinkError(err);
-    if (!err) setLink('');
+    void take(e.dataTransfer.files);
   };
 
   return (
-    <section className="card drop" aria-label="Add context">
+    <section className="card drop" aria-label="Add context" aria-busy={uploading}>
       <div
         className={`dz${dragging ? ' over' : ''}`}
         onDragOver={(e) => {
@@ -160,32 +159,20 @@ function AddContext() {
       >
         <Icon name="upload" />
         <b>
-          Drop files here or{' '}
-          <button type="button" className="linkbtn" onClick={() => input.current?.click()}>
-            browse
-          </button>
+          {uploading ? (
+            'Uploading…'
+          ) : (
+            <>
+              Drop files here or{' '}
+              <button type="button" className="linkbtn" onClick={() => input.current?.click()}>
+                browse
+              </button>
+            </>
+          )}
         </b>
         <span className="muted" style={{ fontSize: 13 }}>
-          PDF, Word, images, or a repository as a ZIP. Up to {adminSettings.maxUploadMb} MB each, set by your admin.
+          Readable and split into passages: {readable.join(', ') || 'text formats'}. Kept but not readable in this build: {storedOnly.join(', ') || 'PDF, Word, images, ZIP'}. Up to {maxUploadMb} MB each.
         </span>
-        <div className="types" aria-hidden="true">
-          <span className="pill">
-            <Icon name="doc" small />
-            PDF
-          </span>
-          <span className="pill">
-            <Icon name="word" small />
-            Word
-          </span>
-          <span className="pill">
-            <Icon name="img" small />
-            PNG, JPG
-          </span>
-          <span className="pill">
-            <Icon name="codeic" small />
-            ZIP
-          </span>
-        </div>
         <input
           ref={input}
           type="file"
@@ -193,7 +180,7 @@ function AddContext() {
           hidden
           accept={acceptedFileTypes}
           onChange={(e) => {
-            take(e.target.files);
+            void take(e.target.files);
             e.target.value = '';
           }}
         />
@@ -207,37 +194,35 @@ function AddContext() {
       </div>
 
       <div className="linkbox">
-        <form onSubmit={submitLink} className="linkform">
-          <label htmlFor={linkId} style={{ fontSize: 14, fontWeight: 600 }}>
-            Add a Confluence page
-          </label>
-          <div className="field-row">
-            <div className="field">
-              <Icon name="link" small />
-              <input
-                id={linkId}
-                type="url"
-                placeholder="Paste a Confluence link"
-                value={link}
-                onChange={(e) => setLink(e.target.value)}
-                aria-invalid={!!linkError}
-                aria-describedby={linkError ? `${linkId}-err` : `${linkId}-hint`}
-              />
-            </div>
-            <button type="submit" className="btn" disabled={!link.trim()}>
-              Add
-            </button>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Confluence</div>
+        {confluence === 'not_connected' ? (
+          <div className="callout" role="status">
+            <Icon name="link" small />
+            <span>Not connected in this build. Export the page as Markdown or text and upload it here, so Horizon can read and cite it.</span>
           </div>
-          {linkError ? (
-            <span id={`${linkId}-err`} className="errtext">
-              {linkError}
-            </span>
-          ) : (
-            <span id={`${linkId}-hint`} className="muted" style={{ fontSize: 12.5 }}>
-              Read with your Confluence access and re-synced when the page changes.
-            </span>
-          )}
-        </form>
+        ) : (
+          <form
+            className="linkform"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void addConfluence(link).then((m) => setLinkMessage(m || 'Added.'));
+            }}
+          >
+            <label htmlFor={linkId} className="sr">
+              Confluence link
+            </label>
+            <div className="field-row">
+              <div className="field">
+                <Icon name="link" small />
+                <input id={linkId} type="url" placeholder="Paste a Confluence link" value={link} onChange={(e) => setLink(e.target.value)} />
+              </div>
+              <button type="submit" className="btn" disabled={!link.trim()}>
+                Add
+              </button>
+            </div>
+            {linkMessage && <span className="errtext">{linkMessage}</span>}
+          </form>
+        )}
 
         <fieldset className="scoperow">
           <legend>Use new sources for</legend>
@@ -245,7 +230,6 @@ function AddContext() {
             [
               ['app', 'Whole app'],
               ['workspace', 'One workspace'],
-              ['chat', 'This chat only'],
             ] as const
           ).map(([k, label]) => (
             <label key={k} className="radio">
@@ -264,58 +248,18 @@ function AddContext() {
             </select>
           </div>
         )}
-        {kind === 'chat' && (
-          <span className="muted" style={{ fontSize: 12.5 }}>
-            Chat-only sources are used in your next chat and are not added to the app.
-          </span>
-        )}
-      </div>
-    </section>
-  );
-}
-
-/* ---------- Processing ---------- */
-
-function Pipeline({ source }: { source: Source }) {
-  const stage = source.stage ?? 0;
-  const label = (step: string) => (step === 'Text extracted' && source.type === 'Image' ? 'Text read by the model' : step);
-  return (
-    <section className="card pipeline" aria-label={`Processing ${source.title}`}>
-      <div className="pipehead">
-        <span>
-          <b>{source.title}</b>{' '}
-          <span className="muted">
-            · {source.scope === 'App' ? 'whole app' : source.scope}
-            {source.addedBy ? ` · added by ${source.addedBy}` : ''}
-          </span>
-        </span>
-        <span className="muted" style={{ fontSize: 13 }}>
-          Usually under a minute
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          For one chat only, attach the file in the composer instead.
         </span>
       </div>
-      <ol className="pipe">
-        {processingSteps.map((step, i) => {
-          const st = i < stage ? 'done' : i === stage ? 'run' : '';
-          return (
-            <li key={step} className={`pstep ${st}`} aria-current={i === stage ? 'step' : undefined}>
-              <span className="pdot">{st === 'done' && <Icon name="check" />}</span>
-              {label(step)}
-              <span className="sr">{st === 'done' ? ', done' : st === 'run' ? ', in progress' : ', waiting'}</span>
-            </li>
-          );
-        })}
-      </ol>
     </section>
   );
 }
 
 /* ---------- Conflict ---------- */
 
-function ConflictBanner() {
-  const { conflict } = useContextStore();
-  const navigate = useNavigate();
+function ConflictBanner({ conflict }: { conflict: Conflict }) {
   const [comparing, setComparing] = useState(false);
-  if (!conflict) return null;
   return (
     <div className="conflictwrap">
       <div className="conflict" role="alert">
@@ -323,15 +267,17 @@ function ConflictBanner() {
         <div>
           <b>{conflict.title}</b>
           <br />
-          {conflict.detail}
+          {conflict.detail || `${conflict.sourceTitle} disagrees with ${conflict.otherTitle}. Its passages are excluded until an app owner decides.`}
         </div>
         <div className="acts">
           <button type="button" className="btn" aria-expanded={comparing} onClick={() => setComparing(!comparing)}>
             {comparing ? 'Hide comparison' : 'Compare'}
           </button>
-          <button type="button" className="btn ink" onClick={() => navigate(`/huddle/${conflict.huddleItemId}`)}>
-            Send to Huddle
-          </button>
+          {conflict.huddleItemId && (
+            <Link className="btn ink" to={`/huddle/${conflict.huddleItemId}`}>
+              Open in Huddle
+            </Link>
+          )}
         </div>
       </div>
       {comparing && (
@@ -356,11 +302,11 @@ const statusFilters: { value: 'all' | SourceStatus; label: string }[] = [
   { value: 'ready', label: 'Ready' },
   { value: 'indexed', label: 'Indexed' },
   { value: 'review', label: 'Needs review' },
-  { value: 'processing', label: 'Processing' },
+  { value: 'stored', label: 'Kept, not readable' },
   { value: 'failed', label: 'Failed' },
 ];
 
-function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[]; compact: boolean; selectedId?: string }) {
+function SourceTable({ sources: raw, loaded, compact, selectedId }: { sources: Source[]; loaded: boolean; compact: boolean; selectedId?: string }) {
   // The Jira row shows the live sync state from the ticket store, so it matches the Tickets page.
   const tickets = useTickets();
   const sync = useJiraSync();
@@ -368,12 +314,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
     () =>
       raw.map((s) =>
         s.type === 'Jira'
-          ? {
-              ...s,
-              sub: `filter: ${sync.filter} · synced every ${sync.everyMinutes} min · last sync ${relTime(sync.lastSync)}`,
-              content: `${tickets.length} tickets`,
-              updated: sync.syncing ? 'Syncing…' : `Last sync ${relTime(sync.lastSync)}`,
-            }
+          ? { ...s, sub: `filter: ${sync.filter} · synced every ${sync.everyMinutes} min`, content: `${tickets.length} tickets in the filter`, updatedAt: sync.lastSync }
           : s,
       ),
     [raw, tickets, sync],
@@ -381,17 +322,12 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<'all' | SourceStatus>('all');
   const [page, setPage] = useState(1);
-  const navigate = useNavigate();
   const searchId = useId();
   const statusId = useId();
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return sources.filter(
-      (s) =>
-        (status === 'all' || s.status === status) &&
-        (!needle || `${s.title} ${s.sub} ${s.type} ${s.scope}`.toLowerCase().includes(needle)),
-    );
+    return sources.filter((s) => (status === 'all' || s.status === status) && (!needle || `${s.title} ${s.sub} ${s.type} ${s.scope}`.toLowerCase().includes(needle)));
   }, [sources, q, status]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -403,7 +339,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
   const openHref = (s: Source) => s.href ?? `/context/source/${encodeURIComponent(s.id)}`;
 
   return (
-    <section className={`card dt${compact ? ' compact' : ''}`} aria-label="Sources">
+    <section className={`card dt${compact ? ' compact' : ''}`} aria-label="Sources" aria-busy={!loaded}>
       <div className="toolbar">
         <div className="search">
           <Icon name="search" small />
@@ -440,7 +376,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
                   <th>Content</th>
                   <th>Updated</th>
                   <th>
-                    <span className="sr">Ask</span>
+                    <span className="sr">Open</span>
                   </th>
                 </>
               )}
@@ -454,7 +390,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
                   <td>
                     <div className="src">
                       <span className="tile">
-                        <Icon name={s.icon} small />
+                        <Icon name={iconFor(s.type)} small />
                       </span>
                       <div>
                         <Link to={openHref(s)} className="srclink" aria-current={s.id === selectedId ? 'page' : undefined}>
@@ -470,28 +406,23 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
                   </td>
                   {!compact && <td>{s.trust}</td>}
                   <td>
-                    <span className={`pill ${st.tone}`}>
-                      {s.status === 'processing' ? `${st.label}: ${s.content}` : st.label}
-                    </span>
-                    {s.failReason && !compact && <small className="failreason">{s.failReason}</small>}
+                    <span className={`pill ${st.tone}`}>{st.label}</span>
+                    {s.note && !compact && <small className="failreason">{s.note}</small>}
                   </td>
                   {!compact && (
                     <>
-                      <td className="muted">{s.status === 'processing' ? '' : s.content}</td>
+                      <td className="muted">
+                        {s.content}
+                        {s.version > 1 ? ` · v${s.version}` : ''}
+                      </td>
                       <td className="muted" style={{ whiteSpace: 'nowrap' }}>
-                        {s.updated}
+                        {relTime(s.updatedAt)}
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn plain askbtn"
-                          aria-label={s.href ? `Open ${s.title}` : `Ask Horizon about ${s.title}`}
-                          // TODO: start a chat scoped to this source (item chips in the composer).
-                          onClick={() => navigate(s.href ?? '/')}
-                        >
-                          <Icon name="chat" small />
-                          {s.href ? 'Open' : 'Ask'}
-                        </button>
+                        <Link to={openHref(s)} className="btn plain askbtn" aria-label={`Open ${s.title}`}>
+                          <Icon name={s.href ? 'right' : 'search'} small />
+                          Open
+                        </Link>
                       </td>
                     </>
                   )}
@@ -501,7 +432,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
             {rows.length === 0 && (
               <tr>
                 <td colSpan={compact ? 3 : 8} className="muted" style={{ padding: 16 }}>
-                  No sources match. Clear the search or the status filter.
+                  {!loaded ? 'Loading sources…' : sources.length === 0 ? 'No sources yet for this application.' : 'No sources match. Clear the search or the status filter.'}
                 </td>
               </tr>
             )}
@@ -515,14 +446,7 @@ function SourceTable({ sources: raw, compact, selectedId }: { sources: Source[];
         {pages > 1 && (
           <nav className="pages" aria-label="Pages">
             {Array.from({ length: pages }, (_, i) => i + 1).map((n) => (
-              <button
-                key={n}
-                type="button"
-                className={n === current ? 'on' : undefined}
-                aria-current={n === current ? 'page' : undefined}
-                aria-label={`Page ${n}`}
-                onClick={() => setPage(n)}
-              >
+              <button key={n} type="button" className={n === current ? 'on' : undefined} aria-current={n === current ? 'page' : undefined} aria-label={`Page ${n}`} onClick={() => setPage(n)}>
                 {n}
               </button>
             ))}

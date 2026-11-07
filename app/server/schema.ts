@@ -664,4 +664,45 @@ export const MIGRATIONS: string[] = [
     text TEXT NOT NULL
   );
   `,
+  // 10: App Context on the server. Sources gain 'stored' (kept, not readable in this build), a version
+  //     for citations, the storage key of uploaded bytes and a content hash; the table is rebuilt because
+  //     its CHECK constraint changes. Chunks carry their order, the source version they came from and
+  //     their size. Huddle items keep an updated_at.
+  `
+  CREATE TABLE context_sources_v10 (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('app', 'workspace', 'chat')),
+    scope_ref TEXT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    trust TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('ready', 'indexed', 'review', 'processing', 'failed', 'stored')),
+    stage INTEGER,
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    subtitle TEXT NOT NULL DEFAULT '',
+    href TEXT,
+    content TEXT NOT NULL DEFAULT '',
+    note TEXT,
+    size_bytes INTEGER,
+    location TEXT,
+    synced_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    storage_key TEXT,
+    sha256 TEXT,
+    mime TEXT
+  );
+  INSERT INTO context_sources_v10 (id, application_id, scope_type, scope_ref, type, title, trust, status, stage, created_by, created_at, updated_at, subtitle, href, content, note, size_bytes, location, synced_at)
+    SELECT id, application_id, scope_type, scope_ref, type, title, trust, status, stage, created_by, created_at, updated_at, subtitle, href, content, note, size_bytes, location, synced_at FROM context_sources;
+  DROP TABLE context_sources;
+  ALTER TABLE context_sources_v10 RENAME TO context_sources;
+  CREATE INDEX context_sources_app ON context_sources (application_id, created_at);
+
+  ALTER TABLE source_chunks ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE source_chunks ADD COLUMN source_version INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE source_chunks ADD COLUMN chars INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE huddle_items ADD COLUMN updated_at TEXT;
+  `,
 ];

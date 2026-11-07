@@ -40,7 +40,9 @@ import { CAPABILITIES } from '../src/lib/intent';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
 import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
+import { RequestError } from './context';
 import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
+import { HuddleError, raiseFeedbackPattern } from './huddle';
 import { LocalBlobStore, type BlobStore } from './storage';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
@@ -306,6 +308,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           user,
           app: member,
           roles,
+          files,
           readJson: (max) => readJson(req, max),
           send: (status, body) => send(res, status, body),
           HttpError,
@@ -431,7 +434,10 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         if (stars < 4 && comment.length < 10) throw new HttpError(400, 'Say what you expected, in at least 10 characters.');
         db.rateAnswer({ revisionId: ratingMatch[1], userId: user.id, stars, reasons, comment: comment || null });
         db.audit('user', user.id, 'answer.rate', 'answer_revision', ratingMatch[1], { stars, reasons });
-        return send(res, 200, { ok: true, stars, patterns: stars < 4 ? db.lowRatingPatterns(appId) : [] });
+        // The feedback-pattern rule: a reason shared 3+ times in 7 days for one capability goes to Huddle, once.
+        const patterns = stars < 4 ? db.lowRatingPatterns(appId) : [];
+        const raised = patterns.map((p) => raiseFeedbackPattern(db, member, p)).filter((i) => i !== null).map((i) => i!.id);
+        return send(res, 200, { ok: true, stars, patterns, raised });
       }
 
       const approvalMatch = /^\/api\/approvals\/([A-Za-z0-9_-]{1,96})\/decision$/.exec(url);
@@ -689,7 +695,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       return send(res, 404, { error: 'Not found.' });
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.message });
-      if (e instanceof AttachmentError) return send(res, e.status, { error: e.message });
+      if (e instanceof AttachmentError || e instanceof RequestError || e instanceof HuddleError) return send(res, e.status, { error: e.message });
       if (e instanceof OwnershipError) return send(res, 409, { error: e.message });
       if (e instanceof StoryError) return send(res, e.policy ? 422 : 400, { error: e.message, policy: e.policy?.id ?? null });
       if (e instanceof IngestError) return send(res, 400, { error: e.message });

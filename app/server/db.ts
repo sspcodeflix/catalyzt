@@ -1313,8 +1313,9 @@ export function openDb(path: string) {
           a.workflowRunId,
           t,
         );
+        // A citation with a place in Horizon keeps its link, so a reloaded chat opens the same passage.
         const cit = db.prepare('INSERT INTO citations (revision_id, n, source_type, source_ref, title, detail) VALUES (?, ?, ?, ?, ?, ?)');
-        for (const c of a.citations) cit.run(revisionId, c.n, 'citation', String(c.n), c.title, c.detail);
+        for (const c of a.citations) cit.run(revisionId, c.n, c.href ? 'link' : 'citation', c.href ?? String(c.n), c.title, c.detail);
         if (a.artifact) {
           db.prepare('INSERT INTO artifacts (id, chat_id, revision_id, local_id, kind, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
             `${revisionId}/${a.artifact.id}`,
@@ -1356,7 +1357,7 @@ export function openDb(path: string) {
       const items = db.prepare('SELECT item_type AS type, item_ref AS ref FROM message_items WHERE message_id = ?');
       const files = db.prepare("SELECT a.id, a.filename, a.status FROM message_items i JOIN attachments a ON a.id = i.item_ref WHERE i.message_id = ? AND i.item_type = 'file' ORDER BY a.created_at");
       const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
-      const cits = db.prepare('SELECT n, title, detail FROM citations WHERE revision_id = ? ORDER BY n');
+      const cits = db.prepare("SELECT n, title, detail, CASE WHEN source_type = 'link' THEN source_ref END AS href FROM citations WHERE revision_id = ? ORDER BY n");
       const rating = db.prepare('SELECT stars FROM ratings WHERE revision_id = ? AND user_id = ?');
       const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, outcome FROM approvals WHERE revision_id = ?');
       const artifactRows = db.prepare('SELECT body FROM artifacts WHERE revision_id = ?');
@@ -1408,7 +1409,7 @@ export function openDb(path: string) {
             revision: Number(r.revision),
             revisionId: String(r.id),
             rating: (rating.get(r.id, forUser) as { stars: number } | undefined)?.stars ?? null,
-            citations: cits.all(r.id) as Citation[],
+            citations: (cits.all(r.id) as (Citation & { href: string | null })[]).map((c) => ({ n: c.n, title: c.title, detail: c.detail, ...(c.href ? { href: c.href } : {}) })),
             blocks,
             status: r.status as 'working' | 'streaming' | 'done' | 'error' | 'stopped',
             intent,

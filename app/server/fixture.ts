@@ -2,6 +2,11 @@
  * A small workspace for tests: two applications, three people, components, stories. Mirrors the
  * shape of .myworkspace without any of its data. Server tests only.
  */
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { seedContext } from './context';
 import { openDb, type HorizonDb } from './db';
 import { seedWorkspace } from './db';
 import type { Workspace } from './workspace';
@@ -78,6 +83,41 @@ export function fixtureDb(): HorizonDb {
   const db = openDb(':memory:');
   seedWorkspace(db, FIXTURE);
   return db;
+}
+
+export const SHOP_README = `# Shop
+
+The storefront and payments services of the demo shop.
+
+## Refunds
+
+Partial refunds are allowed for 45 days from settlement. A refund above the original amount is rejected.
+
+## Running the tests
+
+Run go test ./... from the repository root.
+`;
+export const REFUNDS_DOC = `# Refund policy
+
+Card refunds need a reason code. The refund window for partial refunds is 45 days; after that only a full refund through support is possible.
+`;
+
+/**
+ * The fixture with a real clone directory for the ABCD "shop" repository (a README and a docs
+ * page), so App Context has documentation to index. Returns the database and the clone path.
+ */
+export function fixtureWithDocs(): { db: HorizonDb; ws: Workspace; cloneDir: string } {
+  const root = mkdtempSync(join(tmpdir(), 'hz-ws-'));
+  const cloneDir = join(root, 'ABCD', 'repos', 'shop');
+  mkdirSync(join(cloneDir, 'docs'), { recursive: true });
+  writeFileSync(join(cloneDir, 'README.md'), SHOP_README);
+  writeFileSync(join(cloneDir, 'docs', 'refunds.md'), REFUNDS_DOC);
+  mkdirSync(join(root, 'IBGM'), { recursive: true });
+  const ws: Workspace = { ...FIXTURE, root, teams: FIXTURE.teams.map((t) => ({ ...t, dir: join(root, t.id) })) };
+  const db = openDb(':memory:');
+  seedWorkspace(db, ws);
+  seedContext(db, ws);
+  return { db, ws, cloneDir };
 }
 
 /**

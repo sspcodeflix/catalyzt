@@ -4,7 +4,7 @@ import type { Ticket } from '../src/lib/types';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import type { HorizonDb } from './db';
 import type { DeepSeekConfig } from './deepseek';
-import { fixtureDb, seedRefundTests } from './fixture';
+import { fixtureDb, fixtureWithDocs, seedRefundTests } from './fixture';
 import { runWorkflow } from './workflow';
 
 const scope = { appName: 'ABCD', appId: 'ABCD', workspace: 'payments' };
@@ -214,6 +214,38 @@ describe('attachments (F15)', () => {
   });
 });
 
+describe('App Context in answers (F11)', () => {
+  it('relevant passages become numbered, linked sources the specialist can cite; unrelated questions get none', async () => {
+    const { db } = fixtureWithDocs();
+    const f = stubDeepSeek({ ...ok, capability: 'analysis' }, ['The window is 45 days [1]. ']);
+    const { events, agents, text } = await run(req(db, 'What is the refund window for partial refunds?'), cfg, db, true);
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('[1] shop · docs/refunds.md ¶1');
+    expect(stream).toContain('45 days');
+    const cites = events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>;
+    expect(cites.citations[0]).toMatchObject({ n: 1, title: 'shop', detail: 'App Context · docs/refunds.md ¶1 · v1', href: expect.stringMatching(/^\/context\/source\/ABCD-repo-shop#chunk-\d+$/) });
+    expect(agents.find((a) => a.agent === 'Analysis agent')?.steps[0]).toMatchObject({ label: 'Reading App Context', detail: expect.stringMatching(/passages? from 1 source/) });
+    expect(text).toContain('[1]');
+
+    stubDeepSeek({ ...ok, capability: 'cloudops' }, ['No idea. ']);
+    const other = await run(req(db, 'Why is the ingress certificate expiring?'), cfg, db, true);
+    expect(other.events.find((e) => e.type === 'citations')).toBeUndefined();
+    expect(other.agents.find((a) => a.agent === 'CloudOps agent')?.steps[0]).toMatchObject({ detail: 'Nothing relevant in App Context' });
+  });
+
+  it('attached files are numbered before App Context passages', async () => {
+    const { db } = fixtureWithDocs();
+    stubDeepSeek({ ...ok, capability: 'analysis' }, ['See [1] and [2]. ']);
+    const { events } = await run(req(db, 'What is the refund window for partial refunds?', { attachments: [{ id: 'att-1', filename: 'notes.md', text: 'Our refund window is being discussed.', note: null }] }), cfg, db, true);
+    const cites = (events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>).citations;
+    expect(cites[0]).toMatchObject({ n: 1, title: 'notes.md', detail: 'Attached file' });
+    // Both documents of the repository mention partial refunds; they follow the attachment, numbered on.
+    expect(cites.length).toBeGreaterThanOrEqual(2);
+    expect(cites.slice(1).map((c) => [c.title, c.detail.startsWith('App Context')])).toEqual(cites.slice(1).map(() => ['shop', true]));
+    expect(cites.map((c) => c.n)).toEqual(cites.map((_, i) => i + 1));
+  });
+});
+
 describe('history', () => {
   it('drops earlier user turns that break a policy before they reach the model', async () => {
     const db = fixtureDb();
@@ -249,7 +281,8 @@ describe('recording in the database', () => {
     ]);
     expect(rows[3].task).toBe('Investigate checkoutservice restarts');
     expect(db.raw.prepare('SELECT status, requested_by, chat_id, application_id FROM workflow_runs').get()).toEqual({ status: 'done', requested_by: 'u-sourav', chat_id: 'c1', application_id: 'ABCD' });
-    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM agent_steps').get()).toEqual({ n: 4 });
+    // Guard check, routing, App Context lookup, writing the answer, output scan.
+    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM agent_steps').get()).toEqual({ n: 5 });
     expect(db.listAgentActivity({ app: 'ABCD' }).find((a) => a.agent === 'CloudOps agent')).toMatchObject({ parentAgent: 'Orchestrator', requestedBy: { name: 'Sourav' }, chat: { id: 'c1', title: 'Restarts' } });
     expect(db.listAgentActivity({ app: 'IBGM' })).toHaveLength(0);
     expect(db.listChats('ABCD', 'u-sourav').map((c) => c.title)).toEqual(['Restarts']);

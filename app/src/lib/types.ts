@@ -25,8 +25,10 @@ export interface Scope {
 export interface Citation {
   n: number;
   title: string;
-  /** e.g. "Fabric · Refunds §3.2 v14" or "commit a1b2c3d" */
+  /** e.g. "App Context · README.md ¶3 · v2" or "Jira · Ready for UAT" */
   detail: string;
+  /** Where the exact passage or record opens in Horizon, when it has a place. */
+  href?: string;
 }
 
 export interface RunStep {

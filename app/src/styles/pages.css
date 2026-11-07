@@ -172,3 +172,8 @@ legend { padding: 0; }
   .segctl button { flex: 1; }
   .replyform { flex-direction: column; align-items: stretch; }
 }
+
+/* App Context passages: a citation link lands on its passage; excluded ones stay visible but muted. */
+.chunk.excluded { opacity: .75; }
+.chunk.target, .chunk:target { outline: 2px solid var(--hz-info); outline-offset: 2px; }
+.decideform input.text { width: 100%; box-sizing: border-box; }

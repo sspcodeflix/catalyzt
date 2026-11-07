@@ -1,9 +1,10 @@
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { kindInfo, loadHuddle, me, useHuddleState, type HuddleItem } from '../lib/huddleData';
 import { useSession } from '../lib/session';
-import { kindInfo, me, useHuddle, type HuddleItem } from '../lib/huddleData';
+import { relTime } from './Tickets';
 import '../styles/pages.css';
 
 type Filter = 'open' | 'decided' | 'mine';
@@ -19,13 +20,18 @@ export const itemStatus = (i: HuddleItem) =>
 
 /** Huddle: the team's shared place for decisions that the model or one person should not make alone. */
 export function Huddle() {
-  const items = useHuddle();
+  const { items, loaded, error } = useHuddleState();
   const location = useLocation();
   const panelOpen = /^\/huddle\/[^/]+/.test(location.pathname);
   const selectedId = panelOpen ? decodeURIComponent(location.pathname.split('/')[2]) : undefined;
   const [filter, setFilter] = useState<Filter>('open');
   const [q, setQ] = useState('');
   const searchId = useId();
+  const { loaded: sessionLoaded } = useSession();
+
+  useEffect(() => {
+    if (sessionLoaded) void loadHuddle();
+  }, [sessionLoaded]);
 
   const counts = {
     open: items.filter((i) => !i.decision).length,
@@ -48,6 +54,18 @@ export function Huddle() {
     { id: 'mine', label: 'Mine' },
   ];
 
+  const emptyText = !loaded
+    ? 'Loading decisions…'
+    : error
+      ? `Could not load decisions: ${error}`
+      : q
+        ? 'No decisions match your search.'
+        : filter === 'open'
+          ? 'Nothing to decide right now. Decisions appear when someone raises one, when a source conflicts with a higher-trust source, or when Horizon finds a pattern in low ratings.'
+          : filter === 'decided'
+            ? 'Nothing decided yet.'
+            : 'Nothing open that you raised, voted on or commented on.';
+
   return (
     <div className={`body${panelOpen ? ' split' : ''}`}>
       <div className="chatcol listcol">
@@ -58,10 +76,10 @@ export function Huddle() {
                 <Icon name="layers" small />
                 {useSession().me?.app?.name ?? 'Loading…'}
               </span>
-              <h1>Huddle</h1>
+              <h1>Huddle · Decisions</h1>
               <p>
                 Decisions Horizon won't make on its own: conflicting sources, disputed mappings, accepted risks and
-                patterns in feedback. Each one links to the items it affects.
+                patterns in feedback. Votes are advisory; an app owner decides, with a reason that is kept.
               </p>
             </div>
           </div>
@@ -76,35 +94,24 @@ export function Huddle() {
             </div>
             <div className="segctl" role="group" aria-label="Show">
               {filters.map((f) => (
-                <button
-                  key={f.id}
-                  type="button"
-                  className={filter === f.id ? 'on' : undefined}
-                  aria-pressed={filter === f.id}
-                  onClick={() => setFilter(f.id)}
-                >
+                <button key={f.id} type="button" className={filter === f.id ? 'on' : undefined} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
                   {f.label} {counts[f.id]}
                 </button>
               ))}
             </div>
           </div>
 
-          <section className="card hlist" aria-label={`${filters.find((f) => f.id === filter)!.label} decisions`}>
+          <section className="card hlist" aria-label={`${filters.find((f) => f.id === filter)!.label} decisions`} aria-busy={!loaded}>
             {shown.length === 0 && (
-              <p className="muted" style={{ padding: 16, margin: 0 }}>
-                {q ? 'No decisions match your search.' : 'Nothing here.'}
+              <p className={`muted${error ? ' errtext' : ''}`} style={{ padding: 16, margin: 0 }} role={error ? 'alert' : undefined}>
+                {emptyText}
               </p>
             )}
             {shown.map((i) => {
               const st = itemStatus(i);
               const sel = i.id === selectedId;
               return (
-                <Link
-                  key={i.id}
-                  to={`/huddle/${i.id}`}
-                  className={`hitem${sel ? ' sel' : ''}`}
-                  aria-current={sel ? 'page' : undefined}
-                >
+                <Link key={i.id} to={`/huddle/${i.id}`} className={`hitem${sel ? ' sel' : ''}`} aria-current={sel ? 'page' : undefined}>
                   <span className="tile">
                     <Icon name={kindInfo[i.kind].icon} small />
                   </span>
@@ -120,7 +127,7 @@ export function Huddle() {
                           </span>
                         ))}
                       </span>
-                      Raised by {i.raisedBy} · {i.raisedAt}
+                      Raised by {i.raisedBy} · {relTime(i.raisedAt)}
                     </div>
                   </div>
                   <span className={`pill ${st.tone}`}>{st.label}</span>

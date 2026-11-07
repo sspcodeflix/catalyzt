@@ -1,13 +1,13 @@
 /**
- * Huddle store: decisions Horizon won't make on its own. In-memory stand-in for the API, being
- * replaced by a server-backed store (phase 3). No placeholder data.
+ * Huddle in the browser: the server's decisions for the selected application. Votes, comments and
+ * decisions are server calls; the item shown is what the server recorded. Responses for an
+ * earlier person or application are dropped (sessionEpoch).
  */
 import { useSyncExternalStore } from 'react';
 
 import type { IconName } from '../components/icons';
+import { getSession, http, sessionEpoch, StaleScopeError } from './session';
 import type { Citation } from './types';
-import { resolveConflict } from './contextData';
-import { getSession } from './session';
 
 export type HuddleKind = 'conflict' | 'mapping' | 'risk' | 'feedback';
 
@@ -23,7 +23,7 @@ export interface Person {
   name: string;
 }
 
-/** The acting person, from the session (interim, until this store moves to the server). */
+/** The acting person, from the session. */
 const sessionMe = (): Person & { role: 'owner' | 'member' } => {
   const m = getSession().me;
   return { initials: m?.user.initials ?? '?', name: m?.user.name ?? 'Unknown', role: m?.app?.roles.includes('app_owner') ? 'owner' : 'member' };
@@ -34,10 +34,9 @@ export interface HuddleOption {
   id: string;
   title: string;
   detail: string;
-  /** Initials of the people who voted for this option. Votes are advisory (open question 6). */
+  /** Initials of the people who voted for this option. Votes are advisory. */
   votes: string[];
-  /** For conflicts: true when choosing this option means using the team upload. */
-  keepsUpload?: boolean;
+  keepsUpload: boolean;
 }
 
 export interface HuddleComment {
@@ -53,31 +52,33 @@ export interface HuddleItem {
   title: string;
   summary: string;
   raisedBy: string;
+  raisedByType: 'user' | 'agent';
   raisedAt: string;
   scope: string;
   people: string[];
-  /** Label shown while open, e.g. "Needs a decision" or "Security sign-off". */
   openLabel: string;
   openTone: string;
-  /** Horizon's summary of both sides; [n] markers refer to citations. */
   aiSummary: string;
   citations: Citation[];
   affects: { label: string; href?: string }[];
   options: HuddleOption[];
   comments: HuddleComment[];
-  needsInput?: boolean;
-  /** Links a source conflict back to App Context. */
-  sourceId?: string;
+  needsInput: boolean;
+  sourceId: string | null;
   decision?: { optionId: string; reason: string; at: string; by: string };
+  myVote: string | null;
 }
 
-/** No seeded items: Huddle fills only with what people and agents raise. Server-backed store follows in phase 3. */
-const seed: HuddleItem[] = [];
+interface State {
+  items: HuddleItem[];
+  loaded: boolean;
+  error: string | null;
+}
 
-let items: HuddleItem[] = seed;
+let state: State = { items: [], loaded: false, error: null };
 const listeners = new Set<() => void>();
-const set = (next: HuddleItem[]) => {
-  items = next;
+const set = (next: Partial<State>) => {
+  state = { ...state, ...next };
   listeners.forEach((l) => l());
 };
 const subscribe = (l: () => void) => {
@@ -85,48 +86,70 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-export const useHuddle = () => useSyncExternalStore(subscribe, () => items);
+export const useHuddle = () => useSyncExternalStore(subscribe, () => state.items);
+export const useHuddleState = () => useSyncExternalStore(subscribe, () => state);
 
-const updateItem = (id: string, fn: (i: HuddleItem) => HuddleItem) => set(items.map((i) => (i.id === id ? fn(i) : i)));
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const epoch = sessionEpoch();
+  const res = await http(url, init?.body ? { ...init, headers: { 'Content-Type': 'application/json', ...((init.headers as Record<string, string> | undefined) ?? {}) } } : init);
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
+  if (!res.ok) throw Object.assign(new Error(body.error ?? `Request failed (${res.status}).`), { status: res.status });
+  return body;
+}
 
-const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+let loading: Promise<void> | null = null;
+export function loadHuddle(force = false): Promise<void> {
+  if (loading && !force) return loading;
+  loading = api<{ items: HuddleItem[] }>('/api/huddle')
+    .then((b) => set({ items: b.items, loaded: true, error: null }))
+    .catch((e: Error) => {
+      if (e instanceof StaleScopeError) return;
+      loading = null;
+      set({ loaded: true, error: e.message });
+    });
+  return loading;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('hz:session', () => {
+    loading = null;
+    state = { items: [], loaded: false, error: null };
+    listeners.forEach((l) => l());
+    void loadHuddle();
+  });
+}
+
+const replace = (item: HuddleItem) => set({ items: state.items.some((i) => i.id === item.id) ? state.items.map((i) => (i.id === item.id ? item : i)) : [item, ...state.items] });
+
+/** One item, from memory or the server. Null when it does not exist in this application. */
+export async function fetchItem(id: string): Promise<HuddleItem | null> {
+  try {
+    const { item } = await api<{ item: HuddleItem }>(`/api/huddle/${encodeURIComponent(id)}`);
+    replace(item);
+    return item;
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return null;
+    throw e;
+  }
+}
+
+const action = async (id: string, what: string, body: unknown) => {
+  const { item } = await api<{ item: HuddleItem }>(`/api/huddle/${encodeURIComponent(id)}/${what}`, { method: 'POST', body: JSON.stringify(body) });
+  replace(item);
+  return item;
+};
 
 /** One vote per person: voting for an option moves your vote there. */
-export function vote(itemId: string, optionId: string) {
-  updateItem(itemId, (i) => ({
-    ...i,
-    options: i.options.map((o) => {
-      const without = o.votes.filter((v) => v !== me.initials);
-      return o.id === optionId ? { ...o, votes: [...without, me.initials] } : { ...o, votes: without };
-    }),
-  }));
-}
+export const vote = (itemId: string, optionId: string) => action(itemId, 'vote', { optionId });
+export const addComment = (itemId: string, text: string) => action(itemId, 'comments', { text });
+export const markNeedsInput = (itemId: string) => action(itemId, 'needs-input', {});
+/** Only an app owner decides (the server checks). The decision and its reason are kept with the item. */
+export const decide = (itemId: string, optionId: string, reason: string) => action(itemId, 'decide', { optionId, reason });
 
-export function addComment(itemId: string, text: string) {
-  const t = text.trim();
-  if (!t) return;
-  updateItem(itemId, (i) => ({
-    ...i,
-    people: i.people.includes(me.initials) ? i.people : [...i.people, me.initials],
-    comments: [...i.comments, { id: crypto.randomUUID(), who: { initials: me.initials, name: me.name }, at: now(), text: t }],
-  }));
-}
-
-export function markNeedsInput(itemId: string) {
-  updateItem(itemId, (i) => ({ ...i, needsInput: true }));
-}
-
-/** Only an app owner decides. The decision and its reason are kept with the item, and Horizon applies it. */
-export function decide(itemId: string, optionId: string, reason: string) {
-  if (me.role !== 'owner') throw new Error('Only an app owner can decide');
-  if (!reason.trim()) throw new Error('A reason is required');
-  const item = items.find((i) => i.id === itemId);
-  const option = item?.options.find((o) => o.id === optionId);
-  if (!item || !option || item.decision) return;
-  updateItem(itemId, (i) => ({
-    ...i,
-    needsInput: false,
-    decision: { optionId, reason: reason.trim(), at: `today ${now()}`, by: me.name },
-  }));
-  if (item.kind === 'conflict' && item.sourceId) resolveConflict(item.sourceId, !!option.keepsUpload);
+/** Raises a decision for the team (mapping, risk or feedback; source conflicts come from App Context). */
+export async function raiseItem(input: { kind: Exclude<HuddleKind, 'conflict'>; title: string; summary: string; options: string[]; affects?: { label: string; href?: string }[] }): Promise<HuddleItem> {
+  const { item } = await api<{ item: HuddleItem }>('/api/huddle', { method: 'POST', body: JSON.stringify(input) });
+  replace(item);
+  return item;
 }

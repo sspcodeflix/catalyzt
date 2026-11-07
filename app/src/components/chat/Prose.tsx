@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 import type { Citation } from '../../lib/types';
 
@@ -92,8 +93,16 @@ function inline(text: string, citations: Citation[]): ReactNode[] {
     const cite = /^\[(\d+)\]$/.exec(part);
     if (cite) {
       const c = citations.find((x) => x.n === Number(cite[1]));
-      // Only known sources become citation chips; a model-invented [n] stays plain text.
+      // Only known sources become citation chips; a model-invented [n] stays plain text. A source
+      // with a place in Horizon (an App Context passage, a ticket) opens there.
       if (!c) return part;
+      if (c.href) {
+        return (
+          <Link key={i} to={c.href} className="cite" title={`${c.title} · ${c.detail}`} aria-label={`Source ${c.n}: ${c.title}, ${c.detail}. Opens the source.`}>
+            {cite[1]}
+          </Link>
+        );
+      }
       return (
         <span key={i} className="cite" tabIndex={0} title={`${c.title} · ${c.detail}`} aria-label={`Source ${c.n}: ${c.title}, ${c.detail}`}>
           {cite[1]}
