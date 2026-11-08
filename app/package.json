@@ -17,7 +17,8 @@
     "restore-check": "vite-node scripts/restore-check.ts",
     "validate-workspace": "vite-node scripts/validate-workspace.ts",
     "load-profile": "vite-node scripts/load-profile.ts",
-    "retention": "vite-node scripts/retention.ts"
+    "retention": "vite-node scripts/retention.ts",
+    "retrieval-eval": "vite-node scripts/retrieval-eval.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

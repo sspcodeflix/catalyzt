@@ -293,6 +293,13 @@ export function keywordScore(qw: Set<string>, c: { where: string; text: string }
 const RRF_K = 60;
 /** How many fused candidates the reranker reads. */
 export const RERANK_CANDIDATES = 20;
+/**
+ * The reranker also reads the nearest passages by meaning, this many, when fusion left them out. A passage
+ * that shares no word with the question has only its vector rank in the fused order, so passages with
+ * a weak keyword match on top of a vector rank crowd it out of the fused top 20; the cross-encoder
+ * cannot rescue what it never reads. Measured with scripts/retrieval-eval.ts (F24 follow-up).
+ */
+export const RERANK_VECTOR_SLOTS = 5;
 /** Cosine below this says nothing about relevance for MiniLM-class models. */
 const VECTOR_FLOOR = 0.15;
 /**
@@ -301,8 +308,12 @@ const VECTOR_FLOOR = 0.15;
  */
 const RERANK_FLOOR = -9;
 const RERANK_SPAN = 10;
-/** How much the keyword-and-vector agreement counts next to the reranker (0.6 × 0.5 average clears the 0.2 bar). */
-const TOPICAL_WEIGHT = 0.6;
+/**
+ * How much the keyword-and-vector agreement counts next to the reranker (0.5 × 0.4 average clears the
+ * 0.2 bar). Was 0.6; at 0.5 fewer unanswerable questions get a passage, with the same recall
+ * (scripts/retrieval-eval.ts).
+ */
+export const TOPICAL_WEIGHT = 0.5;
 export const rerankRelevance = (logit: number) => Math.max(0, Math.min(1, (logit - RERANK_FLOOR) / RERANK_SPAN));
 
 /**
@@ -435,6 +446,7 @@ async function finish<T extends Candidate>(models: RetrievalModels, query: strin
 
   const reranker = opts.rerank === false ? null : models.reranker;
   const top = order.slice(0, RERANK_CANDIDATES);
+  if (reranker) for (const i of byVec.slice(0, RERANK_VECTOR_SLOTS)) if (!top.includes(i)) top.push(i);
   let rerankScores: number[] | null = null;
   if (reranker && top.length > 0) {
     try {

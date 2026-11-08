@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { cosine, fromBlob, keywordScore, rank, rerankRelevance, toBlob, words, type Candidate, type RetrievalModels } from './retrieval';
+import { cosine, fromBlob, keywordScore, rank, rerankRelevance, toBlob, TOPICAL_WEIGHT, words, type Candidate, type RetrievalModels } from './retrieval';
 
 const unit = (...xs: number[]) => {
   const v = Float32Array.from(xs);
@@ -73,9 +73,9 @@ describe('ranking', () => {
     expect(by.topical.rerank).toBe(-10);
     expect(by.topical.relevance).toBeGreaterThanOrEqual(0.2);
     expect(by.noise).toBeUndefined();
-    // The Jira row has no vector: it scores by words alone (0.6 × keyword) when the reranker rejects it.
+    // The Jira row has no vector: it scores by words alone (TOPICAL_WEIGHT × keyword) when the reranker rejects it.
     expect(by.jira.vector).toBeNull();
-    expect(by.jira.relevance).toBeCloseTo(0.6 * keywordScore(new Set(words('What is the refund window?')), cands[4]), 2);
+    expect(by.jira.relevance).toBeCloseTo(TOPICAL_WEIGHT * keywordScore(new Set(words('What is the refund window?')), cands[4]), 2);
   });
 
   it('falls back to keyword ranking when the embedder fails and to fused scores when the reranker fails', async () => {

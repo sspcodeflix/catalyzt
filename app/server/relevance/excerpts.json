@@ -1,0 +1,1309 @@
+{
+ "notice": "Short documentation excerpts used only as a retrieval-evaluation corpus. Each passage is an unmodified paragraph group (whitespace collapsed, long ones cut at 1,200 characters) from the named open-source project, under that project's licence. Copied 8 November 2026.",
+ "sources": {
+  "ach": {
+   "project": "moov-io/ach",
+   "url": "https://github.com/moov-io/ach",
+   "license": "Apache-2.0",
+   "copyright": "Moov"
+  },
+  "microservices-demo": {
+   "project": "GoogleCloudPlatform/microservices-demo (Online Boutique)",
+   "url": "https://github.com/GoogleCloudPlatform/microservices-demo",
+   "license": "Apache-2.0",
+   "copyright": "Google LLC"
+  },
+  "piggymetrics": {
+   "project": "sqshq/piggymetrics",
+   "url": "https://github.com/sqshq/piggymetrics",
+   "license": "MIT",
+   "copyright": "Copyright (c) 2016 Alexander Lukyanchikov"
+  },
+  "petclinic": {
+   "project": "spring-petclinic/spring-petclinic-microservices",
+   "url": "https://github.com/spring-petclinic/spring-petclinic-microservices",
+   "license": "Apache-2.0",
+   "copyright": "The Spring PetClinic authors"
+  }
+ },
+ "passages": [
+  {
+   "id": "ach:docs/returns.md ¶1",
+   "source": "ach",
+   "locator": "docs/returns.md ¶1",
+   "text": "--- layout: page title: Return files hide_hero: true show_sidebar: false menubar: docs-menu --- # Return files ACH files and their EntryDetail records may be returned for a variety of reasons defined by \"return codes\". Either the originating (ODFI) or receiving (RDFI) financial institution can issue a return. Some of the most common reasons include: insufficient funds (`R01`) and account information not found (`R03`). Returns are identified by an [Addenda99](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#Addenda99) record on the EntryDetail with a [ReturnCode](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#ReturnCode) that can be processed. ### Processing"
+  },
+  {
+   "id": "ach:docs/returns.md ¶2",
+   "source": "ach",
+   "locator": "docs/returns.md ¶2",
+   "text": "An Originator must have a process set up with their ODFI to handle returns. This may involve manual verification of actions to take, retrying entries (only in the case of an `R01` or `R09`), or revocation of future transfers for the customer (`R07` - Authorization revoked). Fees may be applied by the ODFI/RDFI as a result of returned files. Written authorization may be requested as a result of returned files as well. Such authorization requests may be prompted if the description, amount, or effective date is different than what the customer had authorized. The `R05` return code is used when an unauthorized corporate debit (standard entry class code of `CCD` or `CTX`) was used ### Creation"
+  },
+  {
+   "id": "ach:docs/returns.md ¶3",
+   "source": "ach",
+   "locator": "docs/returns.md ¶3",
+   "text": "When creating a return entry add an [Addenda99](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#Addenda99) record onto the EntryDetail with the appropriate return code. You'll need to copy the original `TraceNumber` and populate a new value when returning the file. ```go addenda99 := NewAddenda99() addenda99.ReturnCode = \"R07\" addenda99.OriginalTrace = \"99912340000015\" addenda99.AddendaInformation = \"Authorization Revoked\" addenda99.OriginalDFI = \"9101298\" // entry.Addenda99 = addenda99 ``` ### Return codes Below are Nacha's supported return codes. Refer to the Nacha rules and regulations for more detail on a specific return code handling and usage. #### General Return Codes"
+  },
+  {
+   "id": "ach:docs/returns.md ¶4",
+   "source": "ach",
+   "locator": "docs/returns.md ¶4",
+   "text": "| Code | Reason | Description | |----|-----|------| | `R01` | Insufficient Funds | Available balance is not sufficient to cover the dollar value of the debit entry | | `R02` | Account Closed | Previously active account has been closed by customer or RDFI | | `R03` | No Account/Unable to Locate Account | Account number structure is valid and passes editing process, but does not correspond to individual or is not an open account | | `R04` | Invalid Account Number | Account number structure not valid; entry may fail check digit validation or may contain an incorrect number of digits. | | `R05` | Improper Debit to Consumer Account | A CCD, CTX, or CBR debit entry was transmitted to a Consumer Account of the Receiver and was not authorized by the Receiver | | `R06` | Returned per ODFI's Request | ODFI has requested RDFI to return the ACH entry (optional to RDFI - ODFI indemnifies RDFI) | | `R07` | Authorization Revoked by Customer | Consumer, who previously authorized ACH payment, has revoked authorization from Originator (must be returned no later than 60 days from settlement date and customer must sign affidavit) | | `R08` | Payment Stopped | Receiver of a recurring debit transaction…"
+  },
+  {
+   "id": "ach:docs/returns.md ¶6",
+   "source": "ach",
+   "locator": "docs/returns.md ¶6",
+   "text": "| Code | Reason | Description | |----|-----|------| | `R40` | Return of ENR Entry by Federal Government Agency (ENR Only) | This return reason code may only be used to return ENR entries and is at the federal Government Agency's Sole discretion | | `R41` | Invalid Transaction Code (ENR only) | Either the Transaction Code included in Field 3 of the Addenda Record does not conform to the ACH Record Format Specifications contained in Appendix Three (ACH Record Format Specifications) or it is not appropriate with regard to an Automated Enrollment Entry. | | `R42` | Routing Number/Check Digit Error (ENR Only) | The Routing Number and the Check Digit included in Field 3 of the Addenda Record is either not a valid number or it does not conform to the Modulus 10 formula. | | `R43` | Invalid DFI Account Number (ENR Only) | The Receiver's account number included in Field 3 of the Addenda Record must include at least one alphameric character. | | `R44` | Invalid Individual ID Number/Identification Number (ENR only) | The Individual ID Number/Identification Number provided in Field 3 of the Addenda Record does not match a corresponding ID number in the Federal Government Agency's records. | |…"
+  },
+  {
+   "id": "ach:docs/returns.md ¶8",
+   "source": "ach",
+   "locator": "docs/returns.md ¶8",
+   "text": "| Code | Reason | Description | |----|-----|------| | `R50` | State Law Affecting RCK Acceptance | RDFI is located in a state that has not adopted Revised Article 4 of the UCC or the RDFI is located in a state that requires all canceled checks to be returned within the periodic statement | | `R51` | Item Related to RCK Entry is Ineligible or RCK Entry is Improper | The item to which the RCK entry relates was not eligible, Originator did not provide notice of the RCK policy, signature on the item was not genuine, the item has been altered or amount of the entry was not accurately obtained from the item. RDFI must obtain a Written Statement and return the entry within 60 days following Settlement Date | | `R52` | Stop Payment on Item (Adjustment Entry) | A stop payment has been placed on the item to which the RCK entry relates. RDFI must return no later than 60 days following Settlement Date. No Written Statement is required as the original stop payment form covers the return. | | `R53` | Item and RCK Entry Presented for Payment (Adjustment Entry) | Both the RCK entry and check have been presented for payment. RDFI must obtain a Written Statement and return the entry within 60 days…"
+  },
+  {
+   "id": "ach:docs/returns.md ¶14",
+   "source": "ach",
+   "locator": "docs/returns.md ¶14",
+   "text": "| Code | Reason | Description | |----|-----|------| | `R80` | IAT Entry Coding Error | The IAT Entry is being returned due to one or more of the following conditions: Invalid DFI/Bank Branch Country Code, invalid DFI/Bank Identification Number Qualifier, invalid Foreign Exchange Indicator, invalid ISO Originating Currency Code, invalid ISO Destination Currency Code, invalid ISO Destination Country Code, invalid Transaction Type Code | | `R81` | Non-Participant in IAT Program | The IAT Entry is being returned because the Gateway does not have an agreement with either the ODFI or the Gateway's customer to transmit Outbound IAT Entries. | | `R82` | Invalid Foreign Receiving DFI Identification | The reference used to identify the Foreign Receiving DFI of an Outbound IAT Entry is invalid. | | `R83` | Foreign Receiving DFI Unable to Settle | The IAT Entry is being returned due to settlement problems in the foreign payment system. | | `R84` | Entry Not Processed by Gateway | For Outbound IAT Entries, the Entry has not been processed and is being returned at the Gateway's discretion because either (1) the processing of such Entry may expose the Gateway to excessive risk, or (2) the…"
+  },
+  {
+   "id": "ach:docs/reversals.md ¶1",
+   "source": "ach",
+   "locator": "docs/reversals.md ¶1",
+   "text": "--- layout: page title: Reversal Files hide_hero: true show_sidebar: false menubar: docs-menu --- # Reversal Files Often ACH files are sent in error and need to be undone. Nacha has a process for creating a \"reversal file\" which needs to follow a few steps. All other fields should be left untouched so the receiver of a reversal can match the Entry Detail records. - Replace the value in Company Entry Description with `REVERSAL` - Update Effective Entry Date in the future depending on same-day or standard ACH. - Update each Transaction Code to undo fund movement. ## Creation The Moov ACH library offers a `Reversal(..)` function on files. ```go func (f *File) Reversal(effectiveEntryDate time.Time) error Reversal will transform a File into a Nacha compliant reversal which can be transmitted to undo fund movement. ```"
+  },
+  {
+   "id": "ach:docs/balanced-offset.md ¶1",
+   "source": "ach",
+   "locator": "docs/balanced-offset.md ¶1",
+   "text": "--- layout: page title: Balanced offset hide_hero: true show_sidebar: false menubar: docs-menu --- # Balanced offsets ACH files can have \"offset records\" which are [EntryDetail](https://godoc.org/github.com/moov-io/ach#EntryDetail) records that balance a file's debits and credits. This means if there are debits, there is a credit offset matching the sum of the debits. If there are credits, there is a debit offset matching the sum of the credits. They are mutually exclusive. Offset files are used to offset transactions from a single account inside of the ODFI. The Offset is the last record which settles the funds into a single ODFI account. ## Setting offset metadata"
+  },
+  {
+   "id": "ach:docs/balanced-offset.md ¶2",
+   "source": "ach",
+   "locator": "docs/balanced-offset.md ¶2",
+   "text": "An ACH [Batch](https://godoc.org/github.com/moov-io/ach#Batch) supports calling [WithOffset](https://godoc.org/github.com/moov-io/ach#Batch.WithOffset) to set offset information such as routing number, account number, account type, and a description. ```go bh := ach.NewBatchHeader() // fill in the fields ed := ach.NewEntryDetail() // fill in the fields batch := ach.NewBatch(bh) batch.AddEntry(ed) batch.WithOffset(&ach.Offset{ RoutingNumber: \"...\", AccountNumber: \"...\", AccountType: OffsetSavings, Description: \"...\", }) // On each batch.Create() call the offset record will be re-tabulated ``` ## HTTP API The [HTTP server](https://moov-io.github.io/ach/usage-docker/) supports [balancing existing batches](https://moov-io.github.io/ach/api/#post-/files/-fileID-) and [adding new batches to be balanced](https://moov-io.github.io/ach/api/#post-/files/-fileID-/batches)."
+  },
+  {
+   "id": "ach:docs/sec-codes-table.md ¶1",
+   "source": "ach",
+   "locator": "docs/sec-codes-table.md ¶1",
+   "text": "--- layout: page title: SEC Codes Table hide_hero: true show_sidebar: false menubar: docs-menu --- ## Picking which Standard Entry Class code to use The [NACHA Corporate Rules and Guidelines](https://github.com/moov-io/ach/blob/master/docs/2013-Corporate-Rules-and-Guidelines.pdf) offer a helpful table for choosing the correct Standard Entry Class (SEC) Code to use for a given enrollment and transaction. The table has been re-written below: ### Point of sale transactions #### Physical enrollment - Customer uses their debit card at a POS terminal. <p>Proper SEC Code: <strong>POS</strong></p> #### Internet enrollment - Customer uses their debit card at a POS terminal. <p>Proper SEC Code: <strong>POS</strong></p> ### Internet transactions #### Physical enrollment"
+  },
+  {
+   "id": "ach:docs/changes.md ¶1",
+   "source": "ach",
+   "locator": "docs/changes.md ¶1",
+   "text": "--- layout: page title: Change files hide_hero: true show_sidebar: false menubar: docs-menu --- # Change files A Notification of Change (NOC) is a non-dollar entry transmitted from a receiving depository financial institution (RDFI) to the originating depository financial institution (ODFI). These are sent in response to outdated or erroneous information in an initial entry. An NOC often occurs due to bank mergers or acquisitions that change account and/or routing numbers. If an RDFI sends an NOC, the ODFI will need to inform their originator promptly. The Standard Entry Class code for an NOC is \"COR\". There are a few possible reasons for an NOC, each defined by a \"change code\". The most common codes are `C01` for an incorrect account number and `C02` for an outdated routing number. We have [a list of supported change codes](#change-codes) below."
+  },
+  {
+   "id": "ach:docs/changes.md ¶2",
+   "source": "ach",
+   "locator": "docs/changes.md ¶2",
+   "text": "NOCs are identified by an [Addenda98](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#Addenda98) record on the EntryDetail with a [ChangeCode](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#ChangeCode) that can be processed. ### Processing The RDFI must send an NOC within two banking days of the original entry settlement date (to which the NOC is in response to). The ODFI is responsible for forwarding an NOC to the Originator within two banking days of the NOC settlement date. They must provide the Originator with the following information at a minimum: - Company name - Company identification - Company Entry description - Effective Entry date - DFI account number - Individual name/receiving company name - Individual identification number - Change code - Original Entry trace number - Original RDFI identification - Corrected data"
+  },
+  {
+   "id": "ach:docs/changes.md ¶3",
+   "source": "ach",
+   "locator": "docs/changes.md ¶3",
+   "text": "The Originator must make specified changes within six banking days of receiving the above information or prior to initiating another entry to the receiver's account (whichever is later). ### Creation When creating an NOC entry, add an [Addenda98](https://pkg.go.dev/github.com/moov-io/ach?tab=doc#Addenda98) record onto the EntryDetail with the appropriate change code. ```go addenda98 := ach.NewAddenda98() addenda98.ChangeCode = \"C01\" addenda98.OriginalTrace = \"121042880000001\" addenda98.OriginalDFI = \"121042882\" addenda98.CorrectedData = \"1918171614\" addenda98.TraceNumber = \"91012980000088\" //entry.Addenda98 = addenda98 ``` ### Change codes"
+  },
+  {
+   "id": "ach:docs/segment-file.md ¶1",
+   "source": "ach",
+   "locator": "docs/segment-file.md ¶1",
+   "text": "--- layout: page title: Segmenting files hide_hero: true show_sidebar: false menubar: docs-menu --- # Segmenting files ACH File creation should default to NACHA rules by supporting both credits and debits in the same ACH file. Some legacy systems require the file to be segmented and contain only debits or only credits in a file. Segmenting files is a post file creation process that takes an input of an ACH.File and returns two ACH.Files that have been segmented (debits and credits). ## Creating segmented files An ACH [File](https://godoc.org/github.com/moov-io/ach#File) supports calling [SegmentFile](https://godoc.org/github.com/moov-io/ach#File.SegmentFile) to create a debit ach file and credit ach file from an ach file that contains mixed debits and credits."
+  },
+  {
+   "id": "ach:docs/segment-file.md ¶2",
+   "source": "ach",
+   "locator": "docs/segment-file.md ¶2",
+   "text": "```go // open an ACH file(from the ./examples/ directory) f, err := os.Open(filepath.Join(\"testdata\", \"ppd-mixedDebitCredit.ach\")) if err != nil { log.Fatal(err) } // read file r := ach.NewReader(f) achFile, err := r.Read() if err != nil { fmt.Printf(\"Issue reading file: %+v \\n\", err) } // Segment File creditFile, debitFile, err := achFile.SegmentFile() if err != nil { fmt.Printf(\"Could not segment the file: %v\", err) } // write the file to std out. Anything io.Writer w := ach.NewWriter(os.Stdout) if err := w.Write(creditFile); err != nil { log.Fatalf(\"Unexpected error: %s\\n\", err) } if err := w.Write(debitFile); err != nil { log.Fatalf(\"Unexpected error: %s\\n\", err) } w.Flush() ``` ## HTTP API Files can be segmented with [an http endpoint](https://moov-io.github.io/ach/api/#post-/segment)."
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶1",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶1",
+   "text": "--- layout: page title: Calculating Effective Entry Date hide_hero: true show_sidebar: false menubar: docs-menu --- # Calculating Effective Entry Date ## 1. Transmission Windows for Same-Day ACH There are [three same-day transmission deadlines with the Federal Reserve](https://www.frbservices.org/resources/resource-centers/same-day-ach/fedach-processing-schedule.html): * **1st Cutoff**: 10:30 a.m. ET * **2nd Cutoff**: 2:45 p.m. ET * **3rd Cutoff**: 4:45 p.m. ET Files must be submitted before the last cutoff time to be eligible for same-day processing. At each cutoff the Federal Reserve processes uploaded files and distributes them to financial institutions. If a file is submitted after the last cutoff, entries that list the current banking day as their Effective Entry Date will be settled on the next banking day. ## 2. Same-Day ACH Transaction Limit"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶2",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶2",
+   "text": "* Entries qualify for same-day processing if their amount is **$1,000,000** or less. * In a batch containing entries over the limit, those entries will have their Effective Entry Date adjusted to the next banking day and remaining items will still be eligible for same-day settlement ## 3. Credit Entries For credit entries, the Effective Entry Date must be either: * The **same banking day** as the processing date for **Same Day Entries**, or * **One or two banking days** following the processing date for other entries ## 4. Debit Entries For debit entries, the Effective Entry Date must be either: * The **same banking day** as the processing date for **Same Day Entries**, or * **One banking day** following the processing date for other entries **Note:** Receiving banks may place holds on ACH debits per their funds availability policies, separate from these settlement times."
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶3",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶3",
+   "text": "## 5. Effective Entry Date - Edge Cases ### ENR Entries * For Automated Enrollment Entries (ENR), the Effective Entry Date field must be **space-filled** * ENR entries cannot be Same Day Entries ### Notifications of Change * The ACH Operator does **not edit** the Effective Entry Date field for Notifications of Change ### Return Entries * The ACH Operator may verify that the Effective Entry Date is properly formatted and may replace the field's existing content with the current processing date if the Effective Entry Date is invalid # Calculating Effective Entry Dates Using moov-io/base Functions ## Overview The moov-io/base package provides functionality for calculating valid Effective Entry Dates when creating ACH batch headers, ensuring compliance with Nacha rules and Federal Reserve processing schedules. ## Creating Batch Headers"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶4",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶4",
+   "text": "The [`NewBatchHeader`](https://pkg.go.dev/github.com/moov-io/ach#NewBatchHeader) function creates a [`BatchHeader`](https://pkg.go.dev/github.com/moov-io/ach#BatchHeader) object that requires several key fields to be populated according to Nacha rules: ```go bh := ach.NewBatchHeader() bh.ServiceClassCode = \"220\" // 220 for credits only bh.StandardEntryClassCode = ach.PPD // PPD, CCD, WEB, etc. bh.CompanyName = \"ACME Corporation\" // Your company name bh.CompanyIdentification = \"121042882\" // Your company ID bh.CompanyEntryDescription = \"PAYROLL\" // Transaction description bh.ODFIIdentification = \"12104288\" // Your bank's routing number bh.EffectiveEntryDate = \"240102\" // YYMMDD format (e.g. 2024-01-02) ``` ## Banking Day Functions"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶5",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶5",
+   "text": "The [`moov-io/base.Time`](https://pkg.go.dev/github.com/moov-io/base#NewTime) package provides these essential functions for determining valid banking days:"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶6",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶6",
+   "text": "* [`AddBankingTime(hours, minutes, seconds int)`](https://pkg.go.dev/github.com/moov-io/base#Time.AddBankingTime): Increments time by specified duration while respecting banking hours (9am-5pm ET) * [`AddBankingDay(d int)`](https://pkg.go.dev/github.com/moov-io/base#Time.AddBankingDay): Adds the specified number of valid banking days to a date * [`IsBankingDay()`](https://pkg.go.dev/github.com/moov-io/base#Time.IsBankingDay): Validates if a date is a banking day by checking both holidays and weekends * [`IsBusinessDay()`](https://pkg.go.dev/github.com/moov-io/base#Time.IsBusinessDay): Determines if a date is a standard business day * [`IsHoliday()`](https://pkg.go.dev/github.com/moov-io/base#Time.IsHoliday): Checks if a date falls on a Federal Reserve holiday * [`IsWeekend()`](https://pkg.go.dev/github.com/moov-io/base#Time.IsWeekend): Verifies if a date falls on Saturday or Sunday"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶7",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶7",
+   "text": "## Transmission Windows The package handles Same-Day ACH transmission windows with time-based validations. Here's how to implement the cutoff time checks: ```go package main import ( \"fmt\" \"github.com/moov-io/ach\" \"github.com/moov-io/base\" ) func main() { // Create batch header bh := ach.NewBatchHeader() bh.ServiceClassCode = \"220\" bh.StandardEntryClassCode = ach.PPD bh.CompanyName = \"ACME Corporation\" bh.CompanyIdentification = \"121042882\" bh.CompanyEntryDescription = \"PAYROLL\" bh.ODFIIdentification = \"12104288\" amount := 500000 // Example amount bh.EffectiveEntryDate = calculateEffectiveEntryDate(amount) fmt.Printf(\"Settlement Date: %s\\n\", bh.EffectiveEntryDate) } func calculateEffectiveEntryDate(amount int) string { now := base.Now()"
+  },
+  {
+   "id": "ach:docs/calculating-effective-entry-date.md ¶8",
+   "source": "ach",
+   "locator": "docs/calculating-effective-entry-date.md ¶8",
+   "text": "// Create cutoff time - in real world scenarios, there's typically an internal buffer before Fed cutoff thirdCutoff := now.AddBankingTime(16, 15, 0) // 4:15 PM ET if now.IsBankingDay() { // Same day settlement is available if under limit and before cutoff if amount <= 1000000 && now.Before(thirdCutoff.Time) { return now.Format(\"060102\") } } // After cutoff or non-banking day - settle on future date if amount <= 1000000 { // Same day entries settle next banking day return now.AddBankingDay(1).Format(\"060102\") } // Non same-day entries must settle two banking days out return now.AddBankingDay(2).Format(\"060102\") } ```"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶1",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶1",
+   "text": "--- layout: page title: File structure hide_hero: true show_sidebar: false menubar: docs-menu --- ## Sequence of records and description Each NACHA formatted file you originate consists of the following records: * A File Header Record * One or more Company/Batch Header Record(s) * Entry Detail Record(s) * Addenda Record(s), if allowed and you choose to include them, or if required * One or more Company/Batch Control Record(s) * A File Control Record"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶2",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶2",
+   "text": "Each file begins with a File Header record. Following the File Header Record may be any number of batches. Each batch is identified by a Batch Header Record and contains one or more Entry Detail Records. At the end of each batch is a Batch Control Record. Each file is ended with a File Control Record. This [diagram](https://raw.githubusercontent.com/moov-io/ach/master/docs/ach_file_structure_shg.gif) illustrates the Sequence of Records for ACH entries. The sequence of records will always be the same, regardless of SEC code. Out-of-sequence records or lack of a mandatory record will cause all or portions of the file to reject. Padding with “9” records at the end of the file is optional. ## Input file descriptions ### File Header"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶3",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶3",
+   "text": "The File Header Record designates physical file characteristics and identifies the immediate origin of the entries contained within the file or within the transmitted batched data. In addition, this record includes date, time, and file identification fields that can be used to uniquely identify the file. ### Company/Batch Header Record"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶4",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶4",
+   "text": "The Company/Batch Header Record identifies the Originator and briefly describes the purpose of the entries that are contained within the batch. For example, “GAS BILL” or “REG SALARY” indicates the reason for the transaction originated by the Originator. It also indicates the intended effective entry date of all transactions within the batch. The information contained in the Company/Batch Header Record applies uniformly to all subsequent Entry Detail Records in the batch. If you wish to vary any of this information, you must create a separate batch. For example, if you are making regular payroll payments and bonus payments then you should create one batch described as “REG SALARY” and another as “BONUS”. ### Entry Detail Record"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶5",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶5",
+   "text": "Entry Detail Records contain information that relate the specific entry to the Receiver, such as the Receiving Depository Financial Institution account, routing transit number, and the debit or credit amount. Prenotifications (prenotes) are special zero-dollar entries used to test the validity of the account number and transit routing number provided by the Receiver. Prenotes are identical to the basic Entry Detail format but contain appropriate Transaction Codes and zeroes in the amount field. Prenotes can be batched with other dollar entries or batched separately. Zero-dollar entries used in corporate trade payments to deliver remittance information contain appropriate Transaction Codes and zeros in the Amount field but otherwise are formatted the same as other entries. Zero-dollar entries can be batched with other CCD dollar entries or batched separately. One Addenda Record must accompany a CCD zero-dollar entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶6",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶6",
+   "text": "### Addenda Records For non-IAT entries, Addenda Records are used by the Originator to supply additional information about Entry Detail Records to the Receiver. For many types of entries, such as payroll, addenda records are optional. Addenda Records are usually required for tax payments. ### Company/Batch Control Record The Company/Batch Control Record contains the counts, hash totals, and total dollar controls for the preceding detail entries within the indicated batch. All Entry Detail Records are hashed. (The method for calculating hash totals is provided in the Entry Information column in the Record Layouts.) Both Entry Detail Records and Addenda Records are included in the entry/addenda counts; Batch Header and Batch Control Records are not included. ### File Control Record"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶7",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶7",
+   "text": "The File Control Record contains dollar, entry, and hash total accumulations from the Company/Batch Control Records in the file. This record also contains counts of the number of blocks and the number of batches within the file (or batched data transmitted to a single destination). ## NACHA Data Entry Specifications All alphanumeric and alphabetic fields must be left justified and space filled. All numeric fields must be right justified, unsigned, and zero filled. Characters used in ACH records are restricted to 0-9, A-Z, space, and those special characters which have an EBCDIC value greater than hexadecimal \"3F\" or an ASCII value greater than hexadecimal \"1F.” Occurrences of values EBCDIC \"00\" - \"3F\" and ASCII \"00\" - \"1F\" are not valid. Do not use characters that do not meet these requirements. ### Field Inclusion Requirements"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶8",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶8",
+   "text": "The following information defines the requirement for inclusion of certain data fields in ACH entries. These designations are: Mandatory (M), Required (R), and Optional (O)."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶9",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶9",
+   "text": "* **Mandatory.** A “Mandatory” field contains information necessary to ensure the proper routing and/or posting of an ACH entry. The ACH Operator will reject any entry or batch, which does not have appropriate values in a Mandatory field. * **Required.** The omission of a “Required” field will not cause an entry reject at the ACH Operator, but may cause a reject at the RDFI. For example, if the DFI Account Number field in the Entry Detail Record is omitted, the RDFI may return the entry because it cannot be posted. You should include appropriate values in “Required” fields to avoid processing and control problems at the RDFI. * **Optional.** The inclusion or omission of an “Optional” data field is at the discretion of the Originator. If you do include optional fields, the RDFI must include them in any return. ## Annotated NACHA Record Formats ### File Header Record - All Formats"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶10",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶10",
+   "text": "The File Header Record designates physical file characteristics. It also identifies the Bank as the immediate destination and your company as the immediate origin of the file."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶12",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶12",
+   "text": "## Company/Batch Header Record Formats A batch is a collection of like entries within a file. You must use a separate batch if any of the batch-level information, such as effective date or company name or company description changes. **Batch Header Record - All SECs Except IAT**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶15",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶15",
+   "text": "## ACK Acknowledgement Record (CCD) The ACK entry is an acknowledgement by the Receiving Depository Financial Institution (RDFI) that a Corporate Credit (CCD) has been received. **ACK Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶18",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶18",
+   "text": "## ADV Automated Accounting Advice The ADV entry identifies a Non-Monetary Entry that is used by an ACH Operator to provide accounting information regarding an entry to participating DFI's. It's an optional service provided by ACH operators and must be requested by a DFI wanting the service. **ADV Batch Control Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶20",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶20",
+   "text": "**ADV File Control Record** The File Control record contains dollar, entry, and hash totals from the file's Company/Batch Control Records. This record also contains counts of the blocks and batches in the file."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶23",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶23",
+   "text": "## ARC Accounts Receivable Entry **Accounts Receivable Entry** A consumer check converted to a one-time ACH debit. The difference between ARC and POP is that ARC can result from a check mailed in where as POP is in-person. **ARC Accounts Receivable Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶24",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶24",
+   "text": "The Accounts Receivable (ARC) Entry provides billers the opportunity to initiate single-entry ACH debits to customer accounts by converting checks at the point of receipt through the U.S. mail, at a drop box location or in-person for payment of a bill at a manned location. The biller is required to provide the customer with notice prior to the acceptance of the check that states the receipt of the customer’s check will be deemed as the authorization for an ARC debit entry to the customer’s account. The provision of the notice and the receipt of the check together constitute authorization for the ARC entry. The customer’s check is solely be used as a source document to obtain the routing number, account number and check serial number."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶26",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶26",
+   "text": "## ATX Acknowledgment Record (CTX) The ATX entry is an acknowledgment by the Receiving Depository Financial Institution (RDFI) that a Corporate Credit (CTX) has been received. **ATX Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶28",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶28",
+   "text": "**ATX Addenda Record** Up to 9,999 Addenda Records may be included with a ATX Entry Detail Record. The addenda should not be used with pre notes."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶30",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶30",
+   "text": "## BOC Back Office Conversion **Back Office Conversion Entry** A single entry debit initiated at the point of purchase or at a manned bill payment location to transfer funds through conversion to an ACH debit entry during back office processing. Unlike ARC entries, BOC conversions require the customer to be present and a notice that checks may be converted to BOC ACH entries be posted. **BOC Back Office Conversation Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶32",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶32",
+   "text": "## CCD Corporate Credit or Debit **CCD Corporate Credit or Debit** is an entry used to facilitate business-to-business (B2B) ACH Payments. **CCD Corporate Credit or Debit Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶36",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶36",
+   "text": "## CIE Customer-Initiated Entries **Customer-Initiated Entry** is a credit entry initiated on behalf of, and upon the instruction of, a consumer to transfer funds to a non-consumer Receiver. CIE entries are usually transmitted to a company for payment of funds that the consumer owes to that company and are initiated by the consumer through some type of online banking product or bill payment service provider. With CIEs, funds owed by the consumer are “pushed” to the biller in the form of an ACH credit, as opposed to the billers use of a debit application (e.g., PPD, WEB) to “pull” the funds from a customer’s account. **CIE Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶39",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶39",
+   "text": "## CTX Corporate Trade Exchange The Corporate Trade Exchange (CTX) application provides the ability to collect and disburse funds and information between companies. Generally it is used by businesses paying one another for goods or services. These payments replace checks with an electronic process of debiting and crediting invoices between the financial institutions of participating companies. **CTX Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶41",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶41",
+   "text": "**CTX Addenda Record** Up to 9,999 Addenda Records may be included with a CTX Entry Detail Record. The addenda should not be used with prenotes."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶43",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶43",
+   "text": "## DNE Death Notification Entry Death Notification Entry (DNE) is a batch file sent from United States Federal agencies (e.g. Social Security) notifying depository financial institutions to the death of a government benefits receiver. **DNE Entry Detail**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶46",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶46",
+   "text": "## ENR Automated Enrollment Entry ENR (Automated Enrollment Entry) is a non-monetary entry that enrolls a person with an agency of the US government for a depository financial institution. **ENR Entry Detail**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶49",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶49",
+   "text": "## MTE Machine Transfer Entry Machine Transfer Entry (MTE) supports the clearing of transactions from automated teller machines."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶52",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶52",
+   "text": "## POP Point-of-Purchase **Point-of-Purchase Entry** A check presented in-person to a merchant for purchase is presented as an ACH entry instead of a physical check. This ACH debit application is used by originators as a method of payment for the in-person purchase of goods or services by consumers. These Single Entry debit entries are initiated by the originator based on a written authorization and account information drawn from the source document (a check) obtained from the consumer at the point-of-purchase. The source document, which is voided by the merchant and returned to the consumer at the point-of-purchase, is used to collect the consumer’s routing number, account number and check serial number that will be used to generate the debit entry to the consumer’s account. **POP Point-of-Purchase Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶54",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶54",
+   "text": "## POS Point-of-Sale **Point of Sale Entry** A POS Entry is a debit Entry initiated at an “electronic terminal” to a Consumer Account of the Receiver to pay an obligation incurred in a point- of-sale transaction, or to effect a point-of-sale terminal cash withdrawal."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶55",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶55",
+   "text": "Point-of-Sale Entries (POS) are ACH debit entries typically initiated by the use of a merchant-issued plastic card to pay an obligation at the point-of-sale. Much like a financial institution issued debit card, the merchant- issued debit card is swiped at the point-of-sale and approved for use; however, the authorization only verifies the card is open, active and within the card’s limits—it does not verify the Receiver’s account balance or debit the account at the time of the purchase. Settlement of the transaction moves from the card network to the ACH Network through the creation of a POS entry by the card issuer to debit the Receiver’s account. **POS Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶58",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶58",
+   "text": "## PPD Prearranged Payment and Deposit Entries **Prearranged Payment and Deposit Entries** is a recurring entry for direct deposit of payroll, pension, etc., or for direct payment of recurring bills such as utilities, loans, etc. **Prearranged Payment and Deposit Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶60",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶60",
+   "text": "## RCK Represented Check Entries **Represented Check** entry is a physical check that was presented but returned because of insufficient funds may be represented as an ACH entry. **RCK Represented Check Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶62",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶62",
+   "text": "## SHR Shared Network Entry **Shared Network Entry** A SHR entry a debit Entry initiated at an “electronic terminal,” as that term is defined in Regulation E, to a Consumer Account of the Receiver to pay an obligation incurred in a point-of-sale transaction, or to effect a point-of-sale terminal cash withdrawal. Also an adjusting or other credit Entry related to such debit Entry, transfer of funds, or obligation. SHR Entries are initiated in a shared network where the ODFI and RDFI have an agreement in addition to these Rules to process such Entries. **SHR Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶65",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶65",
+   "text": "## TEL Telephone-Initiated Entry **Telephone-Initiated Entry Detail Record** is used for the origination of a Single Entry debit transaction to a consumer’s account pursuant to an oral authorization obtained from the consumer via the telephone."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶67",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶67",
+   "text": "Note: Use [`SetPaymentType()`](https://pkg.go.dev/github.com/moov-io/ach#EntryDetail.SetPaymentType) and [`PaymentTypeField()`](https://pkg.go.dev/github.com/moov-io/ach#EntryDetail.PaymentTypeField) to update Payment Type Code. This code uses the `DiscretionaryData` field. ## TRC/TRC Truncated Entries **Truncated Entries** This Standard Entry Class Code is used to identify a debit entry of a truncated check."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶69",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶69",
+   "text": "## TRX Truncated Entries **Check Truncation Entries Exchange** This Standard Entry Class Code is used to identify a debit entry of a truncated checks (multiple)."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶73",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶73",
+   "text": "### WEB Internet Authorized Entries **Internet Authorized Entries** Entry submitted pursuant to an authorization obtained via the the internet, mobile device, or wireless network. **WEB Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶75",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶75",
+   "text": "Note: Use [`SetPaymentType()`](https://pkg.go.dev/github.com/moov-io/ach#EntryDetail.SetPaymentType) and [`PaymentTypeField()`](https://pkg.go.dev/github.com/moov-io/ach#EntryDetail.PaymentTypeField) to update Payment Type Code. This code uses the `DiscretionaryData` field. ## XCK Destroyed Check Entry **Destroyed Check Entry** This application can be utilized by a collecting institution for the collection of certain checks when those checks have been destroyed. **XCK Entry Detail Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶77",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶77",
+   "text": "## IAT International ACH Transaction **International ACH Transaction** entry is a credit or debit ACH entry that is part of a payment transaction involving a financial agency’s office (i.e., depository financial institution or business issuing money orders) that is not located in the territorial jurisdiction of the United States. IAT entries can be made to or from a corporate or consumer account and must be accompanied by seven (7) mandatory addenda records identifying the name and physical address of the Originator, name and physical address of the Receiver, Receiver’s account number, Receiver’s bank identity and reason for the payment. **IAT Batch Header Record**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶79",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶79",
+   "text": "**NOTE**: For IAT Return Entries, each field of the Company Batch Header Record remains unchanged from the original record, except: 1) Foreign Exchange Reference - For the return of an outbound International ACH transaction originated by a U.S. ODFI, this field will contain the foreign exchange rate that is applicable at the time of the return entry if a foreign exchange rate is provided within this field on the forward entry. 2) Originator Status Code - Changed to reflect the Originator Status Code of the institution initiating the Return Entry (i.e., the RDFI of the original entry). 3) Gateway Operator Identification/ ODFI Identification - Changed to reflect the Routing number of the institution initiating the Return Entry (i.e., the RDFI of the original entry). 4) Batch Number - Changed to the batch number assigned by the institution preparing the Automated Return Entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶81",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶81",
+   "text": "**NOTE**: For IAT Return Entries, each field of the Entry Detail Record remains unchanged from the original entry, except: 1) Transaction Code -Changed to the appropriate Return Entry Transaction Code. 2) Receiving DFI Identification - Changed to the routing number of the institution receiving the return entry (i.e., OFI of original entry). 3) Check Digit - Changed to the check digit according to NACH standards and based on the Routing Number contained in position 04-11. 4) Amount - For the return of an outbound International ACH Transaction originated by a U.S ODFI, this amount will be different from the amount reflected in the original forward entry if the exchange rate is different at the time of the return. 5) Trace Number - Changed to the trace number assigned by the institution preparing the Automated Return Entry. **IAT Addenda Records**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶82",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶82",
+   "text": "For IAT entries, the first seven Addenda Records are mandatory and contain additional information about the receiver, the ODFI and the RDFI as required by OFAC. The type '717' remittance addenda is optional and is used by the Originator to supply additional information about Entry Detail Record to the Receiver; a maximum of two type '717' addenda are allowed. The type '718' Foreign Correspondent Bank addenda must be included if a Foreign Correspondent Bank is involved in the processing of the IAT entry; a maximum of five type '718' addenda are allowed. Each Addenda Record must be included in the item count that is entered into the Company/Batch Control Record. **IAT First Addenda Record (710)** The First Addenda Record identifies the Receiver of the transaction and the dollar amount of the payment."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶84",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶84",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 1st Addenda Record remains unchanged from the original 1st Addenda Record, except Entry Detail Sequence Number which reflects the Entry Detail Sequence Number assocoiated with the trace number assigned by the institution preparing the Automated Return Entry. **IAT Second Addenda Record (711)** The Second and Third Addenda Records identify key information related to the Originator of the entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶86",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶86",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 2nd Addenda Record remains unchanged from the original 2nd Addenda Record, except Entry Detail Sequence Number which reflects the Entry Detail Sequence Number associated with the trace number assigned by the institution preparing the Automated Return Entry. **IAT Third Addenda Record (712)**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶88",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶88",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 3rd Addenda Record remains unchanged from the original 3rd Addenda Record, except Entry Detail Sequence Number which reflects the Entry Detail Sequence Number associated with the trace number assigned by the institituion preparing the Automated Return Entry. **IAT Fourth Addenda Record (713)** The Fourth Addenda Record contains information related to the financial institution originating the entry. For inbound IAT entries, the Fourth Addenda Record must contain information to identify the foreign financial institution that is providing the funding and payment instruction for the IAT entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶90",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶90",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 4th Addenda Record remains unchanged from the original 4th Addenda Record, except Entry Detail Sequence Number whihch reflects the Entry Detail Sequence Number associated with the trace number assigned by the institution preparing the Automated Return Entry. **IAT Fifth Addenda Record (714)** The Fifth Addenda Record identifies the Receiving financial institution holding the Receiver's account."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶92",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶92",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 5th Addenda Record remains unchanged from the original 5th Addenda Record, except Entry Detail Sequence Number whihch reflects the Entry Detail Sequence Number associated with the trace number assigned by the institituion preparing the Automated Return Entry. **IAT Sixth Addenda Record (715)** The Sixth and Seventh Addenda Records identify information related to the Receiver."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶94",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶94",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 6th Addenda Record remains unchanged from the original 6th Addenda Record, except Entry Detail Sequence Number whihch reflects the Entry Detail Sequence Number associated with the trace number assigned by the institution preparing the Automated Return Entry. **IAT Seventh Addenda Record (716)**"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶96",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶96",
+   "text": "**NOTE**: For IAT Return Entries, each field of the 7th Addenda Record remains unchanged from the original 7th Addenda Record, except Entry Detail Sequence Number whihch reflects the Entry Detail Sequence Number associated with the trace number assigned by the institution preparing the Automated Return Entry. **IAT Addenda Record for Remittance Information (717) (Optional)** This is an optional Addenda Record used to provide payment-related data. You may include up to two of these Addenda Records with each IAT entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶98",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶98",
+   "text": "**IAT Addenda Record for Foreign Correspondent Bank Information (718)** This Addenda Record is used to provide information on each Foreign Correspondent Bank involved in the processing of the IAT entry. If no Foreign Correspondent Bank is involved,the record should not be included.<br> NOTE: A maximum of five 'Type 18' addenda records may be included with each IAT entry."
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶100",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶100",
+   "text": "**IAT Addenda Record for IAT Returns (799)** This Addenda Record is used to provide return data for a returned IAT entry"
+  },
+  {
+   "id": "ach:docs/file-structure.md ¶102",
+   "source": "ach",
+   "locator": "docs/file-structure.md ¶102",
+   "text": "## File Control The File Control record contains dollar, entry, and hash totals from the file's Company/Batch Control Records. This record also contains counts of the blocks and batches in the file."
+  },
+  {
+   "id": "ach:docs/server-config.md ¶1",
+   "source": "ach",
+   "locator": "docs/server-config.md ¶1",
+   "text": "--- layout: page title: API configuration hide_hero: true show_sidebar: false menubar: docs-menu --- # Configuration settings"
+  },
+  {
+   "id": "ach:docs/server-config.md ¶3",
+   "source": "ach",
+   "locator": "docs/server-config.md ¶3",
+   "text": "## Data persistence By design ACH **does not persist** (save) any data about the files, batches, or entry details created. The only storage occurs in memory of the process and upon restart ACH will have no files, batches, or data saved. Also, no in memory encryption of the data is performed."
+  },
+  {
+   "id": "ach:docs/merging-files.md ¶1",
+   "source": "ach",
+   "locator": "docs/merging-files.md ¶1",
+   "text": "--- layout: page title: Merging files hide_hero: true show_sidebar: false menubar: docs-menu --- # Merging files Moov ACH supports merging an arbitrary set of ACH files together. This is useful for optimizing cost and network efficiency. NACHA files are limited to 10,000 lines (in their text format) and so Moov ACH merges valid files together where the FileHeaders match the same ABA routing numbers. See [`MergeFiles`](https://pkg.go.dev/github.com/moov-io/ach#MergeFiles) and [`MergeDir`](https://pkg.go.dev/github.com/moov-io/ach#MergeDir) Merging accepts a [`Conditions`](https://pkg.go.dev/github.com/moov-io/ach#Conditions) struct which allows custom file lengths and dollar amounts per-file. There are several key features of file merging:"
+  },
+  {
+   "id": "ach:docs/merging-files.md ¶2",
+   "source": "ach",
+   "locator": "docs/merging-files.md ¶2",
+   "text": "- **Duplicate Trace Number Handling**: Duplicate trace numbers are allocated to separate batches within the same output file, adhering to Nacha regulations. - **Validation Options Aggregation**: Aggregate `ValidateOpts` from all input files to apply non-zero values (e.g., `true`) uniformly across all batches and entries within the file, thus streamlining the validation process. An example of merging ACH files can be seen below. Assuming we have two ACH files to merge (`first.ach` and `second.ach`) on disk, let's read them and produce a merged file. ```go package main import ( \"log\" \"os\" \"github.com/moov-io/ach\" ) func main() { // first.ach and second.ach need to have the same Origin and Destination ABA routing numbers // in order to be merged into one ACH file, otherwise two ACH files would be returned."
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶1",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶1",
+   "text": "--- layout: page title: Custom validation hide_hero: true show_sidebar: false menubar: docs-menu --- # Custom validation ACH files can vary sometimes from the official NACHA guidelines due to vendor changes. Moov ACH defaults to NACHA guidelines, so to handle this there's an exported `ValidateWith(opts)` method on some structures (`File`, `FileHeader`, etc). The [`ValidateOpts`](https://godoc.org/github.com/moov-io/ach#ValidateOpts) struct can have fields added in minor releases without breaking API compatibility with callers. The default values in this struct match with NACHA's guidelines. ## Validation options The following options can be used with `File.ValidateWith` and `File.SetValidation` to alter the default NACHA validation rules. Note: There is a `SkipAll bool` validation option to bypass all validation checks. ### Origin"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶2",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶2",
+   "text": "`RequireABAOrigin bool` can be set to enable routing number validation over the `ImmediateOrigin` file header field. Often the origin can be another value which is significant to the Financial Institution you're uploading ACH Files to. ``` // One-time change to the NACHA validation rules opts := &ValidateOpts{RequireABAOrigin: true} if err := file.Header.ValidateWith(opts); err != nil { // do something... } ``` `BypassOriginValidation bool` can be set to skip all validation for the `ImmediateOrigin` file header field. This also allows for custom TraceNumbers which aren't prefixed with a routing number as required by the NACHA specification. ``` // Override the default validation rules on an *ach.File object. file.SetValidation(&ValidateOpts{ BypassOriginValidation: true, }) if err := file.Validate(); err != nil { // do something... } ``` ### Destination"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶3",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶3",
+   "text": "`BypassDestinationValidation bool` can be set to skip validation for the `ImmediateDestination` file header field. ### Transaction Codes ``` // CheckTransactionCode allows for custom validation of TransactionCode values CheckTransactionCode func(code int) error ``` ### Trace Numbers The Nacha/ACH spec requires that trace numbers follow a few rules. This validation option disables them. - Ascending order of trace numbers within batches - Trace numbers beginning with their ODFI's routing number - `AddendaRecordIndicator` is set correctly ``` // CustomTraceNumbers disables validation of TraceNumbers CustomTraceNumbers bool `json:\"customTraceNumbers\"` ``` ### Batches ``` // AllowZeroBatches allows the file to have zero batches AllowZeroBatches bool `json:\"allowZeroBatches\"`"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶4",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶4",
+   "text": "// BypassCompanyIdentificationMatch allows batches in which the Company Identification field // in the batch header and control do not match. BypassCompanyIdentificationMatch bool `json:\"bypassCompanyIdentificationMatch\"` // UnequalServiceClassCode skips equality checks for the ServiceClassCode in each pair of BatchHeader // and BatchControl records. UnequalServiceClassCode bool `json:\"unequalServiceClassCode\"` // AllowUnorderedBatchNumebrs allows a file to be read with unordered batch numbers. AllowUnorderedBatchNumbers bool `json:\"allowUnorderedBatchNumbers\"` // PreserveBatchNumbers tells File.Create to leave each batch's BatchNumber as-is // instead of assigning 1, 2, 3, ... in write order. PreserveBatchNumbers bool `json:\"preserveBatchNumbers\"`"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶5",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶5",
+   "text": "// UnequalAddendaCounts skips checking that Addenda Count fields match their expected and computed values. UnequalAddendaCounts bool `json:\"unequalAddendaCounts\"` // AllowSpecialCharacters will permit a wider range of UTF-8 characters in alphanumeric fields AllowSpecialCharacters bool `json:\"allowSpecialCharacters\"` // SkipBatchHeaderCompanyValidation will bypass validation of Company fields in a BatchHeader SkipBatchHeaderCompanyValidation bool `json:\"skipBatchHeaderCompanyValidation\"` ``` ### Entries ``` // AllowInvalidAmounts will skip verifying the Amount is valid for the TransactionCode and entry type. AllowInvalidAmounts bool `json:\"allowInvalidAmounts\"` // AllowZeroEntryAmount will skip enforcing the entry Amount to be non-zero. AllowZeroEntryAmount bool `json:\"allowZeroEntryAmount\"`"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶6",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶6",
+   "text": "// AllowSpecialCharacters will permit a wider range of UTF-8 characters in alphanumeric fields AllowSpecialCharacters bool `json:\"allowSpecialCharacters\"` // AllowEmptyIndividualName will skip verifying IndividualName fields are populated // for SEC codes that require the field to be non-blank (and non-zero) AllowEmptyIndividualName bool `json:\"allowEmptyIndividualName\"` ``` ### File Header ``` // AllowMissingFileHeader allows a file to be read without a FileHeader record. AllowMissingFileHeader bool `json:\"allowMissingFileHeader\"` // AllowSpecialCharacters will permit a wider range of UTF-8 characters in alphanumeric fields AllowSpecialCharacters bool `json:\"allowSpecialCharacters\"` ``` ### File Control ``` // AllowMissingFileControl allows a file to be read without a FileControl record. AllowMissingFileControl bool `json:\"allowMissingFileControl\"` ``` ### Returns"
+  },
+  {
+   "id": "ach:docs/custom-validation.md ¶7",
+   "source": "ach",
+   "locator": "docs/custom-validation.md ¶7",
+   "text": "``` // CustomReturnCodes can be set to skip validation for the Return Code field in an Addenda99 // This allows for non-standard/deprecated return codes (e.g. R97) CustomReturnCodes bool `json:\"customReturnCodes\"` // AllowSpecialCharacters will permit a wider range of UTF-8 characters in alphanumeric fields AllowSpecialCharacters bool `json:\"allowSpecialCharacters\"` ``` ### Parsing ``` // PreserveSpaces keeps the spacing before and after values that normally have spaces trimmed during parsing. PreserveSpaces bool `json:\"preserveSpaces\"` ``` ## Reader An `ach.Reader` can have custom validation rules as well, simply set them prior to reading. ``` r := ach.NewReader(fd) // create an ach.Reader from an os.File r.SetValidation(&ach.ValidateOpts{ BypassDestinationValidation: true, }) file, err := r.Read() if err != nil { // do something... } ``` ## JSON Options"
+  },
+  {
+   "id": "ach:docs/metrics.md ¶1",
+   "source": "ach",
+   "locator": "docs/metrics.md ¶1",
+   "text": "--- layout: page title: Prometheus metrics hide_hero: true show_sidebar: false menubar: docs-menu --- # Metrics The Moov ACH HTTP server reports Prometheus metrics when running. These are available on the admin server at `:9090/metrics` in the Prometheus metric format. ## Files There are two metrics for ACH files: - `ach_files_created{destination=\"...\", origin=\"...\"}` - `ach_files_deleted` Example: ``` $ curl localhost:9090/metrics # HELP ach_files_created The number of ACH files created # TYPE ach_files_created counter ach_files_created{destination=\"231380104\",origin=\"121042882\"} 5 # HELP ach_files_deleted The number of ACH files deleted # TYPE ach_files_deleted counter ach_files_deleted 1 ```"
+  },
+  {
+   "id": "ach:docs/flatten-batches.md ¶1",
+   "source": "ach",
+   "locator": "docs/flatten-batches.md ¶1",
+   "text": "--- layout: page title: Flatten batches hide_hero: true show_sidebar: false menubar: docs-menu --- # Flatten batches File creation honors the order and number of Batch's that are created by the client. This is not optimized for the smallest file size and cost, that could be sent to the Federal Reserve for processing. Flattening batches is a post file creation process that takes an input of an ACH.File and returns an ACH.File which has been optimized by flattening (merging) Batch Headers that have the same information and appending all Entries into a single Batch. ## Creating flattened batches An ACH [File](https://godoc.org/github.com/moov-io/ach#File) supports calling [FlattenBatches](https://godoc.org/github.com/moov-io/ach#File.FlattenBatches):"
+  },
+  {
+   "id": "ach:docs/flatten-batches.md ¶2",
+   "source": "ach",
+   "locator": "docs/flatten-batches.md ¶2",
+   "text": "```go // Open a file for reading. Any io.Reader can be used. f, err := os.Open(filepath.Join(\"test\", \"testdata\", \"flattenBatchesOneBatchHeader.ach\")) if err != nil { t.Fatal(err) } r := NewReader(f) achFile, err := r.Read() if err != nil { t.Fatalf(\"Issue reading file: %+v \\n\", err) } of, err := achFile.FlattenBatches() if err != nil { t.Fatalf(\"Could not flatten the file: %+v \\n\", err) } if err := of.Validate(); err != nil { t.Fatalf(\"Flattened file did not validate: %+v \\n\", err) } // Write the file to stdout. Any io.Writer can be used. w := ach.NewWriter(os.Stdout) if err := w.Write(of); err != nil { log.Fatalf(\"Unexpected error: %s\\n\", err) } w.Flush() ``` ## HTTP API Files can be flattened with [an http endpoint](https://moov-io.github.io/ach/api/#post-/files/-fileID-/flatten)."
+  },
+  {
+   "id": "ach:docs/intro.md ¶1",
+   "source": "ach",
+   "locator": "docs/intro.md ¶1",
+   "text": "--- layout: page title: What is ACH? hide_hero: true show_sidebar: false menubar: docs-menu --- # What is ACH? Automated Clearing House (ACH) is an electronic network for financial transactions in the United States. ACH processes large volumes of credit and debit transactions in batches. ACH credit transfers include direct deposit, payroll and vendor payments. ACH direct debit transfers include consumer payments on insurance premiums, mortgage loans, and other kinds of bills. Debit transfers also include new applications such as the point-of-purchase (POP) check conversion pilot program sponsored by the National Automated Clearing House Association (NACHA). Both the government and the commercial sectors use ACH payments. Businesses increasingly use ACH online to have customers pay, rather than via credit or debit cards."
+  },
+  {
+   "id": "ach:docs/intro.md ¶2",
+   "source": "ach",
+   "locator": "docs/intro.md ¶2",
+   "text": "[Source: Wikipedia - Automated Clearing House](https://en.wikipedia.org/wiki/Automated_Clearing_House) ## How does ACH work? NACHA includes Members in the process of establishing Rules for the ACH Network, working collaboratively to create a clear picture of participant roles and responsibilities in the following ACH transaction process."
+  },
+  {
+   "id": "ach:docs/intro.md ¶3",
+   "source": "ach",
+   "locator": "docs/intro.md ¶3",
+   "text": "1. An Originator– whether that’s an individual, a corporation or another entity– initiates either a Direct Deposit or Direct Payment transaction using the ACH Network. ACH transactions can be either debit or credit payments and commonly include Direct Deposit of payroll, government and Social Security benefits, mortgage and bill payments, online banking payments, person-to-person (P2P) and business-to-business (B2B) payments, to name a few. 2. Instead of using paper checks, ACH entries are entered and transmitted electronically, making transactions quicker, safer and easier. 3. The Originating Depository Financial institution (ODFI) enters the ACH entry at the request of the Originator. 4. The ODFI aggregates payments from customers and transmits them in batches at regular, predetermined intervals to an ACH Operator. 5. ACH Operators (two central clearing facilities: The Federal Reserve or The Clearing House) receive batches of ACH entries from the ODFI. 6. The ACH transactions are sorted and made available by the ACH Operator to the Receiving Depository Financial Institution (RDFI). 7. The Receiver’s account is debited or credited by the RDFI, according to the type of ACH entry.…"
+  },
+  {
+   "id": "ach:docs/intro.md ¶4",
+   "source": "ach",
+   "locator": "docs/intro.md ¶4",
+   "text": "[Source: ACH Network: How it Works](https://www.nacha.org/ach-network) ## Developer overview Nacha has published an [ACH Guide for Developers](https://dev-ach-guide.pantheonsite.io/) that covers the basics of ACH payment flow, entry types, and file structure. Additionally, Gusto has provided a great technical overview of how ACH works for developers: - [How ACH works: A developer perspective - Part 1](http://engineering.gusto.com/how-ach-works-a-developer-perspective-part-1/) - [How ACH works: A developer perspective - Part 2](http://engineering.gusto.com/how-ach-works-a-developer-perspective-part-2/) - [How ACH works: A developer perspective - Part 3](http://engineering.gusto.com/how-ach-works-a-developer-perspective-part-3/) - [How ACH works: A developer perspective - Part 4](http://engineering.gusto.com/how-ach-works-a-developer-perspective-part-4/)"
+  },
+  {
+   "id": "ach:docs/deployment.md ¶1",
+   "source": "ach",
+   "locator": "docs/deployment.md ¶1",
+   "text": "--- layout: page title: Kubernetes hide_hero: true show_sidebar: false menubar: docs-menu --- # Kubernetes The following snippet runs the ACH Server on [Kubernetes](https://kubernetes.io/docs/tutorials/kubernetes-basics/) in the `apps` namespace. You could reach the ach instance at the following URL from inside the cluster. ``` # Needs to be ran from inside the cluster $ curl http://ach.apps.svc.cluster.local:8080/ping PONG $ curl http://localhost:8080/files {\"files\":[],\"error\":null} ``` Kubernetes manifest - save in a file (`ach.yaml`) and apply with `kubectl apply -f ach.yaml`."
+  },
+  {
+   "id": "ach:docs/deployment.md ¶2",
+   "source": "ach",
+   "locator": "docs/deployment.md ¶2",
+   "text": "```yaml apiVersion: v1 kind: Namespace metadata: name: apps --- apiVersion: v1 kind: Service metadata: name: ach namespace: apps spec: type: ClusterIP selector: app: ach ports: - name: http protocol: TCP port: 8080 targetPort: 8080 - name: metrics protocol: TCP port: 9090 targetPort: 9090 --- apiVersion: extensions/v1beta1 kind: Deployment metadata: name: ach namespace: apps labels: app: ach spec: replicas: 1 selector: matchLabels: app: ach template: metadata: labels: app: ach spec: containers: - image: moov/ach:v1.0.0 imagePullPolicy: Always name: ach args: - -http.addr=:8080 - -admin.addr=:9090 env: - name: ACH_FILE_TTL value: 30m # 30 minutes ports: - containerPort: 8080 name: http protocol: TCP - containerPort: 9090 name: metrics protocol: TCP resources: limits: cpu: 0.1 memory: 50Mi requests: cpu: 25m memory: 10Mi readinessProbe: httpGet: path: /ping port: 8080 initialDelaySeconds: 5 periodSeconds: 10 livenessProbe: httpGet: path: /ping port: 8080 initialDelaySeconds: 5 periodSeconds: 10 restartPolicy: Always ```"
+  },
+  {
+   "id": "ach:docs/create-file.md ¶1",
+   "source": "ach",
+   "locator": "docs/create-file.md ¶1",
+   "text": "--- layout: page title: ACH file setup hide_hero: true show_sidebar: false menubar: docs-menu --- # Create a file Creating an Automated Clearing House (ACH) file can be done several ways: - [Using Go and our generated client](#go-client) - [Uploading a JSON representation](#upload-a-json-representation) - [Uploading a raw ACH file](#upload-a-json-representation) ## Go client We have an example of [using our Go client and uploading the JSON representation](https://github.com/moov-io/ach/blob/master/examples/http/main.go). The basic idea follows this structure:"
+  },
+  {
+   "id": "ach:docs/create-file.md ¶3",
+   "source": "ach",
+   "locator": "docs/create-file.md ¶3",
+   "text": "## Upload a JSON representation In Ruby we have an example of [creating an ACH file from JSON](https://github.com/moov-io/ruby-ach-demo/blob/master/main.rb). The JSON structure corresponds to our [API endpoint for creating files](https://moov-io.github.io/ach/api/#post-/files/-fileID-) that the ACH HTTP server expects. We have [example ACH files](https://github.com/moov-io/ach/blob/master/test/testdata/ppd-valid.json) in JSON. Note: The header `Content-Type: application/json` must be set to parse the file as JSON, otherwise Nacha's format will be assumed. ### Validate options When creating a file the server supports query parameters for setting `ValidateOpts` values. Example: `POST /files/create?requireABAOrigin=true&bypassDestination=true`"
+  },
+  {
+   "id": "ach:docs/create-file.md ¶5",
+   "source": "ach",
+   "locator": "docs/create-file.md ¶5",
+   "text": "> Note: `bypassDestination`, `bypassOrigin`, and `unorderedBatchNumbers` are deprecated query parameters replace by identical named parameters. ## Upload a raw ACH file Our ACH HTTP server also handles [uploading raw ACH files](https://moov-io.github.io/ach/api/#post-/files/-fileID-) which is the NACHA text format. We have example files in their NACHA format and example code for creating and reading the files."
+  },
+  {
+   "id": "ach:README.md ¶2",
+   "source": "ach",
+   "locator": "README.md ¶2",
+   "text": "[![GoDoc](https://godoc.org/github.com/moov-io/ach?status.svg)](https://godoc.org/github.com/moov-io/ach) [![Build Status](https://github.com/moov-io/ach/workflows/Go/badge.svg)](https://github.com/moov-io/ach/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/moov-io/ach)](https://goreportcard.com/report/github.com/moov-io/ach) [![Repo Size](https://img.shields.io/github/languages/code-size/moov-io/ach?label=project%20size)](https://github.com/moov-io/ach) [![Apache 2 License](https://img.shields.io/badge/license-Apache2-blue.svg)](https://raw.githubusercontent.com/moov-io/ach/master/LICENSE) [![Slack Channel](https://slack.moov.io/badge.svg?bg=e01563&fgColor=fffff)](https://slack.moov.io/) [![Docker Pulls](https://img.shields.io/docker/pulls/moov/ach)](https://hub.docker.com/r/moov/ach) [![GitHub Stars](https://img.shields.io/github/stars/moov-io/ach)](https://github.com/moov-io/ach) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/moov-io/ach)"
+  },
+  {
+   "id": "ach:README.md ¶3",
+   "source": "ach",
+   "locator": "README.md ¶3",
+   "text": "# moov-io/ach Moov's mission is to give developers an easy way to create and integrate bank processing into their own software products. Our open source projects are each focused on solving a single responsibility in financial services and designed around performance, scalability, and ease of use. ACH implements a reader, writer, and validator for Automated Clearing House ([ACH](https://en.wikipedia.org/wiki/Automated_Clearing_House)) files following the Nacha standards. ACH is the primary method of electronic money movement throughout the United States. The HTTP server is available in a [Docker image](#docker) and the Go package `github.com/moov-io/ach` is available."
+  },
+  {
+   "id": "ach:README.md ¶4",
+   "source": "ach",
+   "locator": "README.md ¶4",
+   "text": "If you're looking for an event driven ACH engine for uploading/downloading files and operations we have built [moov-io/achgateway](https://github.com/moov-io/achgateway) and run it in production. Our article [How and When to use the Moov ACH Library](https://moov.io/blog/education/how-and-when-to-use-the-moov-ach-library/) will help to generate ACH files for upload to your ODFI. ## Table of contents"
+  },
+  {
+   "id": "ach:README.md ¶6",
+   "source": "ach",
+   "locator": "README.md ¶6",
+   "text": "Moov ACH is actively used in multiple production environments. Please star the project if you are interested in its progress. The project supports generating and parsing all Standard Entry Class (SEC) codes and validating files according to the Nacha standards. If you have layers above ACH to simplify tasks, perform business operations, or found bugs we would appreciate an issue or pull request. Thanks! ## Usage The ACH project implements an HTTP server and Go library for creating and modifying ACH files. There are client libraries available for both [Go](https://pkg.go.dev/github.com/moov-io/ach) and [Node/JavaScript](https://github.com/moov-io/ach-node-sdk). We also have an extensive list of [examples](https://pkg.go.dev/github.com/moov-io/ach/examples) of the reader and writer applied to various ACH transaction types. ### Docker"
+  },
+  {
+   "id": "ach:README.md ¶8",
+   "source": "ach",
+   "locator": "README.md ¶8",
+   "text": "To get started in a hosted environment you can deploy this project to the Google Cloud Platform. From your [Google Cloud dashboard](https://console.cloud.google.com/home/dashboard) create a new project and call it: ``` moov-ach-demo ``` Click the button below to deploy this project to Google Cloud. [![Run on Google Cloud](https://deploy.cloud.run/button.svg)](https://deploy.cloud.run/?git_repo=https://github.com/moov-io/ach&revision=master) > **Note**: If you get an error about the image being marked as \"Do Not Trust\" follow the below steps. <details> <summary>Error: You launched this custom Cloud Shell image as \"Do not trust\"</summary>"
+  },
+  {
+   "id": "ach:README.md ¶9",
+   "source": "ach",
+   "locator": "README.md ¶9",
+   "text": "``` $ cloudshell_open --repo_url \"https://github.com/moov-io/ach\" --page \"shell\" --git_branch \"master\" Error: You launched this custom Cloud Shell image as \"Do not trust\". In this mode, your credentials are not available and this experience cannot deploy to Cloud Run. Start over and \"Trust\" the image. Error: aborting due to untrusted cloud shell environment ``` This error occurs when some security settings on your account / cloud shell are locked down. To run ACH you need to trust the image, so in the top-right click to restart this image as Trusted. ![](./docs/images/gcp-run-button/1-image-trust-settings.png) Click to \"Return to default\" ![](./docs/images/gcp-run-button/2-confirm-prompt.png) Then you'll need to clone down and launch ACH. Pick option #3 to clone this project. ``` cloudshell_open --repo_url \"https://github.com/moov-io/ach\" --page \"shell\" --git_branch \"master\" ```"
+  },
+  {
+   "id": "ach:README.md ¶12",
+   "source": "ach",
+   "locator": "README.md ¶12",
+   "text": "The package [`github.com/moov-io/ach/server`](https://pkg.go.dev/github.com/moov-io/ach/server) offers an HTTP and JSON API for creating and editing files. If you're using Go the `ach.File` type can be used, otherwise you can send properly formatted JSON. We have an [example JSON file](test/testdata/ppd-valid.json), but each SEC type will generate different JSON. Examples: [Go](examples/http/main.go) | [Ruby](https://github.com/moov-io/ruby-ach-demo) - [Create an ACH file for a payment and get the raw file](https://github.com/moov-io/ruby-ach-demo) ### Configuration settings"
+  },
+  {
+   "id": "ach:README.md ¶14",
+   "source": "ach",
+   "locator": "README.md ¶14",
+   "text": "### Data persistence By design ACH **does not persist** (save) any data about the files, batches, or entry details created. The only storage occurs in memory of the process and upon restart ACH will have no files, batches, or data saved. Also, no in memory encryption of the data is performed. ### Go library This project uses [Go Modules](https://go.dev/blog/using-go-modules) and Go v1.18 or newer. See [Golang's install instructions](https://golang.org/doc/install) for help in setting up Go. You can download the source code and we offer [tagged and released versions](https://github.com/moov-io/ach/releases/latest) as well. We highly recommend you use a tagged release for production. ``` # Pull down into the Go Module cache $ go get -u github.com/moov-io/ach # Show the documentation for the BatchHeader package $ go doc github.com/moov-io/ach BatchHeader ```"
+  },
+  {
+   "id": "ach:README.md ¶19",
+   "source": "ach",
+   "locator": "README.md ¶19",
+   "text": "</details> ### Command line On each release there's an `achcli` utility released. This tool can display ACH files in a human-readable format which is easier to read than their plaintext format. It also allows masking `DFIAccountNumber` values with the `-mask` flag. Download the [latest release for your computer](https://github.com/moov-io/ach/releases/latest) ``` $ achcli test/testdata/ppd-debit.ach Describing ACH file 'test/testdata/ppd-debit.ach' Origin OriginName Destination DestinationName FileCreationDate FileCreationTime 121042882 My Bank Name 231380104 Federal Reserve Bank 190624 0000 BatchNumber SECCode ServiceClassCode CompanyName DiscretionaryData Identification EntryDescription DescriptiveDate 1 PPD 225 (Debits Only) Name on Account 121042882 REG.SALARY"
+  },
+  {
+   "id": "ach:README.md ¶20",
+   "source": "ach",
+   "locator": "README.md ¶20",
+   "text": "TransactionCode RDFIIdentification AccountNumber Amount Name TraceNumber Category 27 (Checking Debit) 23138010 12345678 100000000 Receiver Account Name 121042880000001 ServiceClassCode EntryAddendaCount EntryHash TotalDebits TotalCredits MACCode ODFIIdentification BatchNumber 225 (Debits Only) 1 23138010 100000000 0 12104288 1 BatchCount BlockCount EntryAddendaCount TotalDebitAmount TotalCreditAmount 1 1 1 100000000 0 ```"
+  },
+  {
+   "id": "ach:README.md ¶21",
+   "source": "ach",
+   "locator": "README.md ¶21",
+   "text": "### In-browser ACH file parser Using our [in-browser utility](https://moov-io.github.io/ach/webui/), you can instantly convert ACH files into JSON. Either paste in ACH file content directly or choose a file from your local machine. This tool is particularly useful if you're handling sensitive PII or want perform some quick tests, as operations are fully client-side with nothing stored in memory. ### SDKs Below are some SDKs generated from the API documentation: - [Node SDK](https://www.npmjs.com/package/ach-node-sdk) | [GitHub](https://github.com/moov-io/ach-node-sdk) ### OpenAPI Guide This project includes an [OpenAPI 3.0.2 specification](openapi.yaml) that describes the HTTP API for creating, parsing, and validating ACH files. The OpenAPI spec can be used to:"
+  },
+  {
+   "id": "ach:README.md ¶22",
+   "source": "ach",
+   "locator": "README.md ¶22",
+   "text": "- **Generate client SDKs** in various programming languages - **Integrate with API documentation tools** like Swagger UI or Redoc - **Automate API testing** and validation - **Design and mock APIs** before implementation #### Using the OpenAPI Specification The OpenAPI specification is available in the repository root as `openapi.yaml`. You can use it with various tools: **Generate Client SDKs:** ```bash # Using OpenAPI Generator openapi-generator-cli generate -i openapi.yaml -g go -o ./client/go # Using Swagger Codegen swagger-codegen generate -i openapi.yaml -l java -o ./client/java # Using AutoRest (for .NET) autorest --input-file=openapi.yaml --csharp --output-folder=./client/csharp ```"
+  },
+  {
+   "id": "ach:README.md ¶23",
+   "source": "ach",
+   "locator": "README.md ¶23",
+   "text": "**Interactive Documentation:** - View the spec in [Swagger Editor](https://editor.swagger.io/) by uploading the `openapi.yaml` file - Use [Redoc](https://redocly.github.io/redoc/) for beautiful API documentation - Run a local Swagger UI server with the spec **API Testing:** - Use tools like [Postman](https://www.postman.com/) or [Insomnia](https://insomnia.rest/) to import the OpenAPI spec - Generate test cases based on the API definition - Validate API responses against the schema #### Key API Endpoints The ACH API provides the following main endpoints: - `POST /files/{fileID}` - Create ACH files from JSON or plaintext - `GET /files` - List all ACH files - `GET /files/{fileID}` - Retrieve a specific ACH file - `POST /files/{fileID}/validate` - Validate an ACH file - `POST /files/{fileID}/segments` - Segment an ACH file #### Validation Options"
+  },
+  {
+   "id": "ach:README.md ¶24",
+   "source": "ach",
+   "locator": "README.md ¶24",
+   "text": "The API supports extensive validation options that can be passed as query parameters to customize validation behavior: - `skipAll` - Skip all validation - `allowEmptyIndividualName` - Allow empty individual name fields - `allowInvalidAmounts` - Allow invalid amounts - `customTraceNumbers` - Allow custom trace numbers - `bypassBatchValidation` - Skip batch validation - And many more... See the OpenAPI specification for the complete list of validation options. #### Example Usage Here's an example of creating an ACH file using the API:"
+  },
+  {
+   "id": "ach:README.md ¶26",
+   "source": "ach",
+   "locator": "README.md ¶26",
+   "text": "For more details on the API structure and available endpoints, refer to the [OpenAPI specification](openapi.yaml). ## Learn about ACH - [Official Nacha ACH Guide for Developers](https://dev-ach-guide.pantheonsite.io/) - [Intro to ACH](https://moov-io.github.io/ach/intro/) - [Create an ACH File](https://moov-io.github.io/ach/create-file/) - [ACH File Structure](https://moov-io.github.io/ach/file-structure/) - [Balanced Offset Files](https://moov-io.github.io/ach/balanced-offset/) - [Merging Files](https://moov-io.github.io/ach/merging-files/)"
+  },
+  {
+   "id": "ach:README.md ¶28",
+   "source": "ach",
+   "locator": "README.md ¶28",
+   "text": "## Getting help If you have ACH-specific questions, NACHA (National Automated Clearing House Association) has their [complete specification](docs/2013-Corporate-Rules-and-Guidelines.pdf) for all file formats and message types. channel | info ------- | ------- [Project Documentation](https://moov-io.github.io/ach/) | Our project documentation available online. Twitter [@moov](https://twitter.com/moov) | You can follow Moov.io's Twitter feed to get updates on our project(s). You can also tweet us questions or just share blogs or stories. [GitHub Issue](https://github.com/moov-io/ach/issues/new) | If you are able to reproduce a problem please open a GitHub Issue under the specific project that caused the error. [moov-io slack](https://slack.moov.io/) | Join our slack channel to have an interactive discussion about the development of the project. ## Supported and tested platforms"
+  },
+  {
+   "id": "ach:README.md ¶29",
+   "source": "ach",
+   "locator": "README.md ¶29",
+   "text": "- 64-bit Linux (Ubuntu, Debian), macOS, and Windows - Raspberry Pi Note: 32-bit platforms have known issues and are not supported. ## Contributing Yes please! Please review our [Contributing guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) to get started! Check out our [issues for first time contributors](https://github.com/moov-io/ach/contribute) for something to help out with. This project uses [Go Modules](https://go.dev/blog/using-go-modules) and Go v1.18 or newer. See [Golang's install instructions](https://golang.org/doc/install) for help setting up Go. You can download the source code and we offer [tagged and released versions](https://github.com/moov-io/ach/releases/latest) as well. We highly recommend you use a tagged release for production. ### Releasing"
+  },
+  {
+   "id": "ach:README.md ¶30",
+   "source": "ach",
+   "locator": "README.md ¶30",
+   "text": "To make a release of ach simply open a pull request with `CHANGELOG.md` and `version.go` updated with the next version number and details. You'll also need to push the tag (i.e. `git push origin v1.0.0`) to origin in order for CI to make the release. ### Testing We maintain a comprehensive suite of unit tests and recommend table-driven testing when a particular function warrants several very similar test cases. To run all test files in the current directory, use `go test`. ### Fuzzing We currently run fuzzing over ACH in the form of a [Github Action](https://github.com/moov-io/ach/actions/workflows/fuzz.yml). Please report crashes examples to [`oss@moov.io`](mailto:oss@moov.io). Thanks! ## Related projects As part of Moov's initiative to offer open source fintech infrastructure, we have a large collection of active projects you may find useful:"
+  },
+  {
+   "id": "ach:README.md ¶31",
+   "source": "ach",
+   "locator": "README.md ¶31",
+   "text": "- [Moov Watchman](https://github.com/moov-io/watchman) offers search functions over numerous trade sanction lists from the United States and European Union. - [Moov Fed](https://github.com/moov-io/fed) implements utility services for searching the United States Federal Reserve System such as ABA routing numbers, financial institution name lookup, and FedACH and Fedwire routing information. - [Moov Wire](https://github.com/moov-io/wire) implements an interface to write files for the Fedwire Funds Service, a real-time gross settlement funds transfer system operated by the United States Federal Reserve Banks. - [Moov Image Cash Letter](https://github.com/moov-io/imagecashletter) implements Image Cash Letter (ICL) files used for Check21, X.9 or check truncation files for exchange and remote deposit in the U.S."
+  },
+  {
+   "id": "ach:README.md ¶32",
+   "source": "ach",
+   "locator": "README.md ¶32",
+   "text": "- [Moov Metro 2](https://github.com/moov-io/metro2) provides a way to easily read, create, and validate Metro 2 format, which is used for consumer credit history reporting by the United States credit bureaus. ## License Apache License 2.0 - See [LICENSE](LICENSE) for details."
+  },
+  {
+   "id": "microservices-demo:README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "README.md ¶1",
+   "text": "<!-- <p align=\"center\"> <img src=\"/src/frontend/static/icons/Hipster_HeroLogoMaroon.svg\" width=\"300\" alt=\"Online Boutique\" /> </p> --> ![Continuous Integration](https://github.com/GoogleCloudPlatform/microservices-demo/workflows/Continuous%20Integration%20-%20Main/Release/badge.svg) **Online Boutique** is a cloud-first microservices demo application. The application is a web-based e-commerce app where users can browse items, add them to the cart, and purchase them."
+  },
+  {
+   "id": "microservices-demo:README.md ¶2",
+   "source": "microservices-demo",
+   "locator": "README.md ¶2",
+   "text": "Google uses this application to demonstrate how developers can modernize enterprise applications using Google Cloud products, including: [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine), [Cloud Service Mesh (CSM)](https://cloud.google.com/service-mesh), [gRPC](https://grpc.io/), [Cloud Operations](https://cloud.google.com/products/operations), [Spanner](https://cloud.google.com/spanner), [Memorystore](https://cloud.google.com/memorystore), [AlloyDB](https://cloud.google.com/alloydb), and [Gemini](https://ai.google.dev/). This application works on any Kubernetes cluster. If you’re using this demo, please **★Star** this repository to show your interest! **Note to Googlers:** Please fill out the form at [go/microservices-demo](http://go/microservices-demo). ## Architecture"
+  },
+  {
+   "id": "microservices-demo:README.md ¶3",
+   "source": "microservices-demo",
+   "locator": "README.md ¶3",
+   "text": "**Online Boutique** is composed of 11 microservices written in different languages that talk to each other over gRPC. [![Architecture of microservices](/docs/img/architecture-diagram.png)](/docs/img/architecture-diagram.png) Find **Protocol Buffers Descriptions** at the [`./protos` directory](/protos)."
+  },
+  {
+   "id": "microservices-demo:README.md ¶9",
+   "source": "microservices-demo",
+   "locator": "README.md ¶9",
+   "text": "7. Access the web frontend in a browser using the frontend's external IP. ```sh kubectl get service frontend-external | awk '{print $4}' ``` Visit `http://EXTERNAL_IP` in a web browser to access your instance of Online Boutique. 8. Congrats! You've deployed the default Online Boutique. To deploy a different variation of Online Boutique (e.g., with Google Cloud Operations tracing, Istio, etc.), see [Deploy Online Boutique variations with Kustomize](#deploy-online-boutique-variations-with-kustomize). 9. Once you are done with it, delete the GKE cluster. ```sh gcloud container clusters delete online-boutique \\ --project=${PROJECT_ID} --region=${REGION} ``` Deleting the cluster may take a few minutes. ## Additional deployment options"
+  },
+  {
+   "id": "microservices-demo:README.md ¶10",
+   "source": "microservices-demo",
+   "locator": "README.md ¶10",
+   "text": "- **Terraform**: [See these instructions](/terraform) to learn how to deploy Online Boutique using [Terraform](https://www.terraform.io/intro). - **Istio / Cloud Service Mesh**: [See these instructions](/kustomize/components/service-mesh-istio/README.md) to deploy Online Boutique alongside an Istio-backed service mesh. - **Non-GKE clusters (Minikube, Kind, etc)**: See the [Development guide](/docs/development-guide.md) to learn how you can deploy Online Boutique on non-GKE clusters. - **AI assistant using Gemini**: [See these instructions](/kustomize/components/shopping-assistant/README.md) to deploy a Gemini-powered AI assistant that suggests products to purchase based on an image. - **And more**: The [`/kustomize` directory](/kustomize) contains instructions for customizing the deployment of Online Boutique with other variations. ## Documentation"
+  },
+  {
+   "id": "microservices-demo:README.md ¶11",
+   "source": "microservices-demo",
+   "locator": "README.md ¶11",
+   "text": "- [Development](/docs/development-guide.md) to learn how to run and develop this app locally. ## Demos featuring Online Boutique"
+  },
+  {
+   "id": "microservices-demo:README.md ¶12",
+   "source": "microservices-demo",
+   "locator": "README.md ¶12",
+   "text": "- [Security hardening of the OnlineBoutique sample apps with the Docker Hardened Images (DHI)](https://medium.com/google-cloud/security-hardening-of-the-onlineboutique-sample-apps-with-docker-hardened-images-dhi-ca1fad348343) - [alpine, distroless or scratch?](https://medium.com/google-cloud/alpine-distroless-or-scratch-caac35250e0b) - [Platform Engineering in action: Deploy the Online Boutique sample apps with Score and Humanitec](https://medium.com/p/d99101001e69) - [The new Kubernetes Gateway API with Istio and Anthos Service Mesh (ASM)](https://medium.com/p/9d64c7009cd) - [Use Azure Redis Cache with the Online Boutique sample on AKS](https://medium.com/p/981bd98b53f8) - [Sail Sharp, 8 tips to optimize and secure your .NET containers for Kubernetes](https://medium.com/p/c68ba253844a) - [Deploy multi-region application with Anthos and Google cloud Spanner](https://medium.com/google-cloud/a2ea3493ed0) - [Use Google Cloud Memorystore (Redis) with the Online Boutique sample on GKE](https://medium.com/p/82f7879a900d) - [Use Helm to simplify the deployment of Online Boutique, with a Service Mesh, GitOps, and more!](https://medium.com/p/246119e46d53) - [How to reduce microservices…"
+  },
+  {
+   "id": "microservices-demo:docs/development-guide.md ¶1",
+   "source": "microservices-demo",
+   "locator": "docs/development-guide.md ¶1",
+   "text": "# Development Guide This doc explains how to build and run the Online Boutique source code locally using the `skaffold` command-line tool. ## Prerequisites - [Docker for Desktop](https://www.docker.com/products/docker-desktop) - [kubectl](https://kubernetes.io/docs/tasks/tools/) (can be installed via `gcloud components install kubectl` for Option 1 - GKE) - [skaffold **2.0.2+**](https://skaffold.dev/docs/install/) (latest version recommended), a tool that builds and deploys Docker images in bulk. - Clone the repository. ```sh git clone https://github.com/GoogleCloudPlatform/microservices-demo cd microservices-demo/ ``` - A Google Cloud project with Google Container Registry enabled. (for Option 1 - GKE) - [Minikube](https://minikube.sigs.k8s.io/docs/start/) (optional for Option 2 - Local Cluster) - [Kind](https://kind.sigs.k8s.io/) (optional for Option 2 - Local Cluster)"
+  },
+  {
+   "id": "microservices-demo:docs/development-guide.md ¶4",
+   "source": "microservices-demo",
+   "locator": "docs/development-guide.md ¶4",
+   "text": "**Troubleshooting:** If you get \"No space left on device\" error on Google Cloud Shell, you can build the images on Google Cloud Build: [Enable the Cloud Build API](https://console.cloud.google.com/flows/enableapi?apiid=cloudbuild.googleapis.com), then run `skaffold run -p gcb --default-repo=us-docker.pkg.dev/[PROJECT_ID]/microservices-demo` instead. 4. Find the IP address of your application, then visit the application on your browser to confirm installation. kubectl get service frontend-external 5. Navigate to `http://EXTERNAL-IP` to access the web frontend. ## Option 2 - Local Cluster 1. Launch a local Kubernetes cluster with one of the following tools: - To launch **Minikube** (tested with Ubuntu Linux). Please, ensure that the local Kubernetes cluster has at least: - 4 CPUs - 4.0 GiB memory - 32 GB disk space"
+  },
+  {
+   "id": "microservices-demo:docs/development-guide.md ¶5",
+   "source": "microservices-demo",
+   "locator": "docs/development-guide.md ¶5",
+   "text": "```shell minikube start --cpus=4 --memory 4096 --disk-size 32g ``` - To launch **Docker for Desktop** (tested with Mac/Windows). Go to Preferences: - choose “Enable Kubernetes”, - set CPUs to at least 3, and Memory to at least 6.0 GiB - on the \"Disk\" tab, set at least 32 GB disk space - To launch a **Kind** cluster: ```shell kind create cluster ``` 2. Run `kubectl get nodes` to verify you're connected to the respective control plane. 3. Run `skaffold run` (first time will be slow, it can take ~20 minutes). This will build and deploy the application. If you need to rebuild the images automatically as you refactor the code, run `skaffold dev` command. 4. Run `kubectl get pods` to verify the Pods are ready and running. 5. Run `kubectl port-forward deployment/frontend 8080:8080` to forward a port to the frontend service."
+  },
+  {
+   "id": "microservices-demo:docs/development-guide.md ¶6",
+   "source": "microservices-demo",
+   "locator": "docs/development-guide.md ¶6",
+   "text": "6. Navigate to `localhost:8080` to access the web frontend. ## Adding a new microservice In general, the set of core microservices for Online Boutique is fairly complete and unlikely to change in the future, but it can be useful to add an additional optional microservice that can be deployed to complement the core services. See the [Adding a new microservice](adding-new-microservice.md) guide for instructions on how to add a new microservice. ## Cleanup If you've deployed the application with `skaffold run` command, you can run `skaffold delete` to clean up the deployed resources."
+  },
+  {
+   "id": "microservices-demo:docs/adding-new-microservice.md ¶1",
+   "source": "microservices-demo",
+   "locator": "docs/adding-new-microservice.md ¶1",
+   "text": "# Adding a new microservice This document outlines the steps required to add a new microservice to the Online Boutique application. ## 1. Create a new directory Create a new directory for your microservice within the `src/` directory. The directory name should be the name of your microservice. ## 2. Add source code Place your microservice's source code inside the newly created directory. The structure of this directory should follow the conventions of the existing microservices. For example, a Python-based service would include at minimum the following files: - `README.md`: The service's description and documentation. - `main.py`: The application's entry point. - `requirements.in`: A list of Python dependencies. - `Dockerfile`: To containerize the application. Take a look at existing microservices for inspiration. ## 3. Create a Dockerfile"
+  },
+  {
+   "id": "microservices-demo:docs/adding-new-microservice.md ¶2",
+   "source": "microservices-demo",
+   "locator": "docs/adding-new-microservice.md ¶2",
+   "text": "Create a `Dockerfile` in your microservice's directory. This file will define the steps to build a container image for your service. Refer to this example and tweak based on your new service's needs: https://github.com/GoogleCloudPlatform/microservices-demo/blob/main/src/frontend/Dockerfile ## 4. Create Kubernetes manifests Create a new directory under `kustomize/components/` in the root of the repository for your microservice. Inside this directory, add the necessary Kubernetes YAML files for your new microservice. This typically includes: - A **Deployment** to manage your service's pods. - A **Service** to expose your microservice to other services within the cluster. Ensure you follow the existing naming conventions and that the container image specified in the Deployment matches the one built by your `cloudbuild.yaml` and `skaffold.yaml` files."
+  },
+  {
+   "id": "microservices-demo:docs/adding-new-microservice.md ¶3",
+   "source": "microservices-demo",
+   "locator": "docs/adding-new-microservice.md ¶3",
+   "text": "Refer to this example and tweak based on your new service's needs: https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/kustomize/components/shopping-assistant ## 5. Update the root `kustomization.yaml` file Add your newly created component to the root kustomization file so it gets picked up by the deployment cycle. The file is available here: https://github.com/GoogleCloudPlatform/microservices-demo/blob/main/kustomize/kustomization.yaml ## 6. Update the root `skaffold.yaml` Add your newly created service to the root skaffold file so the images build correctly. The file is available here: https://github.com/GoogleCloudPlatform/microservices-demo/blob/main/skaffold.yaml ## 7. Update the Helm chart Add your newly created service to the Helm chart templates and default values."
+  },
+  {
+   "id": "microservices-demo:docs/adding-new-microservice.md ¶4",
+   "source": "microservices-demo",
+   "locator": "docs/adding-new-microservice.md ¶4",
+   "text": "The chart is available here: https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/helm-chart ## 8. Update the documentation Finally, update the project's documentation to reflect the addition of your new microservice. This may include: - Adding a section to the main `README.md` if the service introduces significant new functionality. - Updating the architecture diagrams in the `docs/img` directory. - Adding a new document in the `docs` directory if the service requires detailed explanation."
+  },
+  {
+   "id": "microservices-demo:docs/product-requirements.md ¶1",
+   "source": "microservices-demo",
+   "locator": "docs/product-requirements.md ¶1",
+   "text": "## Product Requirements This document contains a list of requirements that every change made to this repository should meet. Every change must: 1. Preserve the golden user journey taken by Kubernetes beginners. 1. Preserve the simplicity of demos. 1. Preserve the simplicity of the GKE quickstart. These requirements are about the default deployment (default configuration) of Online Boutique. Changes that will violate any of these rules should not be built into the default configuration of Online Boutique. Such changes should be opt-in only — ideally, as a [Kustomize Component](https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/kustomize) if they align with the [purpose of Online Boutique](/docs/purpose.md). ### 1. Preserve the golden user journey taken by Kubernetes beginners The following statement about Online Boutique should always be true:"
+  },
+  {
+   "id": "microservices-demo:docs/product-requirements.md ¶2",
+   "source": "microservices-demo",
+   "locator": "docs/product-requirements.md ¶2",
+   "text": "> A user outside of Google can deploy Online Boutique's default configuration on a [_kind_ Kubernetes cluster](https://kind.sigs.k8s.io/). This statement describes the golden user journey that we expect new Kubernetes users to take while onboarding to Online Boutique. Being able to run Online Boutique on a _kind_ cluster ensures that Online Boutique is free and cloud-agnostic. This is aligned with [Google's mission](https://about.google/) of making information universally accessible and useful. To be specific, Online Boutique should be useful and accessible to developers that are new to Kubernetes. ### 2. Preserve the simplicity of demos New changes should not complicate the primary user journey showcased in live demos and tutorials."
+  },
+  {
+   "id": "microservices-demo:docs/product-requirements.md ¶3",
+   "source": "microservices-demo",
+   "locator": "docs/product-requirements.md ¶3",
+   "text": "Today, the primary user journey is as follows: 1. Visit Online Boutique on a web browser. 2. Select an item from the homepage and add the item to the cart. 3. The checkout form is pre-populated with placeholder data (e.g. the shipping address). 4. The user checks out and completes the order. ### 3. Preserve the simplicity of the GKE quickstart New changes should not add additional complexity in the [main Online Boutique quickstart](https://github.com/GoogleCloudPlatform/microservices-demo#quickstart-gke). In particular, new changes should not add extra required steps or additional required tools in that quickstart."
+  },
+  {
+   "id": "microservices-demo:docs/product-requirements.md ¶4",
+   "source": "microservices-demo",
+   "locator": "docs/product-requirements.md ¶4",
+   "text": "Ideally, extensions to Online Boutique's default functionality (such as a new microservice or a new cloud service integration) should be added as a [Kustomize Component](https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/kustomize/components) which users can optionally opt into."
+  },
+  {
+   "id": "microservices-demo:docs/purpose.md ¶1",
+   "source": "microservices-demo",
+   "locator": "docs/purpose.md ¶1",
+   "text": "## Purpose Today, the primary purpose of Online Boutique is to demonstrate: * [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine) * [Anthos](https://cloud.google.com/anthos) * [Google Cloud Operations](https://cloud.google.com/products/operations) * tools and technologies commonly used alongside the above products while being accessible and useful to all new Kubernetes users. ### Why does the purpose matter? We filter and prioritize the work to be done in this repository based on the purpose defined above. If you wish to make changes to this repository that do not align with the above purpose, we encourage you to maintain your own fork of Online Boutique."
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶1",
+   "text": "# Use Online Boutique with Kustomize This page contains instructions on deploying variations of the [Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) sample application using [Kustomize](https://kustomize.io/). Each variations is designed as a [**Kustomize component**](https://github.com/kubernetes-sigs/kustomize/blob/master/examples/components.md), so multiple variations can be composed together in the deployment. ## What is Kustomize? Kustomize is a Kubernetes configuration management tool that allows users to customize their manifest configurations without duplication. Its commands are built into `kubectl` as `apply -k`. More information on Kustomize can be found on the [official Kustomize website](https://kustomize.io/). ## Prerequisites"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶2",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶2",
+   "text": "Optionally, [install the `kustomize` binary](https://kubectl.docs.kubernetes.io/installation/) to avoid manually editing a `kustomization.yaml` file. Online Boutique's instructions will often use `kustomize edit` (like `kustomize edit add component components/some-component`), but you can skip these commands and instead add components manually to the [`/kustomize/kustomization.yaml` file](/kustomize/kustomization.yaml). You need to have a Kubernetes cluster where you will deploy the Online Boutique's Kubernetes manifests. To set up a GKE (Google Kubernetes Engine) cluster, you can follow the instruction in the [root `/README.md`](/). ## Deploy Online Boutique with Kustomize 1. From the root folder of this repository, navigate to the `kustomize/` directory. ```bash cd kustomize/ ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶5",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶5",
+   "text": "_Note: It may take 2-3 minutes before the changes are reflected on the deployment._ 1. Access the web frontend in a browser using the frontend's `EXTERNAL_IP`. ```bash kubectl get service frontend-external | awk '{print $4}' ``` Note: you may see `<pending>` while GCP provisions the load balancer. If this happens, wait a few minutes and re-run the command. ## Deploy Online Boutique variations with Kustomize Here is the list of the variations available as Kustomize components that you could leverage:"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶6",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶6",
+   "text": "- [**Change to the Cymbal Shops Branding**](components/cymbal-branding) - Changes all Online Boutique-related branding to Google Cloud's fictitious company — Cymbal Shops. The code adds/enables an environment variable `CYMBAL_BRANDING` in the `frontend` service. - [**Integrate with Google Cloud Operations**](components/google-cloud-operations) - Enables Monitoring (Stats), Tracing, and Profiler for various services within Online Boutique. The code adds the appropriare environment variables (`ENABLE_STATS`, `ENABLE_TRACING`, `DISABLE_PROFILER`) for each YAML config file. - [**Integrate with Memorystore (Redis)**](components/memorystore) - The default Online Boutique deployment uses the in-cluster `redis` database for storing the contents of its shopping cart. The Memorystore deployment variation overrides the default database with its own Memorystore (Redis) database. These changes directly affect `cartservice`. - [**Integrate with Spanner**](components/spanner) - The default Online Boutique deployment uses the in-cluster `redis` database for storing the contents of its shopping cart. The Spanner deployment variation overrides the default database with its own Spanner database.…"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶7",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶7",
+   "text": "### Select variations To customize Online Boutique with its variations, you need to update the default `kustomize/kustomization.yaml` file. You could do that manually, use `sed`, or use the `kustomize edit` command like illustrated below. #### Use `kustomize edit` to select variations Here is an example with the [**Cymbal Shops Branding**](components/cymbal-branding) variation, from the `kustomize/` folder, run the command below: ```bash kustomize edit add component components/cymbal-branding ``` You could now combine it with other variations, like for example with the [**Google Cloud Operations**](components/google-cloud-operations) variation: ```bash kustomize edit add component components/google-cloud-operations ``` ### Deploy selected variations"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶8",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶8",
+   "text": "Like explained earlier, you can locally render these manifests by running `kubectl kustomize .` as well as deploying them by running `kubectl apply -k .`. So for example, the associated `kustomization.yaml` could look like: ```yaml apiVersion: kustomize.config.k8s.io/v1beta1 kind: Kustomization resources: - base components: - components/cymbal-branding - components/google-cloud-operations ``` ### Use remote Kustomize targets Kustomize allows you to reference public remote resources so the `kustomization.yaml` could look like: ```yaml apiVersion: kustomize.config.k8s.io/v1beta1 kind: Kustomization resources: - github.com/GoogleCloudPlatform/microservices-demo/kustomize/base components: - github.com/GoogleCloudPlatform/microservices-demo/kustomize/components/cymbal-branding - github.com/GoogleCloudPlatform/microservices-demo/kustomize/components/google-cloud-operations ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/README.md ¶9",
+   "source": "microservices-demo",
+   "locator": "kustomize/README.md ¶9",
+   "text": "Learn more about [Kustomize remote targets](https://github.com/kubernetes-sigs/kustomize/blob/master/examples/remoteBuild.md)."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/network-policies/README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/network-policies/README.md ¶1",
+   "text": "# Secure Online Boutique with Network Policies You can use [Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) enforcement to control the communication between your cluster's Pods and Services. To use `NetworkPolicies` in Google Kubernetes Engine (GKE), you will need a GKE cluster with network policy enforcement enabled, the recommended approach is to use [GKE Dataplane V2](https://cloud.google.com/kubernetes-engine/docs/how-to/dataplane-v2)."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/network-policies/README.md ¶2",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/network-policies/README.md ¶2",
+   "text": "To use `NetworkPolicies` on a local cluster such as [minikube](https://minikube.sigs.k8s.io/docs/start/), you will need to use an alternative CNI that supports `NetworkPolicies` like [Calico](https://projectcalico.docs.tigera.io/getting-started/kubernetes/minikube). To run a minikube cluster with Calico, run `minikube start --cni=calico`. By design, the minikube default CNI [Kindnet](https://github.com/aojea/kindnet) does not support it. ## Deploy Online Boutique with `NetworkPolicies` via Kustomize To automate the deployment of Online Boutique integrated with fine granular `NetworkPolicies` (one per `Deployment`), you can leverage the following variation with [Kustomize](../..). From the `kustomize/` folder at the root level of this repository, execute this command: ```bash kustomize edit add component components/network-policies ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/network-policies/README.md ¶3",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/network-policies/README.md ¶3",
+   "text": "This will update the `kustomize/kustomization.yaml` file which could be similar to: ```yaml apiVersion: kustomize.config.k8s.io/v1beta1 kind: Kustomization resources: - base components: - components/network-policies ``` You can locally render these manifests by running `kubectl kustomize .` as well as deploying them by running `kubectl apply -k .`. Once deployed, you can verify that the `NetworkPolicies` are successfully deployed: ```bash kubectl get networkpolicy ``` The output could be similar to:"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/network-policies/README.md ¶4",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/network-policies/README.md ¶4",
+   "text": "```output NAME POD-SELECTOR AGE adservice app=adservice 2m58s cartservice app=cartservice 2m58s checkoutservice app=checkoutservice 2m58s currencyservice app=currencyservice 2m58s deny-all <none> 2m58s emailservice app=emailservice 2m58s frontend app=frontend 2m58s loadgenerator app=loadgenerator 2m58s paymentservice app=paymentservice 2m58s productcatalogservice app=productcatalogservice 2m58s recommendationservice app=recommendationservice 2m58s redis-cart app=redis-cart 2m58s shippingservice app=shippingservice 2m58s ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/network-policies/README.md ¶5",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/network-policies/README.md ¶5",
+   "text": "_Note: `Egress` is wide open in these `NetworkPolicies` . In our case, we do this is on purpose because there are multiple egress destinations to take into consideration like the Kubernetes DNS, Istio control plane (`istiod`), Cloud Trace API, Cloud Profiler API, etc._ ## Related Resources - [GKE Dataplane V2 announcement](https://cloud.google.com/blog/products/containers-kubernetes/bringing-ebpf-and-cilium-to-google-kubernetes-engine) - [Kubernetes Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) - [Kubernetes Network Policy Recipes](https://github.com/ahmetb/kubernetes-network-policy-recipes) - [Network policy logging](https://cloud.google.com/kubernetes-engine/docs/how-to/network-policy-logging)"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶1",
+   "text": "# Service mesh with Istio You can use [Istio](https://istio.io) to enable [service mesh features](https://cloud.google.com/service-mesh/docs/overview) such as traffic management, observability, and security. Istio can be provisioned using Cloud Service Mesh (CSM), the Open Source Software (OSS) istioctl tool, or via other Istio providers. You can then label individual namespaces for sidecar injection and configure an Istio gateway to replace the frontend-external load balancer. # Setup The following CLI tools needs to be installed and in the PATH: - `gcloud` - `kubectl` - `kustomize` - `istioctl` (optional) 1. Set-up some default environment variables. ```sh PROJECT_ID=\"<your-project-id>\" REGION=\"<your-google-cloud-region\" CLUSTER_NAME=\"online-boutique\" gcloud config set project $PROJECT_ID ``` # Provision a GKE Cluster 1. Create an Autopilot GKE cluster."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶2",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶2",
+   "text": "```sh gcloud container clusters create-auto $CLUSTER_NAME \\ --location=$REGION \\ --labels dev-tutorial=online-boutique ``` To make the best use of our service mesh, we need to have [GKE Workload Identity](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity), and the [Kubernetes Gateway API resource definitions](https://cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways) enabled. Autopilot takes care of this for us. 1. Change our kubectl context for the newly created cluster. ```sh gcloud container clusters get-credentials $CLUSTER_NAME \\ --region $REGION ``` # Provision and Configure Istio Service Mesh ## (Option A) Provision managed Istio using Cloud Service Mesh"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶3",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶3",
+   "text": "Cloud Service Mesh (CSM) provides a service mesh experience that includes a fully managed control plane and data plane. The recommended way to [install CSM](https://cloud.google.com/service-mesh/docs/onboarding/provision-control-plane) uses [fleet management](https://cloud.google.com/kubernetes-engine/fleet-management/docs/fleet-creation). 1. Enable the Cloud Service Mesh and GKE Enterprise APIs. ```sh gcloud services enable mesh.googleapis.com anthos.googleapis.com ``` 1. Enable service mesh support fleet-wide. ```sh gcloud container fleet mesh enable ``` 1. Register the GKE cluster to the fleet. ```sh gcloud container clusters update $CLUSTER_NAME \\ --location $REGION \\ --fleet-project $PROJECT_ID 1. Enable automatic management of the service mesh feature in the cluster."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶5",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶5",
+   "text": "The output should be similar to: ``` createTime: '2024-09-18T15:52:36.133664725Z' fleetDefaultMemberConfig: mesh: management: MANAGEMENT_AUTOMATIC membershipSpecs: projects/12345/locations/us-central1/memberships/online-boutique: mesh: management: MANAGEMENT_AUTOMATIC origin: type: USER membershipStates: projects/12345/locations/us-central1/memberships/online-boutique: servicemesh: conditions: - code: VPCSC_GA_SUPPORTED details: This control plane supports VPC-SC GA. documentationLink: http://cloud.google.com/service-mesh/docs/managed/vpc-sc severity: INFO controlPlaneManagement: details: - code: REVISION_READY details: 'Ready: asm-managed' implementation: TRAFFIC_DIRECTOR state: ACTIVE dataPlaneManagement: details: - code: OK details: Service is running. state: ACTIVE state: code: OK description: 'Revision ready for use: asm-managed.' updateTime: '2024-09-18T16:30:37.632583401Z' name: projects/my-project/locations/global/features/servicemesh resourceState: state: ACTIVE spec: {} updateTime: '2024-09-18T16:15:05.957266437Z' ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶6",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶6",
+   "text": "1. (Optional) If you require Certificate Authority Service, you can configure it by [following these instructions](https://cloud.google.com/service-mesh/docs/security/certificate-authority-service). ## (Option B) Provision Istio using istioctl 1. Alternatively you can install the open source version of Istio by following the [getting started guide](https://istio.io/latest/docs/setup/getting-started/). ```sh # Install istio 1.17 or above istioctl install --set profile=minimal -y # Enable sidecar injection for Kubernetes namespace(s) where microservices-demo is deployed kubectl label namespace default istio-injection=enabled"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶7",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶7",
+   "text": "# Make sure the istiod injection webhook port 15017 is accessible via GKE master nodes # Otherwise your replicaset-controller may be blocked when trying to create new pods with: # Error creating: Internal error occurred: failed calling # webhook \"namespace.sidecar-injector.istio.io\" ... context deadline exceeded gcloud compute firewall-rules list --filter=\"name~gke-[0-9a-z-]*-master\" NAME NETWORK DIRECTION PRIORITY ALLOW DENY DISABLED gke-online-boutique-c94d71e8-master gke-vpc INGRESS 1000 tcp:10250,tcp:443 False # Update firewall rule (or create a new one) to allow webhook port 15017 gcloud compute firewall-rules update gke-online-boutique-c94d71e8-master \\ --allow tcp:10250,tcp:443,tcp:15017 ``` # Deploy Online Boutique with the Istio component"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶8",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶8",
+   "text": "Once the service mesh and namespace injection are configured, you can then deploy the Istio manifests using Kustomize. You should also include the [service-accounts component](../service-accounts) if you plan on using AuthorizationPolicies. 1. Enable the service-mesh-istio component. ```sh cd kustomize/ kustomize edit add component components/service-mesh-istio ``` This will update the `kustomize/kustomization.yaml` file which could be similar to: ```yaml apiVersion: kustomize.config.k8s.io/v1beta1 kind: Kustomization resources: - base components: - components/service-mesh-istio ``` _Note: `service-mesh-istio` component includes the same delete patch as the `non-public-frontend` component. Trying to use both those components in your kustomization.yaml file will result in an error._ 1. Deploy the manifests. ```sh kubectl apply -k . ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶9",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶9",
+   "text": "The output should be similar to: ``` serviceaccount/adservice created serviceaccount/cartservice created serviceaccount/checkoutservice created serviceaccount/currencyservice created serviceaccount/emailservice created serviceaccount/frontend created serviceaccount/loadgenerator created serviceaccount/paymentservice created serviceaccount/productcatalogservice created serviceaccount/recommendationservice created serviceaccount/shippingservice created service/adservice created service/cartservice created service/checkoutservice created service/currencyservice created service/emailservice created service/frontend created service/paymentservice created service/productcatalogservice created service/recommendationservice created service/redis-cart created service/shippingservice created deployment.apps/adservice created deployment.apps/cartservice created deployment.apps/checkoutservice created deployment.apps/currencyservice created deployment.apps/emailservice created deployment.apps/frontend created deployment.apps/loadgenerator created deployment.apps/paymentservice created deployment.apps/productcatalogservice created deployment.apps/recommendationservice created…"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶10",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶10",
+   "text": "# Verify that the deployment succeeded 1. Check that the pods and the gateway are in a healthy and ready state. ```sh kubectl get pods,gateways,services ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶14",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶14",
+   "text": "1. Find the external IP address of your Istio gateway. ```sh INGRESS_HOST=\"$(kubectl get gateway istio-gateway \\ -o jsonpath='{.status.addresses[*].value}')\" ``` 1. Navigate to the frontend in a web browser. ``` http://$INGRESS_HOST ``` # Additional service mesh demos using Online Boutique - [Canary deployment](https://github.com/GoogleCloudPlatform/istio-samples/tree/master/istio-canary-gke) - [Security (mTLS, JWT, Authorization)](https://github.com/GoogleCloudPlatform/istio-samples/tree/master/security-intro) - [Cloud Operations (Stackdriver)](https://github.com/GoogleCloudPlatform/istio-samples/tree/master/istio-stackdriver) - [Stackdriver metrics (Open source Istio)](https://github.com/GoogleCloudPlatform/istio-samples/tree/master/stackdriver-metrics) # Related resources"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/service-mesh-istio/README.md ¶15",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/service-mesh-istio/README.md ¶15",
+   "text": "- [Deploying classic istio-ingressgateway in ASM](https://cloud.google.com/service-mesh/docs/gateways#deploy_gateways) - [Uninstall Istio via istioctl](https://istio.io/latest/docs/setup/install/istioctl/#uninstall-istio) - [Uninstall Cloud Service Mesh](https://cloud.google.com/service-mesh/docs/uninstall)"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/shopping-assistant/README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/shopping-assistant/README.md ¶1",
+   "text": "# Shopping Assistant with RAG & AlloyDB This demo adds a new service to Online Boutique called `shoppingassistantservice` which, alongside an Alloy-DB backed products catalog, adds a RAG-featured AI assistant to the frontend experience, helping users suggest products matching their home decor. ## Setup instructions **Note:** This demo requires a Google Cloud project where you to have the `owner` role, else you may be unable to enable APIs or modify VPC rules that are needed for this demo. 1. Set some environment variables. ```sh export PROJECT_ID=<project_id> export PROJECT_NUMBER=<project_number> export PGPASSWORD=<pgpassword> ``` **Note**: The project ID and project number of your Google Cloud project can be found in the Console. The PostgreSQL password can be set to anything you want, but make sure to note it down."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/shopping-assistant/README.md ¶5",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/shopping-assistant/README.md ¶5",
+   "text": "1. Copy script #2, the python script, and the products.json to the VM. Make sure the scripts are executable. ```sh nano 2_create_populate_alloydb_tables.sh # paste content nano generate_sql_from_products.py # paste content nano products.json # paste content chmod +x 2_create_populate_alloydb_tables.sh chmod +x generate_sql_from_products.py ``` **Note:** You can find the files at the following places: - `kustomize/components/shopping-assistant/scripts/2_create_populate_alloydb_tables.sh` - `kustomize/components/shopping-assistant/scripts/generate_sql_from_products.py` - `src/productcatalogservice/products.json` 1. Run script #2 in the VM. If it asks for a postgres password, it should be the same that you set in script #1 earlier. This may take a few minutes. ```sh ./2_create_populate_alloydb_tables.sh ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/shopping-assistant/README.md ¶7",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/shopping-assistant/README.md ¶7",
+   "text": "```yaml # ...head of the file components: # remove this comment # - ../kustomize/components/cymbal-branding # - ../kustomize/components/google-cloud-operations # - ../kustomize/components/memorystore # - ../kustomize/components/network-policies - ../kustomize/components/alloydb # remove this comment - ../kustomize/components/shopping-assistant # remove this comment # - ../kustomize/components/spanner # - ../kustomize/components/container-images-tag # - ../kustomize/components/container-images-tag-suffix # - ../kustomize/components/container-images-registry ``` 1. Deploy to the GKE cluster. ```sh skaffold run --default-repo=us-central1-docker.pkg.dev/$PROJECT_ID/images ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/alloydb/README.md ¶1",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/alloydb/README.md ¶1",
+   "text": "# Integrate Online Boutique with AlloyDB By default the `cartservice` stores its data in an in-cluster Redis database. Using a fully managed database service outside your GKE cluster (such as [AlloyDB](https://cloud.google.com/alloydb)) could bring more resiliency and more security. Note that because of AlloyDB's current connectivity, you'll need to run all this from a VM with VPC access to the network you want to use for everything (out of the box this should just use the default network). The Cloud Shell doesn't work because of transitive VPC peering not working. ## Provision an AlloyDB database and the supporting infrastructure Environmental variables needed for setup. These should be set in a .bashrc or similar as some of the variables are used in the application itself. Default values are supplied in this readme, but any of them can be changed. Anything in <> needs to be replaced."
+  },
+  {
+   "id": "microservices-demo:kustomize/components/alloydb/README.md ¶2",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/alloydb/README.md ¶2",
+   "text": "```bash # PROJECT_ID should be set to the project ID that was created to hold the demo PROJECT_ID=<project_id> #Pick a region near you that also has AlloyDB available. See available regions: https://cloud.google.com/alloydb/docs/locations REGION=<region> USE_GKE_GCLOUD_AUTH_PLUGIN=True ALLOYDB_NETWORK=default ALLOYDB_SERVICE_NAME=onlineboutique-network-range ALLOYDB_CLUSTER_NAME=onlineboutique-cluster ALLOYDB_INSTANCE_NAME=onlineboutique-instance # **Note:** Primary and Read IP will need to be set after you create the instance. The command to set this in the shell is included below, but it would also be a good idea to run the command, and manually set the IP address in the .bashrc ALLOYDB_PRIMARY_IP=<ip set below after instance created> ALLOYDB_READ_IP=<ip set below after instance created>"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/alloydb/README.md ¶3",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/alloydb/README.md ¶3",
+   "text": "ALLOYDB_DATABASE_NAME=carts ALLOYDB_TABLE_NAME=cart_items ALLOYDB_USER_GSA_NAME=alloydb-user-sa ALLOYDB_USER_GSA_ID=${ALLOYDB_USER_GSA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com CARTSERVICE_KSA_NAME=cartservice ALLOYDB_SECRET_NAME=alloydb-secret # PGPASSWORD needs to be set in order to run the psql from the CLI easily. The value for this # needs to be set behind the Secret mentioned above PGPASSWORD=<password> ``` To provision an AlloyDB instance you can follow the following instructions: ```bash gcloud services enable alloydb.googleapis.com gcloud services enable servicenetworking.googleapis.com gcloud services enable secretmanager.googleapis.com # Set our DB credentials behind the secret. Replace <password> with whatever you want # to use as the credentials for the database. Don't use $ in the password. echo <password> | gcloud secrets create ${ALLOYDB_SECRET_NAME} --data-file=-"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/alloydb/README.md ¶8",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/alloydb/README.md ¶8",
+   "text": "To automate the deployment of Online Boutique integrated with AlloyDB you can leverage the following variation with [Kustomize](../..). From the `kustomize/` folder at the root level of this repository, execute these commands: ```bash kustomize edit add component components/alloydb ``` _**Note:** this Kustomize component will also remove the `redis-cart` `Deployment` and `Service` not used anymore._ This will update the `kustomize/kustomization.yaml` file which could be similar to: ```yaml apiVersion: kustomize.config.k8s.io/v1beta1 kind: Kustomization resources: - base components: - components/alloydb ```"
+  },
+  {
+   "id": "microservices-demo:kustomize/components/alloydb/README.md ¶9",
+   "source": "microservices-demo",
+   "locator": "kustomize/components/alloydb/README.md ¶9",
+   "text": "Update current Kustomize manifest to target this AlloyDB database. ```bash sed -i \"s/PROJECT_ID_VAL/${PROJECT_ID}/g\" components/alloydb/kustomization.yaml sed -i \"s/ALLOYDB_PRIMARY_IP_VAL/${ALLOYDB_PRIMARY_IP}/g\" components/alloydb/kustomization.yaml sed -i \"s/ALLOYDB_USER_GSA_ID/${ALLOYDB_USER_GSA_ID}/g\" components/alloydb/kustomization.yaml sed -i \"s/ALLOYDB_DATABASE_NAME_VAL/${ALLOYDB_DATABASE_NAME}/g\" components/alloydb/kustomization.yaml sed -i \"s/ALLOYDB_TABLE_NAME_VAL/${ALLOYDB_TABLE_NAME}/g\" components/alloydb/kustomization.yaml sed -i \"s/ALLOYDB_SECRET_NAME_VAL/${ALLOYDB_SECRET_NAME}/g\" components/alloydb/kustomization.yaml ``` You can locally render these manifests by running `kubectl kustomize .` as well as deploying them by running `kubectl apply -k .`. ## Extra cleanup steps ```bash gcloud compute addresses delete ${ALLOYDB_SERVICE_NAME} --global"
+  },
+  {
+   "id": "piggymetrics:README.md ¶1",
+   "source": "piggymetrics",
+   "locator": "README.md ¶1",
+   "text": "[![Build Status](https://travis-ci.org/sqshq/PiggyMetrics.svg?branch=master)](https://travis-ci.org/sqshq/PiggyMetrics) [![codecov.io](https://codecov.io/github/sqshq/PiggyMetrics/coverage.svg?branch=master)](https://codecov.io/github/sqshq/PiggyMetrics?branch=master) [![GitHub license](https://img.shields.io/github/license/mashape/apistatus.svg)](https://github.com/sqshq/PiggyMetrics/blob/master/LICENCE) [![Join the chat at https://gitter.im/sqshq/PiggyMetrics](https://badges.gitter.im/sqshq/PiggyMetrics.svg)](https://gitter.im/sqshq/PiggyMetrics?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) # Piggy Metrics"
+  },
+  {
+   "id": "piggymetrics:README.md ¶2",
+   "source": "piggymetrics",
+   "locator": "README.md ¶2",
+   "text": "Piggy Metrics is a simple financial advisor app built to demonstrate the [Microservice Architecture Pattern](http://martinfowler.com/microservices/) using Spring Boot, Spring Cloud and Docker. The project is intended as a tutorial, but you are welcome to fork it and turn it into something else! <br> ![](https://cloud.githubusercontent.com/assets/6069066/13864234/442d6faa-ecb9-11e5-9929-34a9539acde0.png) ![Piggy Metrics](https://cloud.githubusercontent.com/assets/6069066/13830155/572e7552-ebe4-11e5-918f-637a49dff9a2.gif) ## Functional services Piggy Metrics is decomposed into three core microservices. All of them are independently deployable applications organized around certain business domains. <img width=\"880\" alt=\"Functional services\" src=\"https://cloud.githubusercontent.com/assets/6069066/13900465/730f2922-ee20-11e5-8df0-e7b51c668847.png\">"
+  },
+  {
+   "id": "piggymetrics:README.md ¶3",
+   "source": "piggymetrics",
+   "locator": "README.md ¶3",
+   "text": "#### Account service Contains general input logic and validation: incomes/expenses items, savings and account settings. Method | Path | Description | User authenticated | Available from UI ------------- | ------------------------- | ------------- |:-------------:|:----------------:| GET | /accounts/{account} | Get specified account data | | GET | /accounts/current | Get current account data | × | × GET | /accounts/demo | Get demo account data (pre-filled incomes/expenses items, etc) | | × PUT | /accounts/current | Save current account data | × | × POST | /accounts/ | Register new account | | × #### Statistics service Performs calculations on major statistics parameters and captures time series for each account. Datapoint contains values normalized to base currency and time period. This data is used to track cash flow dynamics during the account lifetime."
+  },
+  {
+   "id": "piggymetrics:README.md ¶6",
+   "source": "piggymetrics",
+   "locator": "README.md ¶6",
+   "text": "## Infrastructure [Spring cloud](https://spring.io/projects/spring-cloud) provides powerful tools for developers to quickly implement common distributed systems patterns - <img width=\"880\" alt=\"Infrastructure services\" src=\"https://cloud.githubusercontent.com/assets/6069066/13906840/365c0d94-eefa-11e5-90ad-9d74804ca412.png\"> ### Config service [Spring Cloud Config](http://cloud.spring.io/spring-cloud-config/spring-cloud-config.html) is horizontally scalable centralized configuration service for the distributed systems. It uses a pluggable repository layer that currently supports local storage, Git, and Subversion."
+  },
+  {
+   "id": "piggymetrics:README.md ¶7",
+   "source": "piggymetrics",
+   "locator": "README.md ¶7",
+   "text": "In this project, we are going to use `native profile`, which simply loads config files from the local classpath. You can see `shared` directory in [Config service resources](https://github.com/sqshq/PiggyMetrics/tree/master/config/src/main/resources). Now, when Notification-service requests its configuration, Config service responses with `shared/notification-service.yml` and `shared/application.yml` (which is shared between all client applications). ##### Client side usage Just build Spring Boot application with `spring-cloud-starter-config` dependency, autoconfiguration will do the rest. Now you don't need any embedded properties in your application. Just provide `bootstrap.yml` with application name and Config service url: ```yml spring: application: name: notification-service cloud: config: uri: http://config:8888 fail-fast: true ```"
+  },
+  {
+   "id": "piggymetrics:README.md ¶8",
+   "source": "piggymetrics",
+   "locator": "README.md ¶8",
+   "text": "##### With Spring Cloud Config, you can change application config dynamically. For example, [EmailService bean](https://github.com/sqshq/PiggyMetrics/blob/master/notification-service/src/main/java/com/piggymetrics/notification/service/EmailServiceImpl.java) is annotated with `@RefreshScope`. That means you can change e-mail text and subject without rebuild and restart the Notification service. First, change required properties in Config server. Then make a refresh call to the Notification service: `curl -H \"Authorization: Bearer #token#\" -XPOST http://127.0.0.1:8000/notifications/refresh` You could also use Repository [webhooks to automate this process](http://cloud.spring.io/spring-cloud-config/spring-cloud-config.html#_push_notifications_and_spring_cloud_bus)"
+  },
+  {
+   "id": "piggymetrics:README.md ¶9",
+   "source": "piggymetrics",
+   "locator": "README.md ¶9",
+   "text": "##### Notes - `@RefreshScope` doesn't work with `@Configuration` classes and doesn't ignores `@Scheduled` methods - `fail-fast` property means that Spring Boot application will fail startup immediately, if it cannot connect to the Config Service. ### Auth service Authorization responsibilities are extracted to a separate server, which grants [OAuth2 tokens](https://tools.ietf.org/html/rfc6749) for the backend resource services. Auth Server is used for user authorization as well as for secure machine-to-machine communication inside the perimeter. In this project, I use [`Password credentials`](https://tools.ietf.org/html/rfc6749#section-4.3) grant type for users authorization (since it's used only by the UI) and [`Client Credentials`](https://tools.ietf.org/html/rfc6749#section-4.4) grant for service-to-service communciation."
+  },
+  {
+   "id": "piggymetrics:README.md ¶10",
+   "source": "piggymetrics",
+   "locator": "README.md ¶10",
+   "text": "Spring Cloud Security provides convenient annotations and autoconfiguration to make this really easy to implement on both server and client side. You can learn more about that in [documentation](http://cloud.spring.io/spring-cloud-security/spring-cloud-security.html). On the client side, everything works exactly the same as with traditional session-based authorization. You can retrieve `Principal` object from the request, check user roles using the expression-based access control and `@PreAuthorize` annotation. Each PiggyMetrics client has a scope: `server` for backend services and `ui` - for the browser. We can use `@PreAuthorize` annotation to protect controllers from an external access:"
+  },
+  {
+   "id": "piggymetrics:README.md ¶11",
+   "source": "piggymetrics",
+   "locator": "README.md ¶11",
+   "text": "``` java @PreAuthorize(\"#oauth2.hasScope('server')\") @RequestMapping(value = \"accounts/{name}\", method = RequestMethod.GET) public List<DataPoint> getStatisticsByAccountName(@PathVariable String name) { return statisticsService.findByAccountName(name); } ``` ### API Gateway API Gateway is a single entry point into the system, used to handle requests and routing them to the appropriate backend service or by [aggregating results from a scatter-gather call](http://techblog.netflix.com/2013/01/optimizing-netflix-api.html). Also, it can be used for authentication, insights, stress and canary testing, service migration, static response handling and active traffic management."
+  },
+  {
+   "id": "piggymetrics:README.md ¶12",
+   "source": "piggymetrics",
+   "locator": "README.md ¶12",
+   "text": "Netflix opensourced [such an edge service](http://techblog.netflix.com/2013/06/announcing-zuul-edge-service-in-cloud.html) and Spring Cloud allows to use it with a single `@EnableZuulProxy` annotation. In this project, we use Zuul to store some static content (the UI application) and to route requests to appropriate the microservices. Here's a simple prefix-based routing configuration for the Notification service: ```yml zuul: routes: notification-service: path: /notifications/** serviceId: notification-service stripPrefix: false ```"
+  },
+  {
+   "id": "piggymetrics:README.md ¶13",
+   "source": "piggymetrics",
+   "locator": "README.md ¶13",
+   "text": "That means all requests starting with `/notifications` will be routed to the Notification service. There is no hardcoded addresses, as you can see. Zuul uses [Service discovery](https://github.com/sqshq/PiggyMetrics/blob/master/README.md#service-discovery) mechanism to locate Notification service instances and also [Circuit Breaker and Load Balancer](https://github.com/sqshq/PiggyMetrics/blob/master/README.md#http-client-load-balancer-and-circuit-breaker), described below. ### Service Discovery Service Discovery allows automatic detection of the network locations for all registered services. These locations might have dynamically assigned addresses due to auto-scaling, failures or upgrades."
+  },
+  {
+   "id": "piggymetrics:README.md ¶14",
+   "source": "piggymetrics",
+   "locator": "README.md ¶14",
+   "text": "The key part of Service discovery is the Registry. In this project, we use Netflix Eureka. Eureka is a good example of the client-side discovery pattern, where client is responsible for looking up the locations of available service instances and load balancing between them. With Spring Boot, you can easily build Eureka Registry using the `spring-cloud-starter-eureka-server` dependency, `@EnableEurekaServer` annotation and simple configuration properties. Client support enabled with `@EnableDiscoveryClient` annotation a `bootstrap.yml` with application name: ``` yml spring: application: name: notification-service ```"
+  },
+  {
+   "id": "piggymetrics:README.md ¶15",
+   "source": "piggymetrics",
+   "locator": "README.md ¶15",
+   "text": "This service will be registered with the Eureka Server and provided with metadata such as host, port, health indicator URL, home page etc. Eureka receives heartbeat messages from each instance belonging to the service. If the heartbeat fails over a configurable timetable, the instance will be removed from the registry. Also, Eureka provides a simple interface where you can track running services and a number of available instances: `http://localhost:8761` ### Load balancer, Circuit breaker and Http client #### Ribbon Ribbon is a client side load balancer which gives you a lot of control over the behaviour of HTTP and TCP clients. Compared to a traditional load balancer, there is no need in additional network hop - you can contact desired service directly."
+  },
+  {
+   "id": "piggymetrics:README.md ¶16",
+   "source": "piggymetrics",
+   "locator": "README.md ¶16",
+   "text": "Out of the box, it natively integrates with Spring Cloud and Service Discovery. [Eureka Client](https://github.com/sqshq/PiggyMetrics#service-discovery) provides a dynamic list of available servers so Ribbon could balance between them. #### Hystrix Hystrix is the implementation of [Circuit Breaker Pattern](http://martinfowler.com/bliki/CircuitBreaker.html), which gives us a control over latency and network failures while communicating with other services. The main idea is to stop cascading failures in the distributed environment - that helps to fail fast and recover as soon as possible - important aspects of a fault-tolerant system that can self-heal. Moreover, Hystrix generates metrics on execution outcomes and latency for each command, that we can use to [monitor system's behavior](https://github.com/sqshq/PiggyMetrics#monitor-dashboard)."
+  },
+  {
+   "id": "piggymetrics:README.md ¶17",
+   "source": "piggymetrics",
+   "locator": "README.md ¶17",
+   "text": "#### Feign Feign is a declarative Http client which seamlessly integrates with Ribbon and Hystrix. Actually, a single `spring-cloud-starter-feign` dependency and `@EnableFeignClients` annotation gives us a full set of tools, including Load balancer, Circuit Breaker and Http client with reasonable default configuration. Here is an example from the Account Service: ``` java @FeignClient(name = \"statistics-service\") public interface StatisticsServiceClient { @RequestMapping(method = RequestMethod.PUT, value = \"/statistics/{accountName}\", consumes = MediaType.APPLICATION_JSON_UTF8_VALUE) void updateStatistics(@PathVariable(\"accountName\") String accountName, Account account); } ```"
+  },
+  {
+   "id": "piggymetrics:README.md ¶18",
+   "source": "piggymetrics",
+   "locator": "README.md ¶18",
+   "text": "- Everything you need is just an interface - You can share `@RequestMapping` part between Spring MVC controller and Feign methods - Above example specifies just a desired service id - `statistics-service`, thanks to auto-discovery through Eureka ### Monitor dashboard In this project configuration, each microservice with Hystrix on board pushes metrics to Turbine via Spring Cloud Bus (with AMQP broker). The Monitoring project is just a small Spring boot application with the [Turbine](https://github.com/Netflix/Turbine) and [Hystrix Dashboard](https://github.com/Netflix-Skunkworks/hystrix-dashboard). Let's see observe the behavior of our system under load: Statistics Service imitates a delay during the request processing. The response timeout is set to 1 second: <img width=\"880\" src=\"https://cloud.githubusercontent.com/assets/6069066/14194375/d9a2dd80-f7be-11e5-8bcc-9a2fce753cfe.png\">"
+  },
+  {
+   "id": "piggymetrics:README.md ¶20",
+   "source": "piggymetrics",
+   "locator": "README.md ¶20",
+   "text": "### Log analysis Centralized logging can be very useful while attempting to identify problems in a distributed environment. Elasticsearch, Logstash and Kibana stack lets you search and analyze your logs, utilization and network activity data with ease. ### Distributed tracing Analyzing problems in distributed systems can be difficult, especially trying to trace requests that propagate from one microservice to another."
+  },
+  {
+   "id": "piggymetrics:README.md ¶21",
+   "source": "piggymetrics",
+   "locator": "README.md ¶21",
+   "text": "[Spring Cloud Sleuth](https://cloud.spring.io/spring-cloud-sleuth/) solves this problem by providing support for the distributed tracing. It adds two types of IDs to the logging: `traceId` and `spanId`. `spanId` represents a basic unit of work, for example sending an HTTP request. The traceId contains a set of spans forming a tree-like structure. For example, with a distributed big-data store, a trace might be formed by a PUT request. Using `traceId` and `spanId` for each operation we know when and where our application is as it processes a request, making reading logs much easier. The logs are as follows, notice the `[appname,traceId,spanId,exportable]` entries from the Slf4J MDC:"
+  },
+  {
+   "id": "piggymetrics:README.md ¶23",
+   "source": "piggymetrics",
+   "locator": "README.md ¶23",
+   "text": "Deploying microservices, with their interdependence, is much more complex process than deploying a monolithic application. It is really important to have a fully automated infrastructure. We can achieve following benefits with Continuous Delivery approach: - The ability to release software anytime - Any build could end up being a release - Build artifacts once - deploy as needed Here is a simple Continuous Delivery workflow, implemented in this project: <img width=\"880\" src=\"https://cloud.githubusercontent.com/assets/6069066/14159789/0dd7a7ce-f6e9-11e5-9fbb-a7fe0f4431e3.png\">"
+  },
+  {
+   "id": "piggymetrics:README.md ¶24",
+   "source": "piggymetrics",
+   "locator": "README.md ¶24",
+   "text": "In this [configuration](https://github.com/sqshq/PiggyMetrics/blob/master/.travis.yml), Travis CI builds tagged images for each successful git push. So, there are always the `latest` images for each microservice on [Docker Hub](https://hub.docker.com/r/sqshq/) and older images, tagged with git commit hash. It's easy to deploy any of them and quickly rollback, if needed. ## Let's try it out Note that starting 8 Spring Boot applications, 4 MongoDB instances and a RabbitMq requires at least 4Gb of RAM. #### Before you start - Install Docker and Docker Compose. - Change environment variable values in `.env` file for more security or leave it as it is. - Build the project: `mvn package [-DskipTests]` #### Production mode In this mode, all latest images will be pulled from Docker Hub. Just copy `docker-compose.yml` and hit `docker-compose up`"
+  },
+  {
+   "id": "piggymetrics:README.md ¶25",
+   "source": "piggymetrics",
+   "locator": "README.md ¶25",
+   "text": "#### Development mode If you'd like to build images yourself, you have to clone the repository and build artifacts using maven. After that, run `docker-compose -f docker-compose.yml -f docker-compose.dev.yml up` `docker-compose.dev.yml` inherits `docker-compose.yml` with additional possibility to build images locally and expose all containers ports for convenient development. If you'd like to start applications in Intellij Idea you need to either use [EnvFile plugin](https://plugins.jetbrains.com/plugin/7861-envfile) or manually export environment variables listed in `.env` file (make sure they were exported: `printenv`)"
+  },
+  {
+   "id": "piggymetrics:README.md ¶26",
+   "source": "piggymetrics",
+   "locator": "README.md ¶26",
+   "text": "#### Important endpoints - http://localhost:80 - Gateway - http://localhost:8761 - Eureka Dashboard - http://localhost:9000/hystrix - Hystrix Dashboard (Turbine stream link: `http://turbine-stream-service:8080/turbine/turbine.stream`) - http://localhost:15672 - RabbitMq management (default login/password: guest/guest) ## Contributions are welcome! PiggyMetrics is open source, and would greatly appreciate your help. Feel free to suggest and implement any improvements."
+  },
+  {
+   "id": "petclinic:README.md ¶1",
+   "source": "petclinic",
+   "locator": "README.md ¶1",
+   "text": "# Distributed version of the Spring PetClinic Sample Application built with Spring Cloud and Spring AI [![Build Status](https://github.com/spring-petclinic/spring-petclinic-microservices/actions/workflows/maven-build.yml/badge.svg)](https://github.com/spring-petclinic/spring-petclinic-microservices/actions/workflows/maven-build.yml) [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)"
+  },
+  {
+   "id": "petclinic:README.md ¶2",
+   "source": "petclinic",
+   "locator": "README.md ¶2",
+   "text": "This project demonstrates how to split the classic Spring PetClinic sample application into **[microservices](http://www.martinfowler.com/articles/microservices.html)**, with a **Vue.js frontend** and a Spring AI-powered chatbot. To achieve that goal, it relies on Spring Boot, **Spring Cloud Gateway**, **Spring Cloud Circuit Breaker** with Resilience4j, **Spring Cloud Config**, Micrometer Tracing with Zipkin, Prometheus and Grafana for monitoring, Spring Boot Admin, Chaos Monkey for Spring Boot, and the Eureka Service Discovery from the [Spring Cloud Netflix](https://github.com/spring-cloud/spring-cloud-netflix) technology stack. [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/spring-petclinic/spring-petclinic-microservices)"
+  },
+  {
+   "id": "petclinic:README.md ¶3",
+   "source": "petclinic",
+   "locator": "README.md ¶3",
+   "text": "[![Open in Codeanywhere](https://codeanywhere.com/img/open-in-codeanywhere-btn.svg)](https://app.codeanywhere.com/#https://github.com/spring-petclinic/spring-petclinic-microservices) ## Starting services locally without Docker"
+  },
+  {
+   "id": "petclinic:README.md ¶4",
+   "source": "petclinic",
+   "locator": "README.md ¶4",
+   "text": "Every microservice is a Spring Boot application and can be started locally using IDE or `../mvnw spring-boot:run` command. Please note that supporting services (Config and Discovery Server) must be started before any other application (Customers, Vets, Visits and API). Startup of Tracing server, Admin server, Grafana and Prometheus is optional. If everything goes well, you can access the following services at given location: * Discovery Server - http://localhost:8761 * Config Server - http://localhost:8888 * Vue.js frontend (API Gateway) - http://localhost:8080 * Customers, Vets, Visits and GenAI Services - random port, check Eureka Dashboard * Tracing Server (Zipkin) - http://localhost:9411/zipkin/ (we use [openzipkin](https://github.com/openzipkin/zipkin/tree/main/zipkin-server)) * Admin Server (Spring Boot Admin) - http://localhost:9090 * Grafana Dashboards - http://localhost:3030 * Prometheus - http://localhost:9091"
+  },
+  {
+   "id": "petclinic:README.md ¶5",
+   "source": "petclinic",
+   "locator": "README.md ¶5",
+   "text": "You can tell Config Server to use your local Git repository by using `native` Spring profile and setting `GIT_REPO` environment variable, for example: `-Dspring.profiles.active=native -DGIT_REPO=/projects/spring-petclinic-microservices-config` ## Starting services locally with docker-compose In order to start entire infrastructure using Docker, you have to build images by executing ``bash ./mvnw clean install -P buildDocker `` This requires `Docker` or `Docker desktop` to be installed and running."
+  },
+  {
+   "id": "petclinic:README.md ¶6",
+   "source": "petclinic",
+   "locator": "README.md ¶6",
+   "text": "Alternatively you can also build all the images on `Podman`, which requires Podman or Podman Desktop to be installed and running. ```bash ./mvnw clean install -PbuildDocker -Dcontainer.executable=podman ``` By default, the Docker OCI image is build for an `linux/amd64` platform. For other architectures, you could change it by using the `-Dcontainer.platform` maven command line argument. For instance, if you target container images for an Apple M2, you could use the command line with the `linux/arm64` architecture: ```bash ./mvnw clean install -P buildDocker -Dcontainer.platform=\"linux/arm64\" ``` Once images are ready, you can start them with a single command `docker compose up` or `podman-compose up`."
+  },
+  {
+   "id": "petclinic:README.md ¶7",
+   "source": "petclinic",
+   "locator": "README.md ¶7",
+   "text": "Containers startup order is coordinated with the `service_healthy` condition of the Docker Compose [depends-on](https://github.com/compose-spec/compose-spec/blob/main/spec.md#depends_on) expression and the [healthcheck](https://github.com/compose-spec/compose-spec/blob/main/spec.md#healthcheck) of the service containers. After starting services, it takes a while for API Gateway to be in sync with service registry, so don't be scared of initial Spring Cloud Gateway timeouts. You can track services availability using Eureka dashboard available by default at http://localhost:8761. The `main` branch uses an Eclipse Temurin with Java 17 as Docker base image. *NOTE: Under MacOSX or Windows, make sure that the Docker VM has enough memory to run the microservices. The default settings are usually not enough and make the `docker-compose up` painfully slow.*"
+  },
+  {
+   "id": "petclinic:README.md ¶8",
+   "source": "petclinic",
+   "locator": "README.md ¶8",
+   "text": "## Starting services locally with docker-compose and Java If you experience issues with running the system via docker-compose you can try running the `./scripts/run_all.sh` script that will start the infrastructure services via `docker compose` and all the Java based applications via standard `nohup java -jar ...` command. The logs will be available under `${ROOT}/target/nameoftheapp.log`. By default the applications are started without the `chaos-monkey` profile. Pass the optional `--chaos-monkey` flag to enable it and interact with Spring Boot Chaos Monkey: ```bash ./scripts/run_all.sh --chaos-monkey ``` You can check out the [README](scripts/chaos/README.md) for more information about how to use the `./scripts/chaos/call_chaos.sh` helper script to enable assaults."
+  },
+  {
+   "id": "petclinic:README.md ¶9",
+   "source": "petclinic",
+   "locator": "README.md ¶9",
+   "text": "Use `./scripts/stop_all.sh` to stop all the Java applications and the docker-compose infrastructure containers started by `run_all.sh`. ## Understanding the Spring Petclinic application [See the presentation of the Spring Petclinic Framework version](http://fr.slideshare.net/AntoineRey/spring-framework-petclinic-sample-application) [A blog post introducing the Spring Petclinic Microsevices](http://javaetmoi.com/2018/10/architecture-microservices-avec-spring-cloud/) (french language) You can then access petclinic here: http://localhost:8080/ ## Microservices Overview"
+  },
+  {
+   "id": "petclinic:README.md ¶10",
+   "source": "petclinic",
+   "locator": "README.md ¶10",
+   "text": "This project consists of several microservices: - **Customers Service**: Manages customer data. - **Vets Service**: Handles information about veterinarians. - **Visits Service**: Manages pet visit records. - **GenAI Service**: Provides a chatbot interface to the application. - **API Gateway**: Routes client requests to the appropriate services. - **Config Server**: Centralized configuration management for all services. - **Discovery Server**: Eureka-based service registry. Each service has its own specific role and communicates via REST APIs. ![Spring Petclinic Microservices screenshot](docs/application-screenshot.png) **Architecture diagram of the Spring Petclinic Microservices** ![Spring Petclinic Microservices architecture](docs/microservices-architecture-diagram.jpg) ## Integrating the Spring AI Chatbot"
+  },
+  {
+   "id": "petclinic:README.md ¶11",
+   "source": "petclinic",
+   "locator": "README.md ¶11",
+   "text": "Spring Petclinic integrates a Chatbot that allows you to interact with the application in a natural language. Here are some examples of what you could ask: 1. Please list the owners that come to the clinic. 2. Are there any vets that specialize in surgery? 3. Is there an owner named Betty? 4. Which owners have dogs? 5. Add a dog for Betty. Its name is Moopsie. 6. Create a new owner. ![Screenshot of the chat dialog](docs/spring-ai.png) This `spring-petclinic-genai-service` microservice currently supports **OpenAI** (default) or **Azure's OpenAI** as the LLM provider. In order to start the microservice, perform the following steps:"
+  },
+  {
+   "id": "petclinic:README.md ¶12",
+   "source": "petclinic",
+   "locator": "README.md ¶12",
+   "text": "1. Decide which provider you want to use. By default, the `spring-ai-starter-model-openai` dependency is enabled. You can change it to `spring-ai-starter-model-azure-openai`in the `pom.xml`. 2. Create an OpenAI API key or an Azure OpenAI resource in your Azure Portal. Refer to the [OpenAI's quickstart](https://platform.openai.com/docs/quickstart) or [Azure's documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/) for further information on how to obtain these. You only need to populate the provider you're using - either openai, or azure-openai. If you don't have your own OpenAI API key, don't worry! You can temporarily use the `demo` key, which OpenAI provides free of charge for demonstration purposes. This `demo` key has a quota, is limited to the `gpt-4o-mini` model, and is intended solely for demonstration use. With your own OpenAI account, you can test the `gpt-4o` model by modifying the `deployment-name` property of the `application.yml` file. 3. Export your API keys and endpoint as environment variables: * either OpenAI: ```bash export OPENAI_API_KEY=\"your_api_key_here\" ``` * or Azure OpenAI: ```bash export…"
+  },
+  {
+   "id": "petclinic:README.md ¶13",
+   "source": "petclinic",
+   "locator": "README.md ¶13",
+   "text": "## In case you find a bug/suggested improvement for Spring Petclinic Microservices Our issue tracker is available here: https://github.com/spring-petclinic/spring-petclinic-microservices/issues ## Database configuration In its default configuration, Petclinic uses an in-memory database (HSQLDB) which gets populated at startup with data. A similar setup is provided for MySql in case a persistent database configuration is needed. Dependency for Connector/J, the MySQL JDBC driver is already included in the `pom.xml` files. ### Start a MySql database You may start a MySql database with docker: ``` docker run -e MYSQL_ROOT_PASSWORD=petclinic -e MYSQL_DATABASE=petclinic -p 3306:3306 mysql:8.4.5 ``` or download and install the MySQL database (e.g., MySQL Community Server 8.4.5 LTS), which can be found here: https://dev.mysql.com/downloads/ ### Use the Spring 'mysql' profile"
+  },
+  {
+   "id": "petclinic:README.md ¶15",
+   "source": "petclinic",
+   "locator": "README.md ¶15",
+   "text": "## Custom metrics monitoring Grafana and Prometheus are included in the `docker-compose.yml` configuration, and the public facing applications have been instrumented with [MicroMeter](https://micrometer.io) to collect JVM and custom business metrics. A JMeter load testing script is available to stress the application and generate metrics: [petclinic_test_plan.jmx](spring-petclinic-api-gateway/src/test/jmeter/petclinic_test_plan.jmx) ![Grafana metrics dashboard](docs/grafana-custom-metrics-dashboard.png) ### Using Prometheus * Prometheus can be accessed from your local machine at http://localhost:9091 ### Using Grafana with Prometheus"
+  },
+  {
+   "id": "petclinic:README.md ¶16",
+   "source": "petclinic",
+   "locator": "README.md ¶16",
+   "text": "* An anonymous access and a Prometheus datasource are setup. * A `Spring Petclinic Metrics` Dashboard is available at the URL http://localhost:3030/d/69JXeR0iw/spring-petclinic-metrics. You will find the JSON configuration file here: [docker/grafana/dashboards/grafana-petclinic-dashboard.json](). * You may create your own dashboard or import the [Micrometer/SpringBoot dashboard](https://grafana.com/dashboards/4701) via the Import Dashboard menu item. The id for this dashboard is `4701`. ### Custom metrics Spring Boot registers a lot number of core metrics: JVM, CPU, Tomcat, Logback... The Spring Boot auto-configuration enables the instrumentation of requests handled by Spring MVC. All those three REST controllers `OwnerResource`, `PetResource` and `VisitResource` have been instrumented by the `@Timed` Micrometer annotation at class level."
+  },
+  {
+   "id": "petclinic:README.md ¶17",
+   "source": "petclinic",
+   "locator": "README.md ¶17",
+   "text": "* `customers-service` application has the following custom metrics enabled: * @Timed: `petclinic.owner` * @Timed: `petclinic.pet` * `visits-service` application has the following custom metrics enabled: * @Timed: `petclinic.visit` ## Looking for something in particular?"
+  },
+  {
+   "id": "petclinic:README.md ¶20",
+   "source": "petclinic",
+   "locator": "README.md ¶20",
+   "text": "## Pushing to a Docker registry Docker images for `linux/amd64` and `linux/arm64` platforms have been published into DockerHub in the [springcommunity](https://hub.docker.com/u/springcommunity) organization. You can pull an image: ```bash docker pull springcommunity/spring-petclinic-config-server ``` You may prefer to build then push images to your own Docker registry. ### Choose your Docker registry You need to define your target Docker registry. Make sure you're already logged in by running `docker login <endpoint>` or `docker login` if you're just targeting Docker hub. Setup the `REPOSITORY_PREFIX` env variable to target your Docker registry. If you're targeting Docker hub, simple provide your username, for example: ```bash export REPOSITORY_PREFIX=springcommunity ```"
+  },
+  {
+   "id": "petclinic:README.md ¶22",
+   "source": "petclinic",
+   "locator": "README.md ¶22",
+   "text": "There is a `petclinic.css` in `spring-petclinic-api-gateway/src/main/resources/static/css`. It was generated from the `petclinic.scss` source, combined with the [Bootstrap](https://getbootstrap.com/) library. If you make changes to the `scss`, or upgrade Bootstrap, you will need to re-compile the CSS resources using the Maven profile `css` of the `spring-petclinic-api-gateway`module. ```bash cd spring-petclinic-api-gateway mvn generate-resources -P css ``` ## Interesting Spring Petclinic forks The Spring Petclinic `main` branch in the main [spring-projects](https://github.com/spring-projects/spring-petclinic) GitHub org is the \"canonical\" implementation, currently based on Spring Boot and Thymeleaf."
+  },
+  {
+   "id": "petclinic:README.md ¶23",
+   "source": "petclinic",
+   "locator": "README.md ¶23",
+   "text": "This [spring-petclinic-microservices](https://github.com/spring-petclinic/spring-petclinic-microservices/) project is one of the [several forks](https://spring-petclinic.github.io/docs/forks.html) hosted in a special GitHub org: [spring-petclinic](https://github.com/spring-petclinic). If you have a special interest in a different technology stack that could be used to implement the Pet Clinic then please join the community there. ## Contributing The [issue tracker](https://github.com/spring-petclinic/spring-petclinic-microservices/issues) is the preferred channel for bug reports, features requests and submitting pull requests. For pull requests, editor preferences are available in the [editor config](.editorconfig) for easy use in common text editors. Read more and download plugins at <http://editorconfig.org>."
+  },
+  {
+   "id": "petclinic:README.md ¶24",
+   "source": "petclinic",
+   "locator": "README.md ¶24",
+   "text": "[Configuration repository]: https://github.com/spring-petclinic/spring-petclinic-microservices-config [Spring Boot Actuator Production Ready Metrics]: https://docs.spring.io/spring-boot/docs/current/reference/html/production-ready-metrics.html ## Supported by [![JetBrains logo](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSourceSupport)"
+  },
+  {
+   "id": "petclinic:scripts/chaos/README.md ¶1",
+   "source": "petclinic",
+   "locator": "scripts/chaos/README.md ¶1",
+   "text": "# Spring Boot Chaos Monkey Scripts You can read more about the possible configuration options [here](https://codecentric.github.io/chaos-monkey-spring-boot/latest/#_properties). ## Scripts In order to active Spring Boot Chaos Monkey's assault options and component instrumentation, you need to call the project's API. For your convenience we're providing a script that turns on various watchers and attacks. To print out the usage description just call the script without any parameters."
+  },
+  {
+   "id": "petclinic:scripts/chaos/README.md ¶3",
+   "source": "petclinic",
+   "locator": "scripts/chaos/README.md ¶3",
+   "text": "The script takes in at minimum 2 parameters. First provides the name of the application for which you want to turn on Chaos Monkey features. The subsequent ones will enable attacks and watchers. The name of the desired feature maps to a json file that gets updated to `http://localhost:${PORT}/actuator/chaosmonkey/assaults` and `http://localhost:${PORT}/actuator/chaosmonkey/watchers` respectively. Example of enabling exception assault via rest controllers for the visits microservice: ```bash $ ./scripts/chaos/call_chaos.sh visits attacks_enable_exception watcher_enable_restcontroller ``` The default assault configuration is set to fail every 5th request. That means that the first four will work as if Chaos Monkey was be disabled."
+  }
+ ]
+}
