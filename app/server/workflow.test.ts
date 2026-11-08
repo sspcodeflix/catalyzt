@@ -232,7 +232,7 @@ describe('App Context in answers (F11)', () => {
     expect(stream).toContain('[1] shop · docs/refunds.md ¶1');
     expect(stream).toContain('45 days');
     const cites = events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>;
-    expect(cites.citations[0]).toMatchObject({ n: 1, title: 'shop', detail: 'App Context · docs/refunds.md ¶1 · v1', href: expect.stringMatching(/^\/context\/source\/ABCD-repo-shop#chunk-\d+$/) });
+    expect(cites.citations[0]).toMatchObject({ n: 1, title: 'shop', detail: 'App Context · docs/refunds.md ¶1 · v1', href: expect.stringMatching(/^\/context\/source\/ABCD-repo-shop\?v=1#chunk-\d+$/) });
     expect(agents.find((a) => a.agent === 'Analysis agent')?.steps[0]).toMatchObject({ label: 'Reading App Context', detail: expect.stringMatching(/passages? from 1 source/) });
     expect(text).toContain('[1]');
 

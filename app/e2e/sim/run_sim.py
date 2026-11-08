@@ -139,13 +139,18 @@ def link_test_and_reanalyse(persona: Persona, key: str):
     p.select_option('.panel form[aria-label="Link this test"] select >> nth=0', 'criterion')
     p.select_option('.panel form[aria-label="Link this test"] select >> nth=1', key)
     p.select_option('.panel form[aria-label="Link this test"] select >> nth=2', str(n))
-    p.click('.panel form[aria-label="Link this test"] button[type=submit]')
-    try:
-        p.wait_for_function(f"() => document.querySelector('.panel .covers')?.innerText.includes('{key} AC{n}')", timeout=10000)
-        log.act(f'{persona.name} linked {test["id"]} ({test["title"][:40]}) to {key} AC{n}')
-    except Exception:
-        log.add('bug', p.url, f'linking {test["id"]} to {key}#AC{n} did not show up', persona.name)
-        return
+    submit = p.locator('.panel form[aria-label="Link this test"] button[type=submit]')
+    if submit.is_disabled():
+        # A previous run of this simulation already made the link; the form says "Linked" and keeps it.
+        log.act(f'{persona.name}: {test["id"]} was already linked to {key} AC{n} by an earlier run')
+    else:
+        submit.click()
+        try:
+            p.wait_for_function(f"() => document.querySelector('.panel .covers')?.innerText.includes('{key} AC{n}')", timeout=10000)
+            log.act(f'{persona.name} linked {test["id"]} ({test["title"][:40]}) to {key} AC{n}')
+        except Exception:
+            log.add('bug', p.url, f'linking {test["id"]} to {key}#AC{n} did not show up', persona.name)
+            return
     url = analyse_story(persona, key, low_rating=False)
     if url and p.locator('.panel .uatsum').count():
         rows = p.locator('.panel tbody tr')

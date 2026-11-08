@@ -85,6 +85,10 @@ export interface ChunkView {
   locator: string;
   text: string;
   excludedReason: string | null;
+  /** The source version this passage belongs to. */
+  version: number;
+  /** Set when the passage was replaced by a later version (kept for citations). */
+  retiredAt: string | null;
 }
 
 export interface CompareRow {
@@ -142,14 +146,17 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 export const repoSourceId = (app: string, repo: string) => `${app}-repo-${repo}`;
 export const jiraSourceId = (app: string) => `${app}-jira`;
 export const sourceHref = (sourceId: string) => `/context/source/${encodeURIComponent(sourceId)}`;
-export const chunkHref = (sourceId: string, seq: number) => `${sourceHref(sourceId)}#chunk-${seq}`;
+/** A passage link is pinned to the source version it was read from (F20), so it keeps opening that text after a re-index. */
+export const chunkHref = (sourceId: string, seq: number, version: number) => `${sourceHref(sourceId)}?v=${version}#chunk-${seq}`;
+/** Passage ids carry the version too; version 1 keeps the historical "<source>#<seq>" form for existing rows. */
+const chunkId = (sourceId: string, version: number, seq: number) => `${sourceId}@v${version}#${seq}`;
 
 /* ---------- Reading ---------- */
 
 const SELECT = `
   SELECT s.*, u.name AS added_by,
-    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id) AS chunk_count,
-    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id AND c.excluded_reason IS NOT NULL) AS excluded,
+    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id AND c.retired_at IS NULL) AS chunk_count,
+    (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = s.id AND c.retired_at IS NULL AND c.excluded_reason IS NOT NULL) AS excluded,
     (SELECT k.id FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' ORDER BY k.created_at LIMIT 1) AS conflict_id
   FROM context_sources s LEFT JOIN users u ON u.id = s.created_by`;
 
@@ -188,13 +195,21 @@ export function getSource(db: HorizonDb, app: string, id: string): SourceView | 
   return r ? toView(r) : null;
 }
 
-export function listChunks(db: HorizonDb, app: string, sourceId: string): ChunkView[] {
-  return (db.raw.prepare('SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ? AND c.source_id = ? ORDER BY c.seq, c.rowid').all(app, sourceId) as Row[]).map((c) => ({
+/** The current passages of a source, or the passages of one earlier version (as a citation saw them, F20). */
+export function listChunks(db: HorizonDb, app: string, sourceId: string, version?: number): ChunkView[] {
+  const rows = (
+    version == null
+      ? db.raw.prepare('SELECT c.* FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ? AND c.source_id = ? AND c.retired_at IS NULL ORDER BY c.seq, c.rowid').all(app, sourceId)
+      : db.raw.prepare('SELECT c.* FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ? AND c.source_id = ? AND c.source_version = ? ORDER BY c.seq, c.rowid').all(app, sourceId, version)
+  ) as Row[];
+  return rows.map((c) => ({
     id: str(c.id),
     seq: Number(c.seq),
     locator: str(c.locator),
     text: str(c.text),
     excludedReason: nullable(c.excluded_reason),
+    version: Number(c.source_version ?? 1),
+    retiredAt: nullable(c.retired_at),
   }));
 }
 
@@ -291,19 +306,21 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
 }
 
 /**
- * Replaces a source's passages, keeping exclusions by locator so a decided conflict survives a
- * re-index. The version bumps only when the text actually changed; an unchanged source is left
- * alone (its passages, exclusions and vectors stay). Vectors of passages whose text is unchanged
- * are carried over, so only new text waits for the embedding job. Returns the chunk count.
+ * Writes a source's passages as a new version, keeping exclusions by locator so a decided conflict
+ * survives a re-index. The version bumps only when the text actually changed; an unchanged source is
+ * left alone (its passages, exclusions and vectors stay). The previous version's passages are
+ * retired, not deleted (F20): a citation saved with an answer keeps opening the text it cited, while
+ * retrieval only sees current passages. Vectors of passages whose text is unchanged are carried
+ * over, so only new text waits for the embedding job. Returns the chunk count.
  */
 function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string; text: string }[], at: number): { chunks: number; version: number; changed: boolean } {
   const digest = sha(chunks.map((c) => `${c.locator}\n${c.text}`).join('\n\u0000'));
-  const cur = db.raw.prepare('SELECT version, sha256, (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = context_sources.id) AS n FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null; n: number };
+  const cur = db.raw.prepare('SELECT version, sha256, (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = context_sources.id AND c.retired_at IS NULL) AS n FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null; n: number };
   const changed = cur.sha256 !== digest;
   if (!changed && cur.n >= chunks.length) return { chunks: cur.n, version: cur.version, changed: false };
   const version = cur.sha256 && changed ? cur.version + 1 : cur.version;
   db.raw.transaction(() => {
-    const kept = new Map((db.raw.prepare('SELECT locator, excluded_reason FROM source_chunks WHERE source_id = ? AND excluded_reason IS NOT NULL').all(sourceId) as Row[]).map((r) => [str(r.locator), str(r.excluded_reason)]));
+    const kept = new Map((db.raw.prepare('SELECT locator, excluded_reason FROM source_chunks WHERE source_id = ? AND retired_at IS NULL AND excluded_reason IS NOT NULL').all(sourceId) as Row[]).map((r) => [str(r.locator), str(r.excluded_reason)]));
     // Vectors by text hash and model, to carry over for passages whose text did not change.
     const vectors = db.raw.prepare('SELECT e.model, e.dims, e.vector, e.text_sha FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id WHERE c.source_id = ?').all(sourceId) as { model: string; dims: number; vector: Buffer; text_sha: string }[];
     const byText = new Map<string, typeof vectors>();
@@ -312,11 +329,13 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
       list.push(v);
       byText.set(v.text_sha, list);
     }
-    db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ?').run(sourceId);
+    // The previous version stays, retired; a version written twice (first index of a source whose rows exist) is replaced.
+    db.raw.prepare('UPDATE source_chunks SET retired_at = ? WHERE source_id = ? AND retired_at IS NULL AND source_version != ?').run(iso(at), sourceId, version);
+    db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ? AND source_version = ? AND retired_at IS NULL').run(sourceId, version);
     const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insVec = db.raw.prepare('INSERT OR IGNORE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
     chunks.forEach((c, i) => {
-      const id = `${sourceId}#${i + 1}`;
+      const id = chunkId(sourceId, version, i + 1);
       const h = textSha(c.text);
       // F05: a passage that holds what looks like a secret is kept out of retrieval, whatever else is decided about it.
       ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? (containsSecret(c.text) ? SECRET_REASON : null), i + 1, version, c.text.length, h);
@@ -553,7 +572,7 @@ function candidates(db: HorizonDb, app: string, model: string | null, dims = 0):
          e.vector AS vector
        FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
        LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha
-       WHERE s.application_id = ?`,
+       WHERE s.application_id = ? AND c.retired_at IS NULL`,
     )
     .all(model ?? '', app) as Row[];
   const usable = (v: unknown): v is Buffer => Buffer.isBuffer(v) && v.byteLength > 0 && v.byteLength % 4 === 0 && (!dims || v.byteLength === dims * 4);
@@ -569,7 +588,7 @@ function candidates(db: HorizonDb, app: string, model: string | null, dims = 0):
     text: str(r.text),
     vector: usable(r.vector) ? fromBlob(r.vector) : null,
     reason: exclusionReason(r),
-    href: chunkHref(str(r.sid), Number(r.seq)),
+    href: chunkHref(str(r.sid), Number(r.seq), Number(r.version ?? 1)),
     scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
   }));
 }
@@ -719,17 +738,17 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
   let itemId = '';
   db.raw.transaction(() => {
     const claimLocator = compare[0].where || 'disputed claim';
-    const exists = db.raw.prepare('SELECT 1 FROM source_chunks WHERE source_id = ? AND text = ?').get(source.id, compare[0].value);
+    const exists = db.raw.prepare('SELECT 1 FROM source_chunks WHERE source_id = ? AND retired_at IS NULL AND text = ?').get(source.id, compare[0].value);
     if (!exists) {
-      const { n } = db.raw.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM source_chunks WHERE source_id = ?').get(source.id) as { n: number };
-      db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)').run(`${source.id}#${n}`, source.id, claimLocator, compare[0].value, n, source.version, compare[0].value.length, textSha(compare[0].value));
+      const { n } = db.raw.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM source_chunks WHERE source_id = ? AND retired_at IS NULL').get(source.id) as { n: number };
+      db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)').run(chunkId(source.id, source.version, n), source.id, claimLocator, compare[0].value, n, source.version, compare[0].value.length, textSha(compare[0].value));
     }
-    db.raw.prepare('UPDATE source_chunks SET excluded_reason = ? WHERE source_id = ?').run(reason, source.id);
+    db.raw.prepare('UPDATE source_chunks SET excluded_reason = ? WHERE source_id = ? AND retired_at IS NULL').run(reason, source.id);
     db.raw.prepare("UPDATE context_sources SET status = 'review', updated_at = ? WHERE id = ?").run(iso(at), source.id);
     db.raw
       .prepare('INSERT INTO conflicts (id, source_id, other_source_id, summary, huddle_item_id, status, title, detail, compare, created_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)')
       .run(id, source.id, other.id, detail || title, 'open', title, detail, JSON.stringify(compare), iso(at));
-    const excluded = (db.raw.prepare('SELECT COUNT(*) AS n FROM source_chunks WHERE source_id = ?').get(source.id) as { n: number }).n;
+    const excluded = (db.raw.prepare('SELECT COUNT(*) AS n FROM source_chunks WHERE source_id = ? AND retired_at IS NULL').get(source.id) as { n: number }).n;
     const item = createItem(
       db,
       app,
@@ -774,7 +793,7 @@ export function resolveConflictForItem(db: HorizonDb, itemId: string, keepsUploa
   const sourceId = str(r.source_id);
   db.raw.transaction(() => {
     db.raw.prepare("UPDATE conflicts SET status = 'resolved', resolution = ?, resolved_at = ? WHERE id = ?").run(keepsUpload ? 'use_upload' : 'keep_higher', iso(at), r.id);
-    if (keepsUpload) db.raw.prepare('UPDATE source_chunks SET excluded_reason = NULL WHERE source_id = ? AND excluded_reason IS NOT ?').run(sourceId, SECRET_REASON);
+    if (keepsUpload) db.raw.prepare('UPDATE source_chunks SET excluded_reason = NULL WHERE source_id = ? AND retired_at IS NULL AND excluded_reason IS NOT ?').run(sourceId, SECRET_REASON);
     db.raw.prepare('UPDATE context_sources SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus(r.type as SourceType), iso(at), sourceId);
   })();
   return getConflict(db, str(r.application_id), str(r.id));

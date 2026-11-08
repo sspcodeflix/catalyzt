@@ -87,7 +87,10 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
       const source = getSource(db, app.id, id);
       if (!source) return send(404, { error: 'This source does not exist in this application.' }), true;
       const conflict = source.conflictId ? listConflicts(db, app.id, 'all').find((c) => c.id === source.conflictId) ?? null : null;
-      send(200, { source, chunks: listChunks(db, app.id, id), conflict });
+      // ?v=<version>: the passages as a citation saw them (F20); otherwise the current ones.
+      const v = Number(ctx.query.get('v'));
+      const version = Number.isInteger(v) && v >= 1 && v !== source.version ? v : null;
+      send(200, { source, chunks: listChunks(db, app.id, id, version ?? undefined), conflict, viewingVersion: version ?? source.version, current: version === null });
       return true;
     }
     if (sourceMatch[2] && method === 'POST') {

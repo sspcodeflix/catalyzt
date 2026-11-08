@@ -21,17 +21,19 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
   const location = useLocation();
   const ref = useRef<HTMLElement>(null);
   const hashChunk = location.hash.startsWith('#chunk-') ? location.hash.slice(1) : null;
+  // A citation pins the source version it read (?v=); the panel shows that version with a note (F20).
+  const pinned = Number(new URLSearchParams(location.search).get('v')) || undefined;
 
   useEffect(() => {
     if (general || !sourceId) return;
-    fetchSourceDetail(sourceId).then(
+    fetchSourceDetail(sourceId, pinned).then(
       (d) => setDetail(d),
       (e: Error) => {
         setLoadError(e.message);
         setDetail(null);
       },
     );
-  }, [sourceId, general, sources]);
+  }, [sourceId, general, sources, pinned]);
 
   // A citation link lands on its passage.
   useEffect(() => {
@@ -134,11 +136,20 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
               {source.status === 'stored' ? (source.note ?? 'Catalyzt cannot read this file in this build.') : source.type === 'Jira' ? 'Stories come from the workspace backlog and are not split into passages; open a story from Jira Stories.' : 'No passages were found in this source.'}
             </p>
           )}
+          {!detail.current && (
+            <div className="callout" role="status">
+              <Icon name="warn" small />
+              <span>
+                Showing version {detail.viewingVersion} of this source, as the answer that cited it read it. The current version is {source.version}.{' '}
+                <Link to={`/context/source/${encodeURIComponent(source.id)}`}>Show the current passages</Link>
+              </span>
+            </div>
+          )}
           {chunks.map((c) => (
             <div key={c.id} id={`chunk-${c.seq}`} className={`chunk${c.excludedReason ? ' excluded' : ''}${hashChunk === `chunk-${c.seq}` ? ' target' : ''}`}>
               <header>
                 <span>{c.locator}</span>
-                <span className="rel">v{source.version}</span>
+                <span className="rel">v{c.version}</span>
               </header>
               <div>{c.text}</div>
               {c.excludedReason && (

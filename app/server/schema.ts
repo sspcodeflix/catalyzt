@@ -802,4 +802,12 @@ export const MIGRATIONS: string[] = [
       AND substr(NEW.entity_ref, 1, instr(NEW.entity_ref, '/') - 1) != (SELECT application_id FROM test_cases WHERE id = NEW.test_case_id);
   END;
   `,
+  // 15: passages are immutable history (F20). A re-index retires the current passages (retired_at)
+  //     and writes the new version under new ids ("<source>@v<version>#<seq>") instead of deleting and
+  //     reusing ids, so a citation saved with an answer keeps opening the exact text it cited while
+  //     retrieval only sees current passages.
+  `
+  ALTER TABLE source_chunks ADD COLUMN retired_at TEXT;
+  CREATE INDEX source_chunks_current ON source_chunks (source_id, retired_at);
+  `,
 ];

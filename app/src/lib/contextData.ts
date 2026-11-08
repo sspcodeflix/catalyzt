@@ -60,6 +60,9 @@ export interface Chunk {
   locator: string;
   text: string;
   excludedReason: string | null;
+  /** The source version the passage belongs to; retired passages are kept for citations (F20). */
+  version: number;
+  retiredAt: string | null;
 }
 
 export interface RankedChunk {
@@ -229,12 +232,15 @@ export interface SourceDetail {
   source: Source;
   chunks: Chunk[];
   conflict: Conflict | null;
+  /** The version whose passages are shown; `current` is false when a citation opened an earlier one. */
+  viewingVersion: number;
+  current: boolean;
 }
 
-/** One source with its passages. Null when it does not exist in this application. */
-export async function fetchSourceDetail(id: string): Promise<SourceDetail | null> {
+/** One source with its passages (current, or the version a citation pinned). Null when it does not exist in this application. */
+export async function fetchSourceDetail(id: string, version?: number): Promise<SourceDetail | null> {
   try {
-    return await api<SourceDetail>(`/api/context/sources/${encodeURIComponent(id)}`);
+    return await api<SourceDetail>(`/api/context/sources/${encodeURIComponent(id)}${version ? `?v=${version}` : ''}`);
   } catch (e) {
     if ((e as { status?: number }).status === 404) return null;
     throw e;

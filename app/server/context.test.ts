@@ -102,7 +102,7 @@ describe('retrieval', () => {
     const hits = (await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?')).passages;
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]).toMatchObject({ sourceTitle: 'shop', locator: 'docs/refunds.md ¶1', version: 1 });
-    expect(hits[0].href).toMatch(/^\/context\/source\/ABCD-repo-shop#chunk-\d+$/);
+    expect(hits[0].href).toMatch(/^\/context\/source\/ABCD-repo-shop\?v=1#chunk-\d+$/);
     expect(hits[0].text).toContain('45 days');
     // Another application sees nothing of it; an unrelated question clears nothing.
     expect((await retrieveContext(db, 'IBGM', 'refund window')).passages).toEqual([]);
@@ -341,5 +341,34 @@ describe('secrets never become context (F05)', () => {
     expect(hits.passages.some((p) => p.text.includes(SECRET))).toBe(false);
     const shown = await testQuestion(db, app(db, 'ABCD'), 'refund window bank key');
     expect(shown.results.find((x) => x.text.includes(SECRET))?.used ?? false).toBe(false);
+  });
+});
+
+describe('passages are immutable history (F20)', () => {
+  it('a citation keeps opening the text it cited after the source changes, while retrieval only sees the current version', async () => {
+    const { db, cloneDir } = fixtureWithDocs();
+    const first = (await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?')).passages[0];
+    expect(first.text).toContain('45 days');
+    expect(first.href).toMatch(/^\/context\/source\/ABCD-repo-shop\?v=1#chunk-\d+$/);
+    expect(first.href.endsWith(`#chunk-${listChunks(db, 'ABCD', 'ABCD-repo-shop').find((c) => c.id === first.chunkId)!.seq}`)).toBe(true);
+    const repo = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!;
+    writeFileSync(join(cloneDir, 'docs', 'refunds.md'), REFUNDS_DOC.replace(/45 days/g, '365 days'));
+    expect(syncSource(db, 'ABCD', repo.id).source.version).toBe(2);
+    // The cited version is still there, unchanged, at the same place.
+    const v1 = listChunks(db, 'ABCD', repo.id, 1);
+    expect(v1.find((c) => c.seq === 1)).toMatchObject({ text: expect.stringContaining('45 days'), version: 1, retiredAt: expect.any(String) });
+    expect(v1.find((c) => c.id === first.chunkId)).toBeDefined();
+    // The current passages are version 2, and only they are retrieved or counted.
+    const current = listChunks(db, 'ABCD', repo.id);
+    expect(current.every((c) => c.version === 2 && c.retiredAt === null)).toBe(true);
+    expect(current.some((c) => c.text.includes('365 days'))).toBe(true);
+    const now = await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?');
+    expect(now.passages.every((p) => p.version === 2 && p.href.includes('?v=2#'))).toBe(true);
+    // The README still says 45 days (it was not edited); the refunds document's passages now say 365.
+    expect(now.passages.filter((p) => p.locator.startsWith('docs/refunds.md')).every((p) => !p.text.includes('45 days') && p.text.includes('365 days'))).toBe(true);
+    expect(getSource(db, 'ABCD', repo.id)!.chunks).toBe(current.length);
+    // A sync with no change leaves everything as it is (no third version, nothing retired again).
+    expect(syncSource(db, 'ABCD', repo.id).source.version).toBe(2);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM source_chunks WHERE source_id = ? AND retired_at IS NOT NULL").get(repo.id)).toEqual({ n: v1.length });
   });
 });

@@ -388,9 +388,10 @@ function backfillTextSha(db: HorizonDb) {
 export function embeddingCounts(db: HorizonDb, model: string | null, app?: string): { embedded: number; pending: number } {
   const where = app ? 'WHERE s.application_id = ?' : '';
   const args = app ? [app] : [];
-  const total = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id ${where}`).get(...args) as { n: number }).n;
+  const live = `${where ? `${where} AND` : 'WHERE'} c.retired_at IS NULL`;
+  const total = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id ${live}`).get(...args) as { n: number }).n;
   if (!model) return { embedded: 0, pending: total };
-  const embedded = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha ${where}`).get(model, ...args) as { n: number }).n;
+  const embedded = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha ${live}`).get(model, ...args) as { n: number }).n;
   return { embedded, pending: total - embedded };
 }
 
@@ -405,7 +406,7 @@ export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { ap
   const pick = db.raw.prepare(
     `SELECT c.id, c.text, c.text_sha FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
      LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ?
-     WHERE (e.chunk_id IS NULL OR e.text_sha != c.text_sha) ${opts.app ? 'AND s.application_id = ?' : ''} ORDER BY c.rowid LIMIT ?`,
+     WHERE c.retired_at IS NULL AND (e.chunk_id IS NULL OR e.text_sha != c.text_sha) ${opts.app ? 'AND s.application_id = ?' : ''} ORDER BY c.rowid LIMIT ?`,
   );
   const current = db.raw.prepare('SELECT text_sha FROM source_chunks WHERE id = ?');
   const upsert = db.raw.prepare('INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
