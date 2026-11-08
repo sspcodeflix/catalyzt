@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { api, hexaChanged, ORIGIN, PURPOSE, RESULT, type RunRow, type ScanRow, type TestRow, type TestsResponse } from '../lib/hexa';
+import { api, hexaChanged, ORIGIN, PURPOSE, RESULT, runSources, type RunRow, type ScanRow, type TestRow, type TestsResponse } from '../lib/hexa';
 import { StaleScopeError, withSession } from '../lib/session';
 import { relTime } from './Tickets';
 
@@ -501,8 +501,8 @@ function Runs() {
     <>
       <section className="card scanbox" aria-labelledby={`${id}-h`}>
         <div className="sechead">
-          <h3 id={`${id}-h`}>Results from GitHub Actions</h3>
-          <span>Runs on the default branch for merged pull requests</span>
+          <h3 id={`${id}-h`}>Collect from GitHub Actions</h3>
+          <span>Merge-commit runs on the default branch</span>
         </div>
         <form className="field-row" onSubmit={sync}>
           <div className="field">
@@ -532,71 +532,77 @@ function Runs() {
       ) : runs.length === 0 ? (
         <p className="muted">No pipeline runs yet. Collect them from GitHub Actions, or upload a JUnit XML file.</p>
       ) : (
-        <ol className="runlist">
-          {runs.map((r) => (
-            <li key={r.id} className="card runcard">
-              <div className="runhead">
-                <span className={`pill ${r.status === 'passed' ? 'pass' : 'crit'}`}>{r.status === 'passed' ? 'Passed' : 'Failed'}</span>
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <b>{r.workflow ?? (r.source === 'upload' ? 'Uploaded results' : 'CI results')}</b>
-                  <span className="muted">
-                    {r.repo ? ` · ${r.repo}` : ''}
-                    {r.prNumber ? (
-                      <>
-                        {' · '}
-                        {r.repo ? (
-                          <a href={`https://github.com/${r.repo}/pull/${r.prNumber}`} target="_blank" rel="noreferrer">
-                            PR #{r.prNumber}
-                          </a>
-                        ) : (
-                          `PR #${r.prNumber}`
-                        )}
-                        {r.isMerge ? ' merged' : ''}
-                      </>
-                    ) : null}
-                    {r.sha ? (
-                      <>
-                        {' · '}
-                        <span className="mono">{r.sha.slice(0, 7)}</span>
-                      </>
-                    ) : null}
-                    {r.branch ? ` on ${r.branch}` : ''} · {relTime(r.at)}
-                  </span>
-                </div>
-                {r.runUrl && (
-                  <a className="btn plain small" href={r.runUrl} target="_blank" rel="noreferrer">
-                    View run
-                  </a>
-                )}
-              </div>
-              <div className="runbody">
-                <span>
-                  <b>{r.passed}</b> passed · <b className={r.failed ? 'failnum' : undefined}>{r.failed}</b> failed · <b>{r.skipped}</b> skipped of {r.total}
-                  {r.durationMs ? ` · ${(r.durationMs / 1000).toFixed(1)} s of test time` : ''}
-                </span>
-                <span className="muted">{r.source === 'github_actions' ? 'Collected from GitHub Actions' : r.source === 'webhook' ? 'Pushed by CI' : `Uploaded${r.by ? ` by ${r.by}` : ''}`}</span>
-              </div>
-              {r.failures.length > 0 && (
-                <ul className="failures">
-                  {r.failures.map((f) => (
-                    <li key={f.id}>
-                      <Icon name="warn" small className="bad" />
-                      <span>
-                        <Link to={`/hexa/test/${f.id}?tab=runs`}>{f.title}</Link>
-                        {f.message && <small className="mono">{f.message.split('\n').find((l) => l.trim()) ?.slice(0, 200)}</small>}
-                      </span>
-                    </li>
-                  ))}
-                  {r.failed > r.failures.length && (
-                    <li className="muted">
-                      Showing {r.failures.length} of {r.failed} failures; the rest are on each test's page.
-                    </li>
+        <>
+          <div className="sechead runsources">
+            <h3>Pipeline runs</h3>
+            <span>{runSources(runs)}</span>
+          </div>
+          <ol className="runlist">
+            {runs.map((r) => (
+              <li key={r.id} className="card runcard">
+                <div className="runhead">
+                  <span className={`pill ${r.status === 'passed' ? 'pass' : 'crit'}`}>{r.status === 'passed' ? 'Passed' : 'Failed'}</span>
+                  <div className="grow" style={{ minWidth: 0 }}>
+                    <b>{r.workflow ?? (r.source === 'upload' ? 'Uploaded results' : 'CI results')}</b>
+                    <span className="muted">
+                      {r.repo ? ` · ${r.repo}` : ''}
+                      {r.prNumber ? (
+                        <>
+                          {' · '}
+                          {r.repo ? (
+                            <a href={`https://github.com/${r.repo}/pull/${r.prNumber}`} target="_blank" rel="noreferrer">
+                              PR #{r.prNumber}
+                            </a>
+                          ) : (
+                            `PR #${r.prNumber}`
+                          )}
+                          {r.isMerge ? ' merged' : ''}
+                        </>
+                      ) : null}
+                      {r.sha ? (
+                        <>
+                          {' · '}
+                          <span className="mono">{r.sha.slice(0, 7)}</span>
+                        </>
+                      ) : null}
+                      {r.branch ? ` on ${r.branch}` : ''} · {relTime(r.at)}
+                    </span>
+                  </div>
+                  {r.runUrl && (
+                    <a className="btn plain small" href={r.runUrl} target="_blank" rel="noreferrer">
+                      View run
+                    </a>
                   )}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ol>
+                </div>
+                <div className="runbody">
+                  <span>
+                    <b>{r.passed}</b> passed · <b className={r.failed ? 'failnum' : undefined}>{r.failed}</b> failed · <b>{r.skipped}</b> skipped of {r.total}
+                    {r.durationMs ? ` · ${(r.durationMs / 1000).toFixed(1)} s of test time` : ''}
+                  </span>
+                  <span className="muted">{r.source === 'github_actions' ? 'Collected from GitHub Actions' : r.source === 'webhook' ? 'Pushed by CI' : `Uploaded${r.by ? ` by ${r.by}` : ''}`}</span>
+                </div>
+                {r.failures.length > 0 && (
+                  <ul className="failures">
+                    {r.failures.map((f) => (
+                      <li key={f.id}>
+                        <Icon name="warn" small className="bad" />
+                        <span>
+                          <Link to={`/hexa/test/${f.id}?tab=runs`}>{f.title}</Link>
+                          {f.message && <small className="mono">{f.message.split('\n').find((l) => l.trim()) ?.slice(0, 200)}</small>}
+                        </span>
+                      </li>
+                    ))}
+                    {r.failed > r.failures.length && (
+                      <li className="muted">
+                        Showing {r.failures.length} of {r.failed} failures; the rest are on each test's page.
+                      </li>
+                    )}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ol>
+        </>
       )}
     </>
   );
