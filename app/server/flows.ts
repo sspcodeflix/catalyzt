@@ -240,7 +240,10 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     manual,
     signoff,
     // The drafted cases for review, by requirement, from the approval waiting on (or last decided by) a reviewer.
-    review: approval && (approval.status === 'pending' || approval.status === 'declined') ? { approvalId: approval.id, status: approval.status, cases: approval.cases, note: approval.note, decidedBy: approval.decidedBy, chatId: approval.chatId } : null,
+    review:
+      approval && (approval.status === 'pending' || approval.status === 'declined')
+        ? { approvalId: approval.id, status: approval.status, cases: approval.cases, note: approval.note, decidedBy: approval.decidedBy, chatId: approval.chatId, components: approval.components.length ? approval.components : story.components }
+        : null,
   };
 }
 
@@ -447,6 +450,15 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
 /* ---------- Changes ---------- */
 
 /** Stories already in an active or paused flow of this kind (other than `except`), with that flow: a story is in one flow of a kind at a time. */
+/**
+ * Is this approval the review a test flow waits on? True when the story is in an active or paused flow and
+ * this is its newest proposal (the one the flow's Review cases step shows). An older proposal for the same
+ * story, or one for a story in no flow, is an ordinary chat approval.
+ */
+export function isFlowReview(db: HorizonDb, app: string, approvalId: string, storyKey: string) {
+  return flowsForStory(db, app, storyKey).length > 0 && latestCaseApproval(db, storyKey)?.id === approvalId;
+}
+
 export function storiesInFlows(db: HorizonDb, app: string, kind: FlowKind, except: string | null = null) {
   const rows = db.raw
     .prepare("SELECT i.story_key, f.id, f.title FROM flows f JOIN flow_items i ON i.flow_id = f.id WHERE f.application_id = ? AND f.kind = ? AND f.status IN ('active', 'paused') AND i.removed_at IS NULL AND f.id != ? ORDER BY f.created_at")
@@ -739,7 +751,7 @@ export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, ro
       ? ` ${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in ${[...new Set(already.map((x) => `"${taken.get(x.key)!.title}"`))].join(', ')}, so ${already.length === 1 ? 'it is' : 'they are'} left out.`
       : '';
     if (!stories.length && already.length)
-      return { prose: `${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in a ${kind === 'uat' ? 'UAT' : 'regression'} flow. Here it is; nothing new was started.`, blocks: inFlows.slice(0, 3).map((flowId) => ({ kind: 'flow' as const, flowId })) };
+      return { prose: `${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in a ${kind === 'uat' ? 'UAT' : 'regression'} flow. ${inFlows.length === 1 ? 'Here it is' : 'Here they are'}; nothing new was started.`, blocks: inFlows.slice(0, 3).map((flowId) => ({ kind: 'flow' as const, flowId })) };
     const title = kind === 'uat' ? (version ? `UAT · release ${version}` : `UAT · ${stories.length === 1 ? stories[0].key : `${stories.length} stories`}`) : `Regression · ${app.name}`;
     const allowed = roles.includes('app_owner') || roles.includes('component_manager');
     const prose = !stories.length

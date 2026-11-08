@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
+import type { DecidedApproval } from '../../lib/chatStore';
 import { flowsChanged, useActiveFlows, type FlowSummary, type FlowView } from '../../lib/flows';
 import { api } from '../../lib/hexa';
 import { sessionEpoch, useSession } from '../../lib/session';
@@ -278,14 +279,16 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
 }
 
 /**
- * In a chat, the approval card for drafted cases of a story that is in a test flow becomes the flow's own
- * review, right here: each requirement with its cases, Approve or Request changes, no rating asked. It acts
- * on the flow, so the flow page, its cards and the team see the decision. A story in no flow, or a decided
- * approval, keeps the usual card.
+ * In a chat, the approval card for the drafted cases a test flow is reviewing becomes the flow's own review,
+ * right here: each requirement with its cases, Approve or Request changes, no rating asked. It acts on the
+ * flow, so the flow page, its cards and the team see the decision, and the decision goes back into this card.
+ * A story in no flow, an older proposal than the one the flow reviews, or a decided approval keeps the usual
+ * card (the server applies the same distinction).
  */
-export function FlowReviewHandoff({ storyKey, pending, children }: { storyKey: string | null; pending: boolean; children: React.ReactNode }) {
-  const flows = useStoryFlows(storyKey && pending ? [storyKey] : []);
-  const flowId = flows?.[0]?.id ?? null;
+export function FlowReviewHandoff({ approvalId, storyKey, pending, onDecided, children }: { approvalId: string | undefined; storyKey: string | null; pending: boolean; onDecided?: (a: DecidedApproval) => void; children: React.ReactNode }) {
+  const flows = useStoryFlows(storyKey && pending && approvalId ? [storyKey] : []);
+  // A story can be in a UAT flow and a regression flow; the UAT one owns the drafted manual cases.
+  const flowId = (flows?.find((f) => f.kind === 'uat') ?? flows?.[0])?.id ?? null;
   const [view, setView] = useState<FlowView | null>(null);
   useEffect(() => {
     if (!flowId) return;
@@ -303,13 +306,13 @@ export function FlowReviewHandoff({ storyKey, pending, children }: { storyKey: s
     };
   }, [flowId]);
   const story = view && view.id === flowId ? view.items.find((s) => s.key === storyKey) : undefined;
-  if (!storyKey || !pending || !flowId || !story?.review || story.review.status !== 'pending') return <>{children}</>;
+  if (!approvalId || !storyKey || !pending || !flowId || !story?.review || story.review.status !== 'pending' || story.review.approvalId !== approvalId) return <>{children}</>;
   return (
-    <div className="card approve flowhandoff">
+    <div className="card approve flowhandoff" id={`approval-${approvalId}`} tabIndex={-1}>
       <p className="muted small">
         {storyKey} is in the test flow <Link to={`/flows/${flowId}`}>{view!.title}</Link>. Reviewing here moves the flow on for everyone.
       </p>
-      <CaseReview flow={view!} story={story} />
+      <CaseReview flow={view!} story={story} onDecided={onDecided} />
     </div>
   );
 }

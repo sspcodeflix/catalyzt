@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, storiesInFlows, flowView, flowWorker, listFlows, noteStory, recordExecution, setStatus, signOff } from './flows';
+import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, setStatus, signOff, storiesInFlows } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -611,7 +611,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const b = (await readJson(req)) as Record<string, unknown>;
         const decision = b.decision === 'approved' || b.decision === 'declined' ? b.decision : null;
         if (!decision) throw new HttpError(400, 'decision must be approved or declined.');
-        const view = (a: NonNullable<typeof found>) => ({ id: a.id, status: a.status, decidedAt: a.decidedAt ?? undefined, decidedBy: a.decidedByName ?? undefined, outcome: a.outcome ?? undefined, revisionId: a.revisionId, supersededBy: a.supersededBy });
+        const view = (a: NonNullable<typeof found>) => ({ id: a.id, status: a.status, decidedAt: a.decidedAt ?? undefined, decidedBy: a.decidedByName ?? undefined, outcome: a.outcome ?? undefined, note: a.note ?? undefined, revisionId: a.revisionId, supersededBy: a.supersededBy });
         // The same decision delivered again is answered with what was recorded; a different one is a conflict.
         const settled = (a: NonNullable<typeof found>) => {
           if (a.status === decision) return send(res, 200, { approval: view(a), replay: true });
@@ -619,11 +619,11 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         };
         if (found.status !== 'pending') return settled(found);
         // Server-side rules: an owner or a component manager decides. In chat, approving needs a rating first.
-        // Drafted cases for a story in a test flow are reviewed as the flow's own step instead: the decision
-        // is about the requirements and their cases, not feedback on the answer, so no rating is asked for,
-        // and asking for changes says what to change.
+        // The proposal a test flow is reviewing (its newest drafted cases for a story in the flow) is decided
+        // as the flow's own step instead: the decision is about the requirements and their cases, not feedback
+        // on the answer, so no rating is asked for, and asking for changes says what to change.
         requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
-        const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && flowsForStory(db, appId, found.payload.storyKey).length > 0;
+        const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && isFlowReview(db, appId, found.id, found.payload.storyKey);
         const note = typeof b.note === 'string' ? b.note.trim().slice(0, 1000) : '';
         if (decision === 'approved' && !inFlow && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
         if (decision === 'declined' && inFlow && note.length < 3) throw new HttpError(400, 'Say what should change in the drafted cases.');
@@ -653,7 +653,18 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         if (result.kind === 'already') return settled(result.approval);
         // The decision moves a test flow holding the story: say so in its timeline.
         if (found.action === 'add_uat_cases' && found.payload.storyKey)
-          noteStory(db, appId, found.payload.storyKey, user.id, decision, decision === 'approved' ? `Approved the drafted cases for ${found.payload.storyKey}: ${result.approval.outcome?.text ?? 'added to Hexa'}.` : `Asked for changes to the drafted cases for ${found.payload.storyKey}${note ? `: "${note}"` : '.'}`);
+          noteStory(
+            db,
+            appId,
+            found.payload.storyKey,
+            user.id,
+            decision,
+            decision === 'approved'
+              ? `Approved the drafted cases for ${found.payload.storyKey}${inFlow ? '' : ' in chat'}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`
+              : inFlow
+                ? `Asked for changes to the drafted cases for ${found.payload.storyKey}: "${note}"`
+                : `Declined an older proposal of cases for ${found.payload.storyKey} in chat.`,
+          );
         return send(res, 200, { approval: view(result.approval) });
       }
 

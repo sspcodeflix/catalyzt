@@ -112,8 +112,15 @@ with sync_playwright() as p:
         send = page.locator(f'#review-{key} button:has-text("Send back for changes")')
         check('review: sending back needs a note', send.is_disabled())
         page.screenshot(path=os.environ.get('E2E_SHOTS', '/tmp') + '/flow-review.png', full_page=False)
-        page.click(f'#review-{key} button:has-text("Approve")')
-        page.wait_for_selector(f'#review-{key}', state='detached', timeout=15000)
+        # Approve in the story's chat instead: its card is the same review, and the decision lands on the card.
+        page.click(f'#story-{key} a:has-text("Open the analysis chat")')
+        page.wait_for_selector('.flowhandoff .flowreview', timeout=15000)
+        page.click('.flowhandoff button:has-text("Approve")')
+        page.wait_for_selector('.card.approve [role=status]:has-text("Approved by")', timeout=15000)
+        decided = page.locator('.card.approve:has([role=status]:has-text("Approved by"))').first
+        check('chat: approving in the chat shows the decision on the card without a reload', decided.count() == 1 and 'Rate the answer' not in decided.inner_text())
+        page.goto(BASE + f'/flows/{flow_id}')
+        page.wait_for_selector(f'#story-{key}', timeout=15000)
         row = page.locator(f'#story-{key}').inner_text()
         check('review: approving moves the story to Run tests', 'Run tests' in row, row[:200])
     else:

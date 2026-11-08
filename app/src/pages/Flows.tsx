@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { approvalBlockReason } from '../lib/approvalRights';
+import type { DecidedApproval } from '../lib/chatStore';
 import { api } from '../lib/hexa';
 import { flowsChanged, STEPS, type FlowKind, type FlowStory, type FlowSummary, type FlowView, type StoryStep } from '../lib/flows';
 import { sessionEpoch, useSession } from '../lib/session';
@@ -531,11 +533,18 @@ export function FlowDetail() {
                         type="button"
                         className="btn small"
                         onClick={() => {
-                          setOpen(w.stories[0]);
-                          requestAnimationFrame(() => document.getElementById(`story-${w.stories[0]}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                          // Open the story at the control this action needs, and put focus on it.
+                          const key = w.stories[0];
+                          const section = w.action === 'Review cases' ? 'review' : w.action === 'Record results' ? 'run' : w.action === 'Sign off' ? 'signoff' : 'story';
+                          setOpen(key);
+                          setTimeout(() => {
+                            const target = document.getElementById(`${section}-${key}`) ?? document.getElementById(`story-${key}`);
+                            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            target?.querySelector<HTMLElement>('textarea, input:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true });
+                          }, 50);
                         }}
                       >
-                        Start
+                        {w.action}
                       </button>
                     )}
                   </li>
@@ -646,7 +655,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
         ))}
       </ol>
       <h3>Acceptance criteria</h3>
-      <ul className="flowcriteria">
+      <ul className="flowcriteria" id={`run-${story.key}`}>
         {story.criteria.map((c) => {
           const cases = story.manual.filter((m) => m.criterion === c.id);
           return (
@@ -670,7 +679,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
         )}
       </p>
       {flow.kind === 'uat' && signStep && (signStep.state === 'waiting' || story.signoff) && (
-        <div className="flowsign">
+        <div className="flowsign" id={`signoff-${story.key}`}>
           <h3>UAT sign-off</h3>
           {story.signoff && (
             <p className="muted">
@@ -703,20 +712,24 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
  * The flow's own review step: each requirement of the story with the cases drafted for it, then Approve or
  * Request changes. It decides the approval from the analysis; no rating of the answer is asked for here.
  */
-export function CaseReview({ flow, story }: { flow: FlowView; story: FlowStory }) {
-  const me = useSession().me?.user;
+export function CaseReview({ flow, story, onDecided }: { flow: FlowView; story: FlowStory; onDecided?: (a: DecidedApproval) => void }) {
+  const session = useSession();
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const review = story.review!;
   const step = story.steps.find((s) => s.key === 'review');
-  const canDecide = flow.status === 'active' && !!me && !!step?.waitingOn.some((p) => p.id === me.id);
+  // Who may decide is the server's rule for approvals (an app owner, or the manager of every component the
+  // cases touch), mirrored here so the buttons are only offered to someone the server will accept.
+  const blocked = approvalBlockReason(session.me?.app, session.userId, review.components);
+  const canDecide = flow.status === 'active' && !blocked;
   const decide = async (decision: 'approved' | 'declined') => {
     setBusy(true);
     setError('');
     try {
-      await api(`/api/approvals/${review.approvalId}/decision`, { method: 'POST', body: JSON.stringify({ decision, note: decision === 'declined' ? note : undefined }) });
+      const r = await api<{ approval: DecidedApproval }>(`/api/approvals/${review.approvalId}/decision`, { method: 'POST', body: JSON.stringify({ decision, note: decision === 'declined' ? note : undefined }) });
+      onDecided?.(r.approval);
       flowsChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -780,7 +793,10 @@ export function CaseReview({ flow, story }: { flow: FlowView; story: FlowStory }
           </div>
         </>
       ) : (
-        <p className="muted small">{step?.waitingOn.length ? `${step.waitingOn.map((p) => p.name).join(' or ')} reviews these cases.` : 'A component manager reviews these cases.'}</p>
+        <p className="muted small">
+          {flow.status !== 'active' ? `The flow is ${flow.status}; the review continues when it is resumed. ` : ''}
+          {step?.waitingOn.length ? `${step.waitingOn.map((p) => p.name).join(' or ')} reviews these cases.` : 'A component manager reviews these cases.'}
+        </p>
       )}
       {error && (
         <p className="errtext" role="alert">

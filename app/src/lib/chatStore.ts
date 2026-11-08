@@ -504,13 +504,20 @@ export async function rateAnswer(chatId: string, messageId: string, stars: numbe
 }
 
 /** Decides an approval on the server (rating gate and roles are checked there) and reflects the recorded state. */
-export async function decideApproval(chatId: string, messageId: string, approvalId: string, decision: 'approved' | 'declined'): Promise<Approval['status']> {
-  const epoch = sessionEpoch();
-  const r = await post<{ approval: { status: Approval['status']; decidedAt?: string; decidedBy?: string; outcome?: Approval['outcome'] } }>(`/api/approvals/${encodeURIComponent(approvalId)}/decision`, { decision });
-  if (epoch !== sessionEpoch()) throw new StaleScopeError();
+export type DecidedApproval = { status: Approval['status']; decidedAt?: string; decidedBy?: string; outcome?: Approval['outcome']; note?: string };
+
+/** What the server recorded for an approval, into the card that shows it. */
+export function applyDecision(chatId: string, messageId: string, approvalId: string, a: DecidedApproval) {
   updateAnswer(chatId, messageId, (m) => ({
     ...m,
-    blocks: m.blocks.map((b) => (b.kind === 'approval' && b.approval.id === approvalId ? { ...b, approval: { ...b.approval, status: r.approval.status, decidedAt: r.approval.decidedAt, decidedBy: r.approval.decidedBy, outcome: r.approval.outcome } } : b)),
+    blocks: m.blocks.map((b) => (b.kind === 'approval' && b.approval.id === approvalId ? { ...b, approval: { ...b.approval, status: a.status, decidedAt: a.decidedAt, decidedBy: a.decidedBy, outcome: a.outcome, note: a.note } } : b)),
   }));
+}
+
+export async function decideApproval(chatId: string, messageId: string, approvalId: string, decision: 'approved' | 'declined'): Promise<Approval['status']> {
+  const epoch = sessionEpoch();
+  const r = await post<{ approval: DecidedApproval }>(`/api/approvals/${encodeURIComponent(approvalId)}/decision`, { decision });
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
+  applyDecision(chatId, messageId, approvalId, r.approval);
   return r.approval.status;
 }

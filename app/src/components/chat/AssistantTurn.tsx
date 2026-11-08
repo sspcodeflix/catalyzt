@@ -4,7 +4,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { approvalBlockReason } from '../../lib/approvalRights';
-import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
+import { applyDecision, canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
 import { domainInfo, raiseFromChat, type HuddleDomain } from '../../lib/huddleData';
 import { useSession } from '../../lib/session';
 import { useTickets } from '../../lib/ticketStore';
@@ -148,7 +148,15 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
         const rights = approvalBlockReason(session.me?.app, session.userId, story ? story.components : null);
         const lockReason = !a.id ? 'Waiting for the answer to be saved' : rights ?? (message.rating === null ? 'Rate the answer to approve' : null);
         return (
-          <FlowReviewHandoff key={i} storyKey={a.action === 'add_uat_cases' ? (story?.key ?? (report?.kind === 'uat' ? report.ticketKey : null)) : null} pending={a.status === 'pending'}>
+          <FlowReviewHandoff
+            key={i}
+            approvalId={a.id}
+            storyKey={a.action === 'add_uat_cases' ? (story?.key ?? (report?.kind === 'uat' ? report.ticketKey : null)) : null}
+            pending={a.status === 'pending'}
+            onDecided={(r) => {
+              if (a.id) applyDecision(chat.id, message.id, a.id, r);
+            }}
+          >
           <ApprovalCard
             approval={a}
             revision={message.revision}

@@ -1663,7 +1663,7 @@ export function openDb(path: string) {
       const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
       const cits = db.prepare("SELECT n, title, detail, CASE WHEN source_type = 'link' THEN source_ref END AS href FROM citations WHERE revision_id = ? ORDER BY n");
       const rating = db.prepare('SELECT stars FROM ratings WHERE revision_id = ? AND user_id = ?');
-      const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, outcome FROM approvals WHERE revision_id = ?');
+      const approvalRows = db.prepare('SELECT id, status, decided_by, decided_at, outcome, note FROM approvals WHERE revision_id = ?');
       const artifactRows = db.prepare('SELECT body FROM artifacts WHERE revision_id = ?');
       // Artifacts of the revisions shown, keyed by their local id, so the latest revision wins.
       const artifacts: Record<string, Artifact> = {};
@@ -1699,6 +1699,7 @@ export function openDb(path: string) {
               decidedAt: (row.decided_at as string) ?? undefined,
               decidedBy: row.decided_by ? getUser(String(row.decided_by))?.name : undefined,
               outcome: json<ApprovalOutcome | null>(row.outcome, null) ?? undefined,
+              note: (row.note as string) ?? undefined,
             },
           };
         });

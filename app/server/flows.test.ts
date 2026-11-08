@@ -269,9 +269,13 @@ describe('work done in chat moves the flow', () => {
     const brian = api.as('u-sourav', 'ABCD');
     const id = ((await (await brian.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
     await until('u-sourav', id, (x) => step(x, 'analyse').state === 'done');
+    const older = db.listPendingApprovals('ABCD').find((a) => a.storyKey === 'ABCD-1001')!;
     // Asked again in an ordinary chat, as Brijesh did.
     const events = await brian.run({ text: 'Is ABCD-1001 ready for UAT?', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'own', messageId: 'om1', answerId: 'oa1' });
     const approvalId = (events.find((e) => e.type === 'saved') as { approvals: { id: string }[] }).approvals[0].id;
+    // The newer proposal is now the flow's review (no rating asked); the older one was superseded by it.
+    expect(db.getApproval(older.id)?.status).toBe('expired');
+    expect((await brian.post(`/api/approvals/${older.id}/decision`, { decision: 'approved' })).status).toBe(409);
     expect((await brian.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
     const f = await view('u-sourav', id);
     const texts = f.events.map((e) => e.text).join('\n');

@@ -77,6 +77,8 @@ export interface Approval {
   artifactId?: string;
   /** What happened after approval, shown on the card. */
   outcome?: { ok: boolean; text: string };
+  /** What the reviewer asked to change, when drafted cases were sent back in a test flow. */
+  note?: string;
 }
 
 /**

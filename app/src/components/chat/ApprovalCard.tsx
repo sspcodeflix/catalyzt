@@ -74,7 +74,8 @@ export function ApprovalCard({ approval, revision, lockReason, busy = false, err
           </span>
         ) : (
           <span role="status" className={`pill ${approval.status === 'approved' ? 'pass' : ''}`}>
-            {approval.status === 'approved' ? 'Approved' : 'Declined'} {by} · {time(approval.decidedAt)}
+            {approval.status === 'approved' ? 'Approved' : approval.note ? 'Sent back for changes' : 'Declined'} {by} · {time(approval.decidedAt)}
+            {approval.note ? `: “${approval.note}”` : ''}
           </span>
         )}
       </div>

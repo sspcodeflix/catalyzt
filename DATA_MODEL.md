@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (25 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (27 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -92,7 +92,7 @@ erDiagram
 | `citations` | `revision_id`, `n`, `source_type`, `source_ref`, `title`, `detail` | Numbered sources. `source_type = 'link'` keeps the place the source opens (`source_ref`), e.g. an App Context passage. |
 | `ratings` | `revision_id`, `user_id`, `stars`, `reasons` (JSON), `comment` | One per person per revision. Below 4 stars needs a reason and a comment. Feeds the feedback-pattern rule, never people assessment. |
 | `artifacts` | `id` (`<revision>/<local id>`), `chat_id`, `revision_id`, `local_id`, `kind`, `title`, `body` (JSON) | One row per revision: a later answer never changes what an earlier approval saw. |
-| `approvals` | `id` (`<revision>-a<i>`), `revision_id`, `action`, `target` (JSON), `facts` (JSON), `payload` (JSON), `status`, `decided_by`, `decided_at`, `outcome` (JSON), `executed_at`, `superseded_by` | `payload` is the exact action (for `add_uat_cases`: the story and the cases) frozen when shown. Status `pending`, `approved`, `declined`, `expired` (superseded by a newer revision). Decision and execution are one transaction; a replay returns the recorded outcome. |
+| `approvals` | `id` (`<revision>-a<i>`), `revision_id`, `action`, `target` (JSON), `facts` (JSON), `payload` (JSON), `status`, `decided_by`, `decided_at`, `outcome` (JSON), `executed_at`, `superseded_by`, `note` | `payload` is the exact action (for `add_uat_cases`: the story and the cases) frozen when shown. `note` (migration 27): what the reviewer asked to change when drafted cases were sent back in a test flow. Status `pending`, `approved`, `declined`, `expired` (superseded by a newer revision). Decision and execution are one transaction; a replay returns the recorded outcome. |
 | `attachments` | `id`, `application_id`, `chat_id`, `filename`, `mime`, `size`, `sha256`, `storage_key`, `status`, `note`, `text_chars`, `created_by` | Uploaded through the composer. Bytes live in the blob store under `storage_key`; `status` is `ready` (text readable), `stored` (kept, not readable in this build) or `failed`. Bound to the first chat it is used in. |
 | `attachment_text` | `attachment_id`, `text` | The text read from a readable attachment, given to the model as a numbered source. |
 
