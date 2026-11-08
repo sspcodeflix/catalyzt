@@ -44,8 +44,10 @@ with sync_playwright() as p:
     page.wait_for_selector('.flowpick li label', timeout=15000)
     boxes = page.locator('.flowpick li input[type=checkbox]')
     check('start: stories are listed to choose from', boxes.count() >= 2, str(boxes.count()))
-    keys = [page.locator('.flowpick li .mono').nth(i).inner_text() for i in range(2)]
-    boxes.nth(0).check(); boxes.nth(1).check()
+    # Two stories assigned to Sourav, so his review covers both (and can approve them together).
+    keys = ['ABCD-1002', 'ABCD-1005']
+    for k in keys:
+        page.locator(f'.flowpick li:has(.mono:text-is("{k}")) input[type=checkbox]').check()
     page.fill('.flowtitlefield input', 'UAT · e2e release')
     start = page.locator('.flowstartbar .btn.ink')
     check('start: the button counts the chosen stories', 'Start with 2 stories' in start.inner_text(), start.inner_text())
@@ -102,7 +104,8 @@ with sync_playwright() as p:
         panel = page.locator('.flowreview').first
         check('review: the requirements are listed with the cases drafted for them', panel.locator('.reviewreqs > li').count() >= 2 and panel.locator('.reviewcase').count() >= 1)
         check('review: no rating is asked for', 'Rate' not in panel.inner_text() and panel.locator('.stars, [aria-label*="Rate"]').count() == 0)
-        check('review: it says who approves and why, and a manager can add people', 'manages' in panel.locator('.approvers').inner_text() and panel.locator('.addapprover select').count() == 1)
+        who = panel.locator('.approvers').inner_text()
+        check('review: it says who approves and why, and people can be added', ('assigned the story' in who or 'manages' in who) and panel.locator('.addapprover select').count() == 1, who[:120])
         key = (panel.get_attribute('id') or '').replace('review-', '')
         # The link a chat gives (?review=KEY) opens the same review.
         page.goto(BASE + f'/flows/{flow_id}?review={key}')

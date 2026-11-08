@@ -49,7 +49,7 @@ function ChatView({ chatId }: { chatId: string }) {
     if (!chat && !first && loaded && !load) void loadChat(chatId);
   }, [chatId, chat, first, loaded, load]);
 
-  const panelOpen = location.pathname.includes('/artifact/');
+  const panelOpen = location.pathname.includes('/artifact/') || location.pathname.includes('/flow/');
   // A flow's team thread is open to every member of the application; other chats to the person who started them.
   const thread = chat?.flowId ?? null;
   // The flows holding this chat's stories, loaded once here: the bar above the composer and the cues
@@ -245,7 +245,7 @@ function ChatView({ chatId }: { chatId: string }) {
             Chat
           </button>
           <button type="button" role="tab" aria-selected={view === 'report'} className={view === 'report' ? 'on' : undefined} onClick={() => setView('report')}>
-            Report
+            {location.pathname.includes('/flow/') ? 'Flow' : 'Report'}
           </button>
         </div>
       )}

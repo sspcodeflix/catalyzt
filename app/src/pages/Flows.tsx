@@ -19,14 +19,14 @@ const KIND_LABEL: Record<FlowKind, string> = { uat: 'UAT', regression: 'Regressi
 const STEP_HELP: Record<FlowKind, Partial<Record<StepKey, string>>> = {
   uat: {
     analyse: 'Catalyzt checks the story\'s acceptance criteria against the tests it knows and drafts manual cases for the gaps. Nothing to do until it finishes.',
-    review: 'A component manager checks the drafted cases against the requirements and approves them, or sends them back saying what to change.',
-    run: 'A person runs each manual case below in the UAT environment and records Passed, Failed or Blocked here; automated tests report through CI. The story moves on when every criterion is verified.',
-    signoff: 'A product owner (or the app owner) signs the story off on the evidence shown, or declines with a note.',
+    review: 'The story\'s assignee (anyone may) uses the CI tests suggested under the criteria, then checks the drafted cases against the requirements and approves them, or sends them back saying what to change.',
+    run: 'The story\'s assignee (anyone may) runs each manual case below in the UAT environment and records Passed, Failed or Blocked here; automated tests report through CI. The story moves on when every criterion is verified.',
+    signoff: 'The story\'s assignee (anyone may) signs the story off on the evidence shown, or declines with a note.',
   },
   regression: {
     analyse: 'Catalyzt checks the story\'s acceptance criteria against the automated tests it knows and drafts cases for the gaps. Nothing to do until it finishes.',
-    review: 'A component manager checks the drafted cases against the requirements and approves them, or sends them back saying what to change.',
-    automate: 'An automation engineer writes the automated test, gets the pull request reviewed and merged, and links the test to the story.',
+    review: 'Anyone on the team uses the CI tests suggested under the criteria, then checks the drafted cases against the requirements and approves them (the first approval decides), or sends them back saying what to change.',
+    automate: 'Anyone on the team writes the automated test, gets the pull request reviewed and merged, and links the test to the story.',
     verify: 'The pipeline runs the new test in the target build. The step completes when it passes; nobody records anything by hand.',
   },
 };
@@ -445,6 +445,17 @@ export function FlowStart() {
 
 export function FlowDetail() {
   const { flowId } = useParams();
+  return (
+    <div className="body panelpage">
+      <div className="chatcol listcol">
+        <div className="page">{flowId && <FlowBody flowId={flowId} />}</div>
+      </div>
+    </div>
+  );
+}
+
+/** One flow: its steps, what waits on whom, the stories with their controls, the timeline. Used by the page and by the chat's side pane. */
+export function FlowBody({ flowId }: { flowId: string }) {
   const [flow, setFlow] = useState<FlowView | null>(null);
   const [error, setError] = useState('');
   // ?review=KEY (from a chat card or a story chat) opens that story at its review.
@@ -494,16 +505,12 @@ export function FlowDetail() {
 
   if (!flow)
     return (
-      <div className="body panelpage">
-        <div className="chatcol listcol">
-          <div className="page">
-            <Head title="Test flow" />
-            <p className={error ? 'errtext' : 'muted'} role={error ? 'alert' : undefined}>
-              {error || 'Loading…'}
-            </p>
-          </div>
-        </div>
-      </div>
+      <>
+        <Head title="Test flow" />
+        <p className={error ? 'errtext' : 'muted'} role={error ? 'alert' : undefined}>
+          {error || 'Loading…'}
+        </p>
+      </>
     );
 
   const mine = flow.waiting.filter((w) => w.you);
@@ -519,9 +526,7 @@ export function FlowDetail() {
     }, 50);
   };
   return (
-    <div className="body panelpage">
-      <div className="chatcol listcol">
-        <div className="page">
+    <>
           <Head title={flow.title}>
             {flow.canManage && (flow.status === 'active' || flow.status === 'paused') && (
               <div className="flowmanage">
@@ -561,7 +566,7 @@ export function FlowDetail() {
               <ul>
                 {flow.waiting.map((w, i) => (
                   <li key={i} className={w.you ? 'you' : ''}>
-                    <span className="who">{w.person ? (w.you ? 'You' : w.person.name) : w.action.startsWith('The UAT analyst') ? 'Agent' : 'Pipeline'}</span>
+                    <span className="who">{w.person ? (w.person.id === '*' ? 'Anyone' : w.you ? 'You' : w.person.name) : w.action.startsWith('The UAT analyst') ? 'Agent' : 'Pipeline'}</span>
                     <span className="what">
                       {w.action}
                       <span className="muted">
@@ -614,9 +619,7 @@ export function FlowDetail() {
               ))}
             </ol>
           </details>
-        </div>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -639,7 +642,7 @@ export function StoryRow({ flow, story, open, onToggle, post }: { flow: FlowView
       {step && (
         <p className="flownext">
           {step.detail}
-          {step.waitingOn.length > 0 && <span className="muted"> Waiting on {names(step.waitingOn, me)}.</span>} <ActionButton flow={flow} story={story} step={step} post={post} onOpen={onToggle} open={open} />
+          {step.waitingOn.length > 0 && <span className="muted"> {step.waitingOn.some((p) => p.id === '*') ? 'Anyone on the team can do this.' : `Waiting on ${names(step.waitingOn, me)}.`}</span>} <ActionButton flow={flow} story={story} step={step} post={post} onOpen={onToggle} open={open} />
         </p>
       )}
       {open && <StoryDetail flow={flow} story={story} post={post} />}

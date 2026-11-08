@@ -4,6 +4,7 @@ import { AppShell } from './components/AppShell';
 import { Agents } from './pages/Agents';
 import { AppContext } from './pages/AppContext';
 import { ArtifactPanel } from './pages/ArtifactPanel';
+import { FlowPanel } from './pages/FlowPanel';
 import { ContextSourcePanel } from './pages/ContextSourcePanel';
 import { Huddle } from './pages/Huddle';
 import { HuddleItemPanel } from './pages/HuddleItemPanel';
@@ -26,7 +27,11 @@ export const router = createBrowserRouter([
         path: 'chat/:chatId',
         element: <Chat />,
         // The side panel has its own URL so a report or script can be linked from a ticket or PR.
-        children: [{ path: 'artifact/:artifactId', element: <ArtifactPanel /> }],
+        children: [
+          { path: 'artifact/:artifactId', element: <ArtifactPanel /> },
+          // A test flow worked in the side pane, without leaving the chat.
+          { path: 'flow/:flowId', element: <FlowPanel /> },
+        ],
       },
       { path: 'search', element: <Search /> },
       { path: 'flows', element: <Flows /> },

@@ -77,7 +77,9 @@ with sync_playwright() as p:
     except Exception:
         pass
     check('waiting: a sentence and the list of flows', last.locator('.flowchatlist .flowcard').count() >= 1)
-    check('card: opens the full flow', page.locator('.flowchat a:has-text("Open the full flow")').count() >= 1)
+    # From a chat the whole flow opens in the side pane, not on another page.
+    whole = page.locator('.flowchat a:has-text("Open the whole flow")')
+    check('card: opens the whole flow in the chat\'s side pane', whole.count() >= 1 and '/flow/' in (whole.first.get_attribute('href') or '') and (whole.first.get_attribute('href') or '').startswith('/chat/'), whole.first.get_attribute('href') if whole.count() else 'no link')
 
     # Sourav, a component manager, sees the same flow from his own chat.
     sign_in(page, 'Sourav')

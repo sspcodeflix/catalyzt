@@ -65,8 +65,8 @@ describe('a UAT flow', () => {
     expect(step(f, 'run').detail).toMatch(/^AC4 needs a person to run the manual case in the UAT environment and record Passed, Failed or Blocked here\./);
     const ac4 = f.items[0].manual.find((m) => m.criterion === 'AC4')!;
     expect(ac4.steps.length).toBeGreaterThan(0);
-    // A plain member cannot record a result; a failure needs a reason.
-    expect((await api.as('u-devi', 'ABCD').post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'passed' })).status).toBe(403);
+    // Anyone on the team may record a result; a failure or a block needs a reason.
+    expect((await api.as('u-devi', 'ABCD').post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'blocked' })).status).toBe(400);
     expect((await sourav.post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'failed' })).status).toBe(400);
     expect((await sourav.post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'passed', note: 'checked in staging' })).status).toBe(201);
     f = await view('u-sourav', id);
@@ -82,9 +82,9 @@ describe('a UAT flow', () => {
     expect(ac3).toBeTruthy();
     f = await view('u-ram', id);
     expect(step(f, 'run').state).toBe('done');
-    // Sign-off waits on the story's manager, not the app owner; a plain member cannot sign off.
+    // Sign-off waits on the story's assignee (Sourav), not the app owner; anyone may sign, but not signing off needs a reason.
     expect(step(f, 'signoff')).toMatchObject({ state: 'waiting', waitingOn: [{ id: 'u-sourav', name: 'Sourav' }] });
-    expect((await api.as('u-devi', 'ABCD').post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(403);
+    expect((await api.as('u-devi', 'ABCD').post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'rejected' })).status).toBe(400);
     expect((await sourav.post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(200);
     f = await view('u-sourav', id);
     expect(f.status).toBe('done');
@@ -95,8 +95,9 @@ describe('a UAT flow', () => {
     expect(f.events.map((e) => e.text).join('\n')).toMatch(/Signed off ABCD-1001[\s\S]*Passed: [\s\S]*UAT analyst checked ABCD-1001[\s\S]*Started with 1 story/);
   });
 
-  it('refuses people who cannot start or change a flow', async () => {
-    expect((await api.as('u-devi', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).status).toBe(403);
+  it('lets anyone on the team start a flow, and refuses bad input and changes by people who did not start it', async () => {
+    // Everyone has the same access: a plain member starts a flow too.
+    expect((await api.as('u-devi', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).status).toBe(201);
     expect((await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['IBGM-1001'] })).status).toBe(400);
     expect((await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'uat', stories: [] })).status).toBe(400);
     const id = ((await (await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'regression', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
@@ -110,13 +111,17 @@ describe('a UAT flow', () => {
 });
 
 describe('who a step waits on', () => {
-  it('needs every manager of a story spanning two managers\' components; the app owner is not required and cannot approve for them', async () => {
-    // ABCD-1001 now spans checkoutservice (Sourav) and frontend (Devi as its manager, for this test).
+  it('UAT waits on the story\'s assignee; a story with no assignee needs every manager of its components; the app owner is not required and cannot approve for them', async () => {
+    // ABCD-1001 is assigned to Sourav: its review is his alone, whatever its components.
+    const first = ((await (await api.as('u-ram', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    const g1 = await until('u-ram', first, (x) => step(x, 'analyse').state === 'done');
+    expect(g1.items[0].review!.approvers.map((a) => [a.id, a.why])).toEqual([['u-sourav', 'assigned the story']]);
+    // ABCD-1002 has no assignee and now spans frontend (Devi as its manager, for this test) and checkoutservice (Sourav).
     db.raw.prepare("UPDATE components SET manager_id = 'u-devi' WHERE application_id = 'ABCD' AND name = 'frontend'").run();
-    db.raw.prepare("INSERT INTO story_components (story_key, component_id) SELECT 'ABCD-1001', id FROM components WHERE application_id = 'ABCD' AND name = 'frontend'").run();
+    db.raw.prepare("INSERT INTO story_components (story_key, component_id) SELECT 'ABCD-1002', id FROM components WHERE application_id = 'ABCD' AND name = 'checkoutservice'").run();
     await api.close();
     api = await startApi(db);
-    const id = ((await (await api.as('u-ram', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    const id = ((await (await api.as('u-ram', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
     const f = await until('u-ram', id, (x) => step(x, 'analyse').state === 'done');
     expect(step(f, 'review').waitingOn.map((p) => p.id).sort()).toEqual(['u-devi', 'u-sourav']);
     expect(f.items[0].review!.approvers.map((a) => [a.id, a.why])).toEqual(expect.arrayContaining([['u-sourav', 'manages checkoutservice'], ['u-devi', 'manages frontend']]));
@@ -143,10 +148,9 @@ describe('who a step waits on', () => {
     const f = await until('u-sourav', id, (x) => step(x, 'review').state === 'waiting');
     const approvalId = f.items[0].review!.approvalId;
     const approvers = (body: unknown, who = 'u-sourav') => api.as(who, 'ABCD').post(`/api/flows/${id}/approvers`, body);
-    // The members to choose from. A plain member cannot change the list; a manager is not added twice; outsiders are refused.
+    // The members to choose from. A required approver is not added twice; outsiders are refused.
     const people = ((await (await sourav.get('/api/flows/people')).json()) as { people: { id: string }[] }).people.map((p) => p.id);
     expect(people).toEqual(expect.arrayContaining(['u-ram', 'u-sourav', 'u-devi']));
-    expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-ram'] }, 'u-devi')).status).toBe(403);
     expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-sourav'] })).status).toBe(400);
     expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-nobody'] })).status).toBe(400);
     // Ram and Devi are added: three approvals needed, and each sees the story waiting on them.
@@ -383,6 +387,14 @@ describe('a regression flow', () => {
     const id = ((await (await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'regression', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
     const f = await until('u-sourav', id, (x) => step(x, 'analyse').state === 'done');
     expect(f.steps.map((s) => s.label)).toEqual(['Analyse', 'Review cases', 'Automate', 'Verify in CI']);
+    // Regression: the drafted cases wait on anyone on the team, and the first approval decides; a plain member's counts.
+    expect(step(f, 'review')).toMatchObject({ state: 'waiting', waitingOn: [{ id: '*', name: 'Anyone on the team' }] });
+    expect(step(f, 'review').detail).toMatch(/anyone on the team can approve\.$/);
+    const asDevi = await view('u-devi', id);
+    expect(asDevi.waiting[0]).toMatchObject({ you: true, action: 'Review cases' });
+    expect(asDevi.items[0].can.review).toBe(true);
+    expect((await api.as('u-devi', 'ABCD').post(`/api/approvals/${f.items[0].review!.approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    expect(step(await view('u-sourav', id), 'review').state).toBe('done');
     // The application-wide coverage that a regression starts from.
     const cov = (await (await api.as('u-sourav', 'ABCD').get('/api/flows/coverage')).json()) as { criteria: number; covered: number; gaps: { key: string }[] };
     expect(cov.covered).toBe(2);

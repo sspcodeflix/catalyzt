@@ -233,7 +233,11 @@ legend { padding: 0; }
 .suggest li small::first-letter { text-transform: uppercase; }
 .suggest li .pill { height: 20px; font-size: 11.5px; }
 .suggest li .btn.small { height: 26px; padding: 0 10px; font-size: 12.5px; }
-.suggest-linked { font-size: 12.5px; color: var(--hz-pass-text); white-space: nowrap; }
+.suggest-linked { font-size: 12.5px; color: var(--hz-pass-text); grid-column: 2 / -1; justify-self: end; text-align: right; }
+/* A test flow in the chat's side pane: the flow page's body, scrolling inside the panel. */
+.panel.flowpanel { overflow: auto; }
+.panel.flowpanel .flowbody { padding: 0 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+.panel.flowpanel .flowbody h1 { font-size: 22px; }
 @media (max-width: 560px) {
   .suggest li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
   .suggest li .pill { grid-column: 2; }

@@ -62,6 +62,24 @@ function managersOf(app: AppRecord, components: string[], db: HorizonDb) {
   return out.size ? [...out.values()] : peopleWithRole(db, app.id, 'app_owner');
 }
 const userName = (db: HorizonDb, id: string) => db.getUser(id)?.name ?? id;
+/** Stands for every member of the application where a step waits on nobody in particular (regression: anyone approves). */
+export const ANYONE = { id: '*', name: 'Anyone on the team' };
+const isMember = (db: HorizonDb, app: string, userId: string | null) => !!userId && !!db.raw.prepare('SELECT 1 FROM memberships WHERE application_id = ? AND user_id = ?').get(app, userId);
+/** The kinds of active or paused flows holding a story. */
+function flowKindsForStory(db: HorizonDb, app: string, key: string): Set<FlowKind> {
+  const rows = db.raw.prepare("SELECT DISTINCT f.kind FROM flows f JOIN flow_items i ON i.flow_id = f.id WHERE f.application_id = ? AND i.story_key = ? AND i.removed_at IS NULL AND f.status IN ('active', 'paused')").all(app, key) as { kind: FlowKind }[];
+  return new Set(rows.map((r) => r.kind));
+}
+/**
+ * Who a story's work waits on. Everyone in the application has the same access; this only says whose turn it
+ * is. UAT: the story's Jira assignee, when they are a member; otherwise the managers of its components (the app
+ * owner where a component has none). Regression: anyone on the team.
+ */
+function ownersOf(db: HorizonDb, app: AppRecord, story: { assigneeId: string | null; components: string[] }, kind: FlowKind): { id: string; name: string }[] {
+  if (kind === 'regression') return [ANYONE];
+  if (isMember(db, app.id, story.assigneeId)) return [{ id: story.assigneeId!, name: userName(db, story.assigneeId!) }];
+  return managersOf(app, story.components, db);
+}
 const names = (ps: { name: string }[]) => (ps.length <= 2 ? ps.map((p) => p.name).join(' and ') : `${ps.slice(0, -1).map((p) => p.name).join(', ')} and ${ps[ps.length - 1].name}`);
 
 interface Reviewer {
@@ -83,15 +101,23 @@ function reviewersForStory(db: HorizonDb, app: AppRecord, key: string, component
       if (!r.why.includes(why)) r.why = `${r.why}; ${why}`;
     } else out.set(p.id, { id: p.id, name: p.name, why });
   };
-  const byManager = new Map<string, string[]>();
-  const unmanaged: string[] = [];
-  for (const name of components) {
-    const c = app.components.find((x) => x.name === name);
-    if (c?.managerId) byManager.set(c.managerId, [...(byManager.get(c.managerId) ?? []), name]);
-    else unmanaged.push(name);
+  // A story only in a regression flow: anyone on the team approves, and the first approval decides.
+  const kinds = flowKindsForStory(db, app.id, key);
+  if (kinds.has('regression') && !kinds.has('uat')) return [{ ...ANYONE, why: 'regression: anyone on the team may approve; the first approval decides' }];
+  // UAT: the story's assignee; a story with no assignee on the team falls back to its components' managers.
+  const assignee = db.getStory(key)?.assigneeId ?? null;
+  if (isMember(db, app.id, assignee)) add({ id: assignee!, name: userName(db, assignee!) }, 'assigned the story');
+  else {
+    const byManager = new Map<string, string[]>();
+    const unmanaged: string[] = [];
+    for (const name of components) {
+      const c = app.components.find((x) => x.name === name);
+      if (c?.managerId) byManager.set(c.managerId, [...(byManager.get(c.managerId) ?? []), name]);
+      else unmanaged.push(name);
+    }
+    for (const [id, comps] of byManager) add({ id, name: userName(db, id) }, `manages ${comps.join(', ')}`);
+    if (unmanaged.length || byManager.size === 0) for (const o of peopleWithRole(db, app.id, 'app_owner')) add(o, unmanaged.length ? `app owner (${unmanaged.join(', ')} has no manager)` : 'app owner');
   }
-  for (const [id, comps] of byManager) add({ id, name: userName(db, id) }, `manages ${comps.join(', ')}`);
-  if (unmanaged.length || byManager.size === 0) for (const o of peopleWithRole(db, app.id, 'app_owner')) add(o, unmanaged.length ? `app owner (${unmanaged.join(', ')} has no manager)` : 'app owner');
   for (const flowId of flowsForStory(db, app.id, key)) {
     const added = db.raw
       .prepare('SELECT a.user_id AS id, u.name, b.name AS added_by FROM flow_story_approvers a JOIN users u ON u.id = a.user_id JOIN users b ON b.id = a.added_by WHERE a.flow_id = ? AND a.story_key = ? AND a.removed_at IS NULL ORDER BY a.added_at')
@@ -192,6 +218,8 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
   const manualFailed = (i: number) => manual.some((m) => m.criterion === `AC${i + 1}` && (m.last?.status === 'failed' || m.last?.status === 'blocked'));
   const verified = cov.map((c, i) => (kind === 'uat' ? automatedPassed(c) || (manualPassed(i) && c.status !== 'failing') : automatedPassed(c)));
   const managers = managersOf(app, story.components, db);
+  // Whose turn it is for this story: UAT its assignee (else the managers), regression anyone on the team.
+  const owners = ownersOf(db, app, story, kind);
   const chatHref = (id: string | null | undefined) => (id ? `/chat/${id}` : `/tickets/${story.key}`);
   const report = uat.get(story.key);
   const job = getJob(db, jobKey(flow.id, story.key));
@@ -224,7 +252,9 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     steps.push({
       key: 'review',
       state: 'waiting',
-      detail: approvedBy.length ? `${what}: approved by ${names(approvedBy)}; ${plural(who.length, 'approval', 'approvals')} still to come.` : `${what} ${approval.cases.length === 1 ? 'waits' : 'wait'} for ${reviewers.length > 1 ? `${reviewers.length} approvals` : 'review'}.`,
+      detail: approvedBy.length
+        ? `${what}: approved by ${names(approvedBy)}; ${plural(who.length, 'approval', 'approvals')} still to come.`
+        : `${what} ${approval.cases.length === 1 ? 'waits' : 'wait'} for ${reviewers.some((r) => r.id === ANYONE.id) ? 'review; anyone on the team can approve' : reviewers.length > 1 ? `${reviewers.length} approvals` : 'review'}.`,
       waitingOn: who.map(({ id, name }) => ({ id, name })),
       since: approval.createdAt,
       action: { kind: 'review', label: 'Review cases' },
@@ -233,7 +263,7 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     steps.push({ key: 'review', state: 'blocked', detail: `${approval.decidedBy ?? 'A reviewer'} asked for changes${approval.note ? `: "${/[.!?]$/.test(approval.note) ? approval.note : `${approval.note}.`}"` : '.'} Analyse again to draft new cases.`, waitingOn: [flow.owner], since: approval.decidedAt ?? undefined, action: { kind: 'analyse', label: 'Analyse again' } });
   } else if (toLink) {
     // The suggestions sit under the criteria on the story itself; the action opens the story, not a chat.
-    steps.push({ key: 'review', state: 'waiting', detail: `${plural(toLink, 'criterion', 'criteria')} may already be covered by a passing CI test. Link the right test so it counts.`, waitingOn: managers, action: { kind: 'link', label: 'Review suggestions' } });
+    steps.push({ key: 'review', state: 'waiting', detail: `${plural(toLink, 'criterion', 'criteria')} may already be covered by a passing CI test. Link the right test so it counts.`, waitingOn: owners, action: { kind: 'link', label: 'Review suggestions' } });
   } else if (approval?.status === 'approved') {
     const by = votes.filter((v) => v.decision === 'approved');
     steps.push({ key: 'review', state: 'done', detail: `Cases approved by ${by.length ? names(by) : (approval.decidedBy ?? 'a manager')}.`, waitingOn: [], since: approval.decidedAt ?? undefined });
@@ -251,8 +281,8 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     const needRun = open.filter((i) => !failing.includes(i) && manual.some((m) => m.criterion === `AC${i + 1}`) && !manualFailed(i));
     const noCase = open.filter((i) => !failing.includes(i) && !manual.some((m) => m.criterion === `AC${i + 1}`) && !hasAutomated(cov[i]));
     const manualFail = open.filter((i) => manualFailed(i));
-    // The story's managers run and record; UAT testers and product owners may too, but nothing waits on them.
-    const testers = managers;
+    // The story's assignee runs and records (the managers when it has none); anyone on the team may record too.
+    const testers = owners;
     if (!reviewed) steps.push({ key: 'run', state: 'todo', detail: 'Waits for the case review.', waitingOn: [] });
     else if (open.length === 0) steps.push({ key: 'run', state: 'done', detail: `All ${plural(cov.length, 'criterion', 'criteria')} verified.`, waitingOn: [] });
     else if (failing.length || manualFail.length)
@@ -273,7 +303,7 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     const ready = steps[2].state === 'done';
     const evidence = cov.map((c) => c.status);
     const stale = !!s && JSON.stringify(s.evidence) !== JSON.stringify(evidence) && !ready;
-    const signers = managers;
+    const signers = owners;
     if (s && s.decision === 'signed_off' && !stale) steps.push({ key: 'signoff', state: 'done', detail: `Signed off by ${s.by}.`, waitingOn: [], since: s.at });
     else if (s && s.decision === 'rejected' && !ready) steps.push({ key: 'signoff', state: 'blocked', detail: `${s.by} did not sign off${s.note ? `: "${s.note}"` : ''}.`, waitingOn: fixPeople, since: s.at });
     else if (ready) steps.push({ key: 'signoff', state: 'waiting', detail: stale ? 'The evidence changed after sign-off. Sign off again.' : 'Every criterion is verified. Ready for UAT sign-off.', waitingOn: signers, action: { kind: 'signoff', label: 'Sign off' } });
@@ -290,7 +320,7 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
         key: 'automate',
         state: 'waiting',
         detail: `${plural(missing.length, 'criterion has', 'criteria have')} no automated test. Generate the test code, open a pull request, and link the merged test.`,
-        waitingOn: managers,
+        waitingOn: owners,
         action: { kind: 'automate', label: 'Draft automation', href: `/?ask=${encodeURIComponent(ask)}` },
       });
     // 4. Verify: each automated test passed in the target build.
@@ -448,7 +478,7 @@ function summarise(flow: FlowRow, stories: FlowStory[], userId: string): FlowSum
     const pipelineOrAgent = step.state === 'working' ? 'The UAT analyst is working' : step.action?.kind === 'wait' ? 'Waiting for the pipeline' : label;
     for (const p of people) {
       const k = `${p?.id ?? '-'}|${pipelineOrAgent}`;
-      const g = groups.get(k) ?? { person: p, action: pipelineOrAgent, stories: [], since: null, you: p?.id === userId };
+      const g = groups.get(k) ?? { person: p, action: pipelineOrAgent, stories: [], since: null, you: p?.id === userId || p?.id === ANYONE.id };
       g.stories.push(st.key);
       if (step.since && (!g.since || step.since < g.since)) g.since = step.since;
       groups.set(k, g);
@@ -503,15 +533,16 @@ export function listFlows(db: HorizonDb, app: AppRecord, userId: string, opts: {
 }
 
 /** What one person can do on a story of a flow: review its drafted cases (they are a required approver who has not approved yet), manage its approvers, record results, sign off. */
-function canFor(app: AppRecord, flow: FlowRow, s: FlowStory, userId: string, roles: string[]): FlowStory['can'] {
-  const isOwner = roles.includes('app_owner');
-  const mgr = app.components.some((c) => s.components.includes(c.name) && c.managerId === userId);
+function canFor(_app: AppRecord, flow: FlowRow, s: FlowStory, userId: string, _roles: string[]): FlowStory['can'] {
+  // Everyone in the application has the same access: the only gate is a review that names its approvers
+  // (UAT), where a person approves once; in regression anyone on the team approves.
   const pending = s.review?.status === 'pending' ? s.review : null;
+  const active = flow.status === 'active';
   return {
-    review: !!pending && flow.status === 'active' && pending.approvers.some((a) => a.id === userId && a.decision !== 'approved'),
-    manageApprovers: flow.status === 'active' && (mgr || isOwner || flow.owner.id === userId),
-    execute: mgr || isOwner || roles.includes('uat_tester') || roles.includes('product_owner'),
-    signoff: mgr || isOwner || roles.includes('product_owner'),
+    review: !!pending && active && pending.approvers.some((a) => a.id === ANYONE.id || (a.id === userId && a.decision !== 'approved')),
+    manageApprovers: active,
+    execute: true,
+    signoff: true,
   };
 }
 
@@ -533,8 +564,8 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
     items: stories,
     events,
     canManage: flow.owner.id === userId || isOwner,
-    canSignOff: roles.includes('product_owner') || roles.includes('component_manager') || isOwner,
-    canExecute: roles.some((r) => ['uat_tester', 'app_owner', 'component_manager', 'product_owner'].includes(r)),
+    canSignOff: true,
+    canExecute: true,
     threadId: ensureThread(db, id),
   };
 }
@@ -569,19 +600,13 @@ function refuseTaken(db: HorizonDb, app: string, kind: FlowKind, keys: string[],
 }
 
 export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; name: string }, roles: string[], input: { kind: FlowKind; title?: string; stories: string[]; origin?: string | null }) {
-  if (!roles.includes('app_owner') && !roles.includes('component_manager')) throw new FlowError(403, 'Only an app owner or a component manager can start a test flow.');
+  void roles; // Anyone on the team can start a flow: everyone has the same access.
   const keys = [...new Set(input.stories)].slice(0, MAX_FLOW_STORIES + 1);
   if (keys.length === 0) throw new FlowError(400, 'Choose at least one story.');
   if (keys.length > MAX_FLOW_STORIES) throw new FlowError(400, `A flow holds at most ${MAX_FLOW_STORIES} stories.`);
   const stories = keys.map((k) => db.getStory(k));
   const unknown = keys.filter((_k, i) => !stories[i] || stories[i]!.applicationId !== app.id);
   if (unknown.length) throw new FlowError(400, `Not stories of this application: ${unknown.join(', ')}.`);
-  // A component manager starts flows over the stories of their own components; an owner over any.
-  if (!roles.includes('app_owner')) {
-    const mine = new Set(app.components.filter((c) => c.managerId === user.id).map((c) => c.name));
-    const foreign = stories.filter((s) => !s!.components.some((c) => mine.has(c))).map((s) => s!.key);
-    if (foreign.length) throw new FlowError(403, `${foreign.join(', ')} touch no component you manage; ask the app owner to include them.`);
-  }
   // A Start card pressed twice (two tabs, a double click) gives the flow it already started.
   if (input.origin) {
     const made = db.raw.prepare('SELECT id FROM flows WHERE application_id = ? AND origin = ?').get(app.id, input.origin) as { id: string } | undefined;
@@ -622,7 +647,7 @@ const canManage = (flow: FlowRow, userId: string, roles: string[]) => flow.owner
 export function analyseAgain(db: HorizonDb, app: AppRecord, id: string, user: { id: string }, roles: string[], key: string) {
   const flow = requireFlow(db, app, id);
   if (flow.status !== 'active') throw new FlowError(409, `This flow is ${flow.status}.`);
-  if (!roles.includes('app_owner') && !roles.includes('component_manager')) throw new FlowError(403, 'Only an app owner or a component manager can ask for an analysis.');
+  void roles; // Anyone on the team can ask for a new analysis.
   if (!itemsOf(db, id).some((i) => i.key === key)) throw new FlowError(404, `${key} is not in this flow.`);
   enqueueAnalysis(db, app.id, id, key, flow.owner.id);
   event(db, id, user.id, 'analyse', `Asked for a new analysis of ${key}.`, key);
@@ -665,8 +690,7 @@ export function signOff(db: HorizonDb, app: AppRecord, id: string, user: { id: s
   if (flow.status !== 'active') throw new FlowError(409, `This flow is ${flow.status}.`);
   const story = db.getStory(key);
   if (!story || !itemsOf(db, id).some((i) => i.key === key)) throw new FlowError(404, `${key} is not in this flow.`);
-  const manages = app.components.some((c) => story.components.includes(c.name) && c.managerId === user.id);
-  if (!manages && !roles.includes('product_owner') && !roles.includes('app_owner')) throw new FlowError(403, `Only the manager of ${key}'s components, a product owner or an app owner can sign off UAT.`);
+  void roles; // Anyone on the team may sign off; the flow says whose turn it is (the story's assignee).
   const progress = storyProgress(db, app, flow, story, itemsOf(db, id).find((i) => i.key === key)!, db.uatStates(app.id));
   if (decision === 'signed_off' && progress.steps[2].state !== 'done') throw new FlowError(409, `${key} still has criteria that are not verified. Sign-off with a gap needs a risk acceptance in Huddle.`);
   if (decision === 'rejected' && !note?.trim()) throw new FlowError(400, 'Say why you are not signing off.');
@@ -697,8 +721,7 @@ export function setApprovers(db: HorizonDb, app: AppRecord, id: string, user: { 
   if (flow.status === 'done' || flow.status === 'cancelled') throw new FlowError(409, `This flow is ${flow.status}.`);
   const story = db.getStory(key);
   if (!story || !itemsOf(db, id).some((i) => i.key === key)) throw new FlowError(404, `${key} is not in this flow.`);
-  const manages = app.components.some((c) => story.components.includes(c.name) && c.managerId === user.id);
-  if (!manages && !roles.includes('app_owner') && flow.owner.id !== user.id) throw new FlowError(403, `Only the manager of ${key}'s components, the person who started this flow or an app owner can change who approves its cases.`);
+  void roles; // Anyone on the team may change who approves a story's cases.
   const members = new Set((db.raw.prepare('SELECT DISTINCT user_id FROM memberships WHERE application_id = ?').all(app.id) as { user_id: string }[]).map((r) => r.user_id));
   const outsiders = add.filter((u) => !members.has(u));
   if (outsiders.length) throw new FlowError(400, `Not members of ${app.name}: ${outsiders.join(', ')}.`);
@@ -724,11 +747,16 @@ export function setApprovers(db: HorizonDb, app: AppRecord, id: string, user: { 
  */
 export function castReview(db: HorizonDb, app: AppRecord, approval: { id: string; storyKey: string; components: string[] }, user: { id: string; name: string }, decision: 'approved' | 'declined', note: string | null) {
   const reviewers = reviewersForStory(db, app, approval.storyKey, approval.components);
-  if (!reviewers.some((r) => r.id === user.id)) throw new FlowError(403, `${names(reviewers)} ${reviewers.length === 1 ? 'reviews' : 'review'} the drafted cases for ${approval.storyKey}. A component manager can add you to the approvers.`);
+  const anyone = reviewers.some((r) => r.id === ANYONE.id);
+  if (anyone ? !isMember(db, app.id, user.id) : !reviewers.some((r) => r.id === user.id)) {
+    throw new FlowError(403, anyone ? `Only a member of ${app.name} can approve.` : `${names(reviewers)} ${reviewers.length === 1 ? 'reviews' : 'review'} the drafted cases for ${approval.storyKey}. Anyone on the team can add you to the approvers.`);
+  }
   db.raw.prepare('INSERT INTO flow_reviews (approval_id, user_id, decision, note, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(approval_id, user_id) DO UPDATE SET decision = excluded.decision, note = excluded.note, at = excluded.at').run(approval.id, user.id, decision, note || null, now());
   const votes = reviewVotes(db, approval.id);
-  const waitingOn = reviewers.filter((r) => !votes.some((v) => v.id === r.id && v.decision === 'approved')).map(({ id, name }) => ({ id, name }));
-  return { complete: decision === 'declined' || waitingOn.length === 0, waitingOn, approvedBy: votes.filter((v) => v.decision === 'approved').map(({ id, name }) => ({ id, name })) };
+  const approved = votes.filter((v) => v.decision === 'approved');
+  // Regression: the first approval decides. UAT: every named approver approves once.
+  const waitingOn = anyone ? (approved.length ? [] : [ANYONE]) : reviewers.filter((r) => !approved.some((v) => v.id === r.id)).map(({ id, name }) => ({ id, name }));
+  return { complete: decision === 'declined' || waitingOn.length === 0, waitingOn, approvedBy: approved.map(({ id, name }) => ({ id, name })) };
 }
 
 type ApprovalRecord = NonNullable<ReturnType<HorizonDb['getApproval']>>;
@@ -819,14 +847,15 @@ function settleReview(db: HorizonDb, app: AppRecord, story: StoredStory, execute
   if (!approval || approval.status !== 'pending') return;
   const reviewers = reviewersForStory(db, app, story.key, approval.components.length ? approval.components : story.components);
   const votes = reviewVotes(db, approval.id).filter((v) => v.decision === 'approved');
-  if (!reviewers.length || !reviewers.every((r) => votes.some((v) => v.id === r.id))) return;
+  const anyone = reviewers.some((r) => r.id === ANYONE.id);
+  if (!reviewers.length || (anyone ? votes.length === 0 : !reviewers.every((r) => votes.some((v) => v.id === r.id)))) return;
   const last = votes[votes.length - 1];
   const result = db.decideApproval(approval.id, 'approved', last.id, execute, null);
   if (result.kind === 'decided') noteStory(db, app.id, story.key, last.id, 'approved', `Approved the drafted cases for ${story.key}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`);
 }
 
 export function recordExecution(db: HorizonDb, app: AppRecord, testId: string, user: { id: string; name: string }, roles: string[], status: 'passed' | 'failed' | 'blocked', note: string | null) {
-  if (!roles.some((r) => ['uat_tester', 'app_owner', 'component_manager', 'product_owner'].includes(r))) throw new FlowError(403, 'Only a UAT tester, a product owner, a component manager or an app owner can record a result.');
+  void roles; // Anyone on the team may record a result; a failed or blocked one needs a note.
   const t = db.raw.prepare("SELECT id, application_id, kind, title, created_by FROM test_cases WHERE id = ? AND status = 'active'").get(testId) as Row | undefined;
   if (!t || t.application_id !== app.id) throw new FlowError(404, 'This test does not exist in this application.');
   if (t.kind !== 'manual') throw new FlowError(400, 'Results are recorded for manual cases; automated tests get theirs from CI.');
@@ -994,10 +1023,10 @@ export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, ro
     if (!stories.length && already.length)
       return { prose: `${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in a ${kind === 'uat' ? 'UAT' : 'regression'} flow. ${inFlows.length === 1 ? 'Here it is' : 'Here they are'}; nothing new was started.`, blocks: inFlows.slice(0, 3).map((flowId) => ({ kind: 'flow' as const, flowId })) };
     const title = kind === 'uat' ? (version ? `UAT · release ${version}` : `UAT · ${stories.length === 1 ? stories[0].key : `${stories.length} stories`}`) : `Regression · ${app.name}`;
-    const allowed = roles.includes('app_owner') || roles.includes('component_manager');
+    void roles; // Anyone on the team can start a flow.
     const prose = !stories.length
       ? `I found no stories for a ${kind === 'uat' ? 'UAT' : 'regression'} flow from ${how}. Name the stories, or check the Jira filter.`
-      : `I found ${plural(stories.length, 'story', 'stories')} for a ${kind === 'uat' ? 'UAT' : 'regression'} flow: ${how}. Untick any you want to leave out, then press Start. Nothing starts until you do.${alreadyText}${allowed ? '' : ' Only an app owner or a component manager can start a flow.'}`;
+      : `I found ${plural(stories.length, 'story', 'stories')} for a ${kind === 'uat' ? 'UAT' : 'regression'} flow: ${how}. Untick any you want to leave out, then press Start. Nothing starts until you do.${alreadyText}`;
     return { prose, blocks: stories.length ? [{ kind: 'flow_start', flowKind: kind, title, stories }] : [] };
   }
   const flows = listFlows(db, app, userId);

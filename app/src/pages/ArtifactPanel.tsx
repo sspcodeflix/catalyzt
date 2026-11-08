@@ -294,7 +294,7 @@ export function Suggestions({ storyKey, criterion, items }: { storyKey: string; 
   return (
     <div className="suggest" role="group" aria-label={`Tests that may cover ${criterion}`}>
       <span className="suggest-h">
-        Possibly covered by <span className="muted">· not counted until a person links it</span>
+        An existing CI test may already check this <span className="muted">· use it and the criterion counts as covered, no manual case needed</span>
       </span>
       <ul>
         {items.map((t) => {
@@ -315,11 +315,18 @@ export function Suggestions({ storyKey, criterion, items }: { storyKey: string; 
               <span className={`pill ${t.result === 'passed' ? 'pass' : t.result === 'failed' ? 'crit' : ''}`}>{t.result ?? 'no result'}</span>
               {st === 'linked' ? (
                 <span role="status" className="suggest-linked">
-                  Linked · analyse again to count it
+                  {t.result === 'passed' ? `Done: ${criterion} now counts as covered` : `Done: ${criterion} counts once this test passes in CI`}
                 </span>
               ) : (
-                <button type="button" className="btn small" onClick={() => void link(t.id)} disabled={st === 'busy'} aria-label={`Link ${t.title} to ${storyKey} ${criterion}`}>
-                  {st === 'busy' ? 'Linking…' : 'Link'}
+                <button
+                  type="button"
+                  className="btn small"
+                  onClick={() => void link(t.id)}
+                  disabled={st === 'busy'}
+                  title={`Makes this test the evidence for ${criterion}: its CI result then counts for the criterion.`}
+                  aria-label={`Use ${t.title} as the test for ${storyKey} ${criterion}`}
+                >
+                  {st === 'busy' ? 'Saving…' : 'Use this test'}
                 </button>
               )}
             </li>

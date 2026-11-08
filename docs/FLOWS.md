@@ -36,29 +36,29 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 
 ## Who it waits on
 
-The component manager owns the flow for their stories and can take a story from analysis to sign-off
-alone. Nothing in a flow needs an app owner: owners are only the fallback for a component that has no
-manager, and they can add or remove approvers.
+Everyone in an application has the same access: anyone on the team can start a flow, link a suggested
+test, approve drafted cases, record a result, sign off, add approvers or ask for a new analysis. The
+flow only says whose turn it is, so "Waiting on you" means something:
 
-- **Review cases:** every manager of the story's components approves the drafted cases, once each; a story
-  spanning two managers' components needs both. A manager (or the flow's owner, or an app owner) can add
-  people to a story, and their approval is needed too; "Who approves" on the story shows each person, why,
-  and where they stand. The cases are added to Hexa when the last approval is in. Anyone required can ask
-  for changes instead, with a note, which ends the review: the flow's owner analyses again. An app owner who
-  is not among the approvers cannot approve for them. When several stories wait on the same person, the
-  "Waiting on you" list offers them together: tick the ones checked, one Approve, and each is decided
-  exactly as if approved alone (a story with other approvers still waits for them). Asking for changes
-  stays per story, since it needs a note about that story.
-- **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
-  The suggestions sit under the criterion on the story itself (flow page and the chat's flow card), each
-  with its result and a Link button; linking counts at once. No manual case is drafted for that criterion.
-- **Run tests:** the story's managers run the manual cases in the UAT environment and record Passed, Failed
-  or Blocked. People with the UAT tester or product owner role may record too, but nothing waits on them.
-  A failing test waits on the component manager.
-- **Sign off:** the story's managers sign off; a product owner or an app owner may too. Sign-off is refused
-  while any criterion is unverified. A sign-off with a gap needs a risk acceptance in Huddle.
-- **Automate:** the story's managers; an automation engineer may do the work, but nothing waits on a role.
-- **Analyse, again:** the flow's owner, when an analysis failed or a reviewer asked for changes.
+- **UAT:** a story's work waits on its **Jira assignee** (review of its drafted cases, running them,
+  sign-off). A story whose assignee is not on the team waits on the managers of its components, and on
+  the app owner where a component has none. Anyone added to a story's review ("Also needs approval
+  from") must approve too; each approver approves once, and the cases go into Hexa when the last
+  approval is in. Anyone required can ask for changes instead, with a note, which ends the review: the
+  flow's owner analyses again.
+- **Regression:** a story's drafted cases wait on **anyone on the team**; the first approval decides.
+  Automation waits on anyone too. Every member sees it under "Waiting on you" until someone does it.
+- **Suggested tests:** when a passing CI test looks like it covers a criterion, it is offered under the
+  criterion on the story itself (flow page and the chat's flow card) with its result and a "Use this
+  test" button; using it makes the test the criterion's evidence, so a passing one counts at once. No
+  manual case is drafted for that criterion.
+- **Run tests (UAT):** the assignee runs the manual cases in the UAT environment and records Passed,
+  Failed or Blocked; anyone may record. A failed or blocked result needs a note. A failing test waits on
+  the component manager.
+- **Sign off (UAT):** the assignee signs off; anyone may. Sign-off is refused while any criterion is
+  unverified; not signing off needs a reason. A sign-off with a gap needs a risk acceptance in Huddle.
+- **Pause, resume, cancel, add or remove stories:** the person who started the flow, or an app owner.
+- **Analyse, again:** anyone, when an analysis failed or a reviewer asked for changes.
 
 ## Chat and the flow: who keeps what
 

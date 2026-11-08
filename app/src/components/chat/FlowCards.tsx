@@ -73,12 +73,13 @@ export function useRunAction(chat: Chat | null, ask: (text: string) => void) {
     if (a.kind === 'href' && a.href) return navigate(a.href);
     if (a.kind === 'suggestions') {
       const report = chat ? Object.values(chat.artifacts).find((x) => x.kind === 'uat' && x.ticketKey === a.key) : undefined;
-      return navigate(report && chat ? `/chat/${chat.id}/artifact/${report.id}` : `/flows/${a.flowId}?review=${encodeURIComponent(a.key)}`);
+      // No report in this chat: the flow opens in the side pane at the story, whose criteria carry the suggestions.
+      return navigate(report && chat ? `/chat/${chat.id}/artifact/${report.id}` : `${chat ? `/chat/${chat.id}/flow/${a.flowId}` : `/flows/${a.flowId}`}?review=${encodeURIComponent(a.key)}`);
     }
     if (a.kind === 'review') {
       const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(a.key)}`);
       if (here) return here.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return navigate(`/flows/${a.flowId}?review=${encodeURIComponent(a.key)}`);
+      return navigate(`${chat ? `/chat/${chat.id}/flow/${a.flowId}` : `/flows/${a.flowId}`}?review=${encodeURIComponent(a.key)}`);
     }
     ask(`Where is the ${KIND[a.flowKind]} for ${a.key}?`);
   };
@@ -188,8 +189,9 @@ export function FlowChatCard({ flowId }: { flowId: string }) {
         </ul>
       )}
       <div className="flowchatlinks">
-        <Link to={`/flows/${flow.id}`} className="btn small">
-          Open the full flow · {flow.stories} {flow.stories === 1 ? 'story' : 'stories'}, timeline
+        {/* Inside a chat the flow opens in the side pane, so nothing leaves the conversation. */}
+        <Link to={here.startsWith('/chat/') ? `/chat/${here.split('/')[2]}/flow/${flow.id}` : `/flows/${flow.id}`} className="btn small">
+          Open the whole flow · {flow.stories} {flow.stories === 1 ? 'story' : 'stories'}, timeline
         </Link>
         {!here.startsWith(`/chat/${flow.threadId}`) && (
           <Link to={`/chat/${flow.threadId}`} className="btn small plain">
@@ -332,7 +334,7 @@ export function StoryFlowBar({ chat, storyFlows, onAsk }: { chat: Chat; storyFlo
         return (
           <div key={f.id} className="sfrow">
             <span className="flowkind">{KIND[f.kind]}</span>
-            <Link to={`/flows/${f.id}`} className="sftitle">
+            <Link to={`/chat/${chat.id}/flow/${f.id}`} className="sftitle">
               {f.title}
             </Link>
             <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
@@ -350,7 +352,7 @@ export function StoryFlowBar({ chat, storyFlows, onAsk }: { chat: Chat; storyFlo
                 <NextActionChips actions={acts} run={run} />
               </span>
             ) : (
-              <Link to={`/flows/${f.id}`} className="btn small plain">
+              <Link to={`/chat/${chat.id}/flow/${f.id}`} className="btn small plain">
                 Open flow
               </Link>
             )}
