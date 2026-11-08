@@ -17,3 +17,8 @@ server-dist/
 app/tsconfig.tsbuildinfo
 .claude/
 .myworkspace/*/log/review-2-shots/
+
+# Saleor demonstration workspace (.catalyzt): clones and CI output are not committed
+.catalyzt/*/repos/
+.catalyzt/*/results/
+.catalyzt/.ci-cache/

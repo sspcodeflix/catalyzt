@@ -1,0 +1,28 @@
+{
+  "id": "SALR",
+  "name": "Saleor Commerce",
+  "description": "The Saleor headless e-commerce platform (saleor/saleor) as one application: checkout, payment, gift cards and accounts under Brijesh; orders, products, discounts and stock under Sourav. Nandini is the product owner, Ram Kumar the app owner.",
+  "jiraProject": "SALR",
+  "owner": "u-ram",
+  "workspaces": ["saleor"],
+  "repos": [
+    {
+      "name": "saleor",
+      "github": "saleor/saleor",
+      "clone": true,
+      "languages": ["Python"],
+      "testFrameworks": ["pytest"]
+    }
+  ],
+  "roles": { "product_owner": ["u-nandini"] },
+  "components": [
+    { "name": "checkout",  "manager": "u-brijesh", "workspace": "saleor", "repo": "saleor", "path": "saleor/checkout",  "language": "Python", "tests": "pytest" },
+    { "name": "payment",   "manager": "u-brijesh", "workspace": "saleor", "repo": "saleor", "path": "saleor/payment",   "language": "Python", "tests": "pytest" },
+    { "name": "giftcard",  "manager": "u-brijesh", "workspace": "saleor", "repo": "saleor", "path": "saleor/giftcard",  "language": "Python", "tests": "pytest" },
+    { "name": "account",   "manager": "u-brijesh", "workspace": "saleor", "repo": "saleor", "path": "saleor/account",   "language": "Python", "tests": "pytest" },
+    { "name": "order",     "manager": "u-sourav",  "workspace": "saleor", "repo": "saleor", "path": "saleor/order",     "language": "Python", "tests": "pytest" },
+    { "name": "product",   "manager": "u-sourav",  "workspace": "saleor", "repo": "saleor", "path": "saleor/product",   "language": "Python", "tests": "pytest" },
+    { "name": "discount",  "manager": "u-sourav",  "workspace": "saleor", "repo": "saleor", "path": "saleor/discount",  "language": "Python", "tests": "pytest" },
+    { "name": "warehouse", "manager": "u-sourav",  "workspace": "saleor", "repo": "saleor", "path": "saleor/warehouse", "language": "Python", "tests": "pytest" }
+  ]
+}
