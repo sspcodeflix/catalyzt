@@ -9,7 +9,7 @@
  *   POST /api/context/sources/:id/sync      re-read a repository's documentation; record a Jira sync
  *   POST /api/context/test                  { question } -> what Catalyzt would use, and what it would not, and why
  *   POST /api/context/conflicts             { sourceId, otherSourceId, title, detail, compare } -> Huddle item
- *   GET  /api/huddle                        the application's decisions
+ *   GET  /api/huddle                        a page of the application's decisions as summaries (?limit, ?cursor, ?status, ?mine, ?q), with counts
  *   POST /api/huddle                        raise one: { kind, title, summary, options, affects?, scope? }
  *   GET  /api/huddle/:id
  *   POST /api/huddle/:id/vote               { optionId }
@@ -21,7 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { addConfluence, addUploads, getSource, listChunks, listConflicts, listSources, MAX_UPLOAD_MB, raiseConflict, resolveConflictForItem, retrieveContext, syncSource, testQuestion, type ConflictInput } from './context';
 import type { AppRecord, HorizonDb, PersonRecord, Role } from './db';
-import { comment, createItem, decide, getItem, listItems, markNeedsInput, vote, type HuddleKind } from './huddle';
+import { comment, createItem, decide, getItem, listPage, markNeedsInput, vote, type HuddleKind } from './huddle';
 import { NO_MODELS, type RetrievalService, type RetrievalStatus } from './retrieval';
 import type { BlobStore } from './storage';
 
@@ -126,7 +126,19 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
 
   /* ---------- Huddle ---------- */
   if (url === '/api/huddle' && method === 'GET') {
-    send(200, { items: listItems(db, app.id, user.id) });
+    // Pages of summaries, newest first (?limit, ?cursor, ?status=open|decided, ?mine=1, ?q); details per item on demand.
+    const status = ctx.query.get('status');
+    const limit = Number(ctx.query.get('limit'));
+    send(
+      200,
+      listPage(db, app.id, user.id, {
+        status: status === 'open' || status === 'decided' ? status : 'all',
+        mine: ctx.query.get('mine') === '1',
+        q: ctx.query.get('q') ?? undefined,
+        limit: Number.isInteger(limit) && limit >= 1 ? limit : undefined,
+        cursor: ctx.query.get('cursor'),
+      }),
+    );
     return true;
   }
   if (url === '/api/huddle' && method === 'POST') {

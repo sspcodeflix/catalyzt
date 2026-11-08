@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { useChatList, useRecentChats } from '../lib/chatStore';
+import { loadMoreRecents, useChatList, useRecentChats, useRecentChatsPage } from '../lib/chatStore';
 import { useTickets } from '../lib/ticketStore';
 import { uatPill, uatText } from './Tickets';
 
@@ -11,6 +11,8 @@ export function Search() {
   const [q, setQ] = useState('');
   const chats = useChatList();
   const recents = useRecentChats();
+  const { hasMore } = useRecentChatsPage();
+  const [more, setMore] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const tickets = useTickets();
   const needle = q.trim().toLowerCase();
 
@@ -64,6 +66,26 @@ export function Search() {
           ))}
           {chatHits.length === 0 && <li className="muted">No chats match.</li>}
         </ul>
+        {hasMore && (
+          <p>
+            <button
+              type="button"
+              className="btn plain"
+              disabled={more.busy}
+              aria-busy={more.busy}
+              onClick={() => {
+                setMore({ busy: true, error: null });
+                loadMoreRecents().then(
+                  () => setMore({ busy: false, error: null }),
+                  (e: Error) => setMore({ busy: false, error: e.message }),
+                );
+              }}
+            >
+              {more.busy ? 'Loading…' : 'Load more chats'}
+            </button>
+            {more.error && <span className="errtext"> {more.error}</span>}
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="sr-tickets">

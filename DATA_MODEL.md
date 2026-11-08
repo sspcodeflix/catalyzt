@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (17 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (20 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -104,6 +104,8 @@ erDiagram
 | `guard_events` | `id`, `workflow_run_id`, `agent_run_id`, `layer`, `policy`, `user_id` | `layer`: `input`, `router`, `output`, `story`. Never the message text. |
 | `audit_log` | `id`, `at`, `actor_type`, `actor_ref`, `action`, `entity_type`, `entity_ref`, `detail` (JSON) | Approvals, decisions, story creation, filter changes, scans, imports, uploads, rejections, migration notes. Append only. |
 | `model_calls` | `workflow_run_id`, `agent_run_id`, `agent`, `user_id`, `model`, `purpose`, `status`, `prompt_tokens`, `completion_tokens`, `latency_ms` | The token ledger; tokens are NULL when the provider did not report them. |
+| `model_call_daily` | `application_id`, `day`, `agent`, `model`, `user_id`, `purpose`, `status`, `calls`, `prompt_tokens`, `completion_tokens`, `unreported`, `latency_ms` | Daily totals that retention (`npm run retention`) folds model-call detail into before removing it; usage totals read the detail and these rows together, so they do not change when detail is removed. |
+| `jobs` | `id`, `key` (unique operation identity), `kind`, `application_id`, `payload` (JSON), `status`, `attempts`, `max_attempts`, `next_attempt_at`, `lease_owner`, `lease_until`, `rerun`, `last_error`, `result` | The durable job/outbox record (`server/jobs.ts`). Enqueueing a key twice is one job; a worker claims a job with a lease; a failure is retried with exponential backoff up to `max_attempts` (`pending` → `running` → `done` or `failed`); an expired lease (the process died) returns the job to `pending`, and at start every earlier lease is expired. `rerun` records a request that arrived while the job ran. Today: the App Context embedding job (`embed:<model>`). |
 
 ### Jira and UAT
 | Table | Key columns | Notes |
@@ -138,6 +140,9 @@ erDiagram
 | `huddle_votes`, `huddle_comments` | | One vote per person per item; comments with author and time. |
 | `huddle_decisions` | `item_id`, `option_id`, `reason`, `decided_by`, `decided_at` | Only an app owner decides; a reason is required. |
 | `huddle_links` | `item_id`, `entity_type`, `entity_ref`, `label`, `href` | What a decision affects, and dedupe keys (`feedback_pattern`). |
+
+## Growing lists are read a page at a time
+Recent chats page by (`updated_at`, `id`), a chat's messages by `seq` (latest page first, older on demand; a page never starts with an answer whose question is older), and Huddle items by (`created_at`, `id`) as summaries whose discussion and cited summary are read when the item opens. Cursors are positions in a stable order, so items added after the first page never repeat or skip an item on later pages, and revision and approval ids are the stored ones on every page (migration 19 adds the matching indexes).
 
 ## Agent activity: how "who is working on what" is answered
 - **Running now:** `agent_runs` with `status = 'running'`, joined to `workflow_runs` (who asked, which chat) and to the parent agent run (who spawned it).

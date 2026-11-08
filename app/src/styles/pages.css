@@ -121,6 +121,10 @@ legend { padding: 0; }
 .hitem b { font-weight: 600; font-size: 14px; display: block; }
 .hitem small { color: var(--hz-text-secondary); font-size: 13px; display: block; margin-top: 2px; }
 .hitem .meta { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--hz-text-muted); flex-wrap: wrap; }
+.hlist .similar { display: flex; gap: 6px; align-items: center; margin: -6px 0 0; padding: 0 16px 12px 62px; font-size: 12.5px; color: var(--hz-text-secondary); }
+.hlist .similar a { color: var(--hz-text); }
+.loadmore { margin: 12px 0 0; text-align: center; }
+.decideform .reasonwarn { margin: 0; }
 .faces { display: inline-flex; }
 .faces .avatar { width: 24px; height: 24px; font-size: 10px; margin-left: -6px; border: 2px solid var(--hz-surface); }
 .faces .avatar:first-child { margin-left: 0; }

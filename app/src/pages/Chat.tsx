@@ -4,7 +4,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-
 import { AssistantTurn } from '../components/chat/AssistantTurn';
 import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
-import { createChat, isAnswering, loadChat, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
+import { createChat, isAnswering, loadChat, loadOlderMessages, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
 import { useSession } from '../lib/session';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 
@@ -54,6 +54,14 @@ function ChatView({ chatId }: { chatId: string }) {
   }, [panelOpen, location.pathname]);
 
   const send = (msg: ComposerSubmit) => sendMessage(chatId, msg);
+  const [older, setOlder] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const showOlder = () => {
+    setOlder({ busy: true, error: null });
+    loadOlderMessages(chatId).then(
+      () => setOlder({ busy: false, error: null }),
+      (e: Error) => setOlder({ busy: false, error: e.message }),
+    );
+  };
 
   return (
     <div className={`body${panelOpen ? ` split view-${view}` : ''}`}>
@@ -70,6 +78,18 @@ function ChatView({ chatId }: { chatId: string }) {
       <div className="chatcol">
         <div className="thread">
           {!chat && !first && <ChatState load={load} onRetry={() => void loadChat(chatId, true)} />}
+          {chat?.olderCursor != null && (
+            <div className="olderbar">
+              <button type="button" className="btn plain" onClick={showOlder} disabled={older.busy} aria-busy={older.busy}>
+                {older.busy ? 'Loading older messages…' : 'Show older messages'}
+              </button>
+              {older.error && (
+                <span className="errtext" role="alert">
+                  {older.error}
+                </span>
+              )}
+            </div>
+          )}
           {chat?.messages.map((m) =>
             m.role === 'user' ? (
               <Fragment key={m.id}>

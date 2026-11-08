@@ -48,6 +48,10 @@ without breaking existing deployments.
 | `HORIZON_MODELS_DIR` | `data/models` | Where the two ONNX models are cached (about 46 MB, downloaded once from huggingface.co on first use) |
 | `HORIZON_MODELS_OFFLINE` | none | `1` forbids downloads: copy `data/models` from a host that has them, or the server stays keyword-only and says so |
 | `HORIZON_RERANK`, `HORIZON_EMBED_MODEL`, `HORIZON_RERANK_MODEL` | `on`, MiniLM models | Turn the reranker off, or name other transformers.js models (a change of embedding model re-embeds every passage) |
+| `HORIZON_MAX_RUNS` | `8` | Answers (`/api/run` workflows) running at once in the process. Over it: 429 with `Retry-After`, nothing written |
+| `HORIZON_MAX_RUNS_PER_PERSON` | `2` | Answers running at once for one person. Over it: 429 with `Retry-After`, nothing written |
+| `HORIZON_MAX_SCANS` | `2` | Repository scans running at once in the process (each reads eight files at a time). Over it: 429 with `Retry-After` |
+| `HORIZON_RETAIN_MODEL_CALLS_DAYS`, `HORIZON_RETAIN_RUNS_DAYS` (and `_<APP>`) | `90`, `180` | Retention windows for `npm run retention`; `off` keeps everything. Read only by the script |
 
 The server refuses to start with neither `HORIZON_IDENTITY_HEADER` nor `HORIZON_DEV_IDENTITY=1`,
 so a production process cannot accidentally trust the browser.
@@ -119,10 +123,18 @@ start applies migrations if the backup predates the current schema.
 - One host, one process, one database file. No horizontal scaling, no failover; recovery is "restore
   the backup on a new host". The migration note says when that stops being enough.
 - The server does not terminate TLS or sign people in. Both belong to the proxy in front.
+- Work is bounded per process: at most `HORIZON_MAX_RUNS` answers at once and
+  `HORIZON_MAX_RUNS_PER_PERSON` per person (defaults 8 and 2), and `HORIZON_MAX_SCANS` repository
+  scans (default 2). A request over a limit is answered 429 with `Retry-After` before anything is
+  written; the browser shows the message. Long lists (recent chats, a chat's messages, Huddle items)
+  are read a page at a time.
 - Long work (repository scans, result ingestion) runs inside the process with recorded state in
   SQLite; a restart marks it stopped and the person runs it again. Embedding passages for App
-  Context also runs inside the process (a few milliseconds per passage on one CPU core); a restart
-  simply continues with the passages that have no vector yet.
+  Context also runs inside the process (a few milliseconds per passage on one CPU core) as a durable
+  job in the `jobs` table (`embed:<model>`): one at a time, leased, retried with backoff after a
+  failure, and recovered at the next start if the process stopped mid-way; its state shows in the
+  App Context retrieval status. The same table is where any future external side effect is recorded
+  first (operation key, attempts, retry time), so a restart never repeats one.
 - Retrieval is bounded: an FTS5 index supplies the lexical candidates and the application's current
   vectors are held in memory (about 1.5 KB per passage) for the semantic ones; a question loads a
   few hundred passages at most. The vector pass is still a scan over the application's vectors in
@@ -131,13 +143,35 @@ start applies migrations if the backup predates the current schema.
   single application grows well past that. The first request after a start pays the model load
   (one to two seconds) and the first vector pass pays the matrix build (about half a second at
   50,000 passages).
-- Retention is not automatic. Runs and results, model calls, answer revisions, audit events,
-  uploads, retired passage versions and vectors of a model no longer configured all accumulate.
-  Nothing references the rows a cleanup would remove except history views, so the policy is an
-  operational decision: when a quota is set, delete oldest-first per application, never a row an
-  answer, approval or evaluation still cites (citations, approvals and artifacts are the references
-  to keep), and vacuum into a new file during a maintenance window. Until then, watch the sizes
-  the load profile and `restore-check` report.
+- Retention is not automatic; run it on a schedule you choose (see Retention below). Answers,
+  revisions, citations, ratings, artifacts, approvals, Huddle items and the audit log are kept.
+
+## Retention
+
+`npm run retention` reports what a cleanup would remove and changes nothing; `--apply` removes it in
+short batches (the server may keep running); `--vacuum` (only with `--apply`, best with the server
+stopped) then gives the space back to the disk. Back up first.
+
+```bash
+npm run retention                                   # dry run: counts and bytes per category and application
+npm run retention -- --apply                        # remove
+npm run retention -- --apply --runs-days=IBGM=30    # a shorter window for one application
+npm run retention -- --json                         # the report as JSON
+```
+
+| What | Removed when | Always kept |
+|---|---|---|
+| Model-call detail | older than `HORIZON_RETAIN_MODEL_CALLS_DAYS` (90) | daily totals per application, agent, model, person, purpose and status (`model_call_daily`); usage totals do not change |
+| Test runs and their results | older than `HORIZON_RETAIN_RUNS_DAYS` (180) | every target build's runs, the latest run of each repository workflow, and any run an answer, citation, artifact, approval, Huddle item or audit row names (an import's own audit row stays as history and does not by itself keep the run) |
+| Retired passage versions | nobody links to that version | versions a saved citation, answer, artifact, approval, Huddle item or audit row links to (`?v=<n>`; a link without a version keeps version 1) |
+| Passage vectors | their model is not the configured `HORIZON_EMBED_MODEL` (or one named with `--keep-model`) | everything, when retrieval is keyword-only and no model is named |
+| Files in `HORIZON_FILES_DIR` | no attachment or App Context source refers to them and they are older than 24 h | anything referenced, and anything recent (an upload in progress) |
+
+Options: `--db`, `--files` or `--no-files`, `--app` (repeatable), `--model-calls-days`, `--runs-days`
+(`<days>`, `off`, or `<APP>=<days>`), `--keep-model`, `--keep-retired`, `--file-grace-hours`.
+Bytes for rows are the sizes of the stored values, which is what the file frees before VACUUM; the
+report also prints the database size and the free space inside it. After a VACUUM the server
+rebuilds the passage full-text index at its next start if rowids moved.
 
 ## Load profile
 

@@ -247,4 +247,6 @@ export interface Chat {
   artifacts: Record<string, Artifact>;
   /** Who started the chat (from the server). Only they can add to it; teammates can read it. */
   createdBy?: string;
+  /** Loaded from the server a page at a time: the cursor of the next older page, or null at the first message. */
+  olderCursor?: number | null;
 }

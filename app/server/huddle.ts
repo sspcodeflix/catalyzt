@@ -52,7 +52,14 @@ export interface HuddleItemView {
   decision?: { optionId: string; reason: string; at: string; by: string };
   /** The option the asking person voted for. */
   myVote: string | null;
+  /** R17: open items of the same kind about the same source, or with a near-identical title. Never merged. */
+  similar: { id: string; title: string }[];
+  /** True for the full item (GET /api/huddle/:id); list pages carry summaries without comments and citations. */
+  detail: true;
 }
+
+/** A list entry: everything the list and its filters need, without the discussion and the cited summary. */
+export type HuddleSummaryView = Omit<HuddleItemView, 'comments' | 'citations' | 'aiSummary' | 'detail'> & { commentCount: number; detail: false };
 
 export interface NewHuddleItem {
   kind: HuddleKind;
@@ -152,11 +159,189 @@ function toView(db: HorizonDb, r: Row, userId: string | null): HuddleItemView {
     sourceId: (r.source_id as string) ?? null,
     decision: dec ? { optionId: str(dec.option_id), reason: str(dec.reason), at: str(dec.decided_at), by: str(dec.name) } : undefined,
     myVote,
+    similar: r.status === 'open' ? (similarOpen(db, str(r.application_id)).get(id) ?? []) : [],
+    detail: true,
   };
 }
 
+/** Every item of the application, in full. Kept for tests and small callers; the API pages with listPage. */
 export function listItems(db: HorizonDb, app: string, userId: string | null = null): HuddleItemView[] {
-  return (db.raw.prepare('SELECT * FROM huddle_items WHERE application_id = ? ORDER BY created_at DESC, rowid DESC').all(app) as Row[]).map((r) => toView(db, r, userId));
+  return (db.raw.prepare('SELECT * FROM huddle_items WHERE application_id = ? ORDER BY created_at DESC, id DESC').all(app) as Row[]).map((r) => toView(db, r, userId));
+}
+
+/* ---------- Likely duplicates (R17) ---------- */
+
+/** A title reduced to its words: case, punctuation, a trailing "(run …)" tag and filler words do not count. */
+export const titleWords = (t: string) =>
+  new Set(
+    t
+      .toLowerCase()
+      .replace(/\([^)]*\)\s*$/, ' ')
+      .match(/[a-z0-9]+/g)
+      ?.filter((w) => (w.length > 2 || /\d/.test(w)) && !['the', 'and', 'for', 'this', 'that', 'with'].includes(w)) ?? [],
+  );
+
+/** Near-identical titles: at least 80% of the words shared (Jaccard), and at least two words. */
+export function similarTitles(a: string, b: string) {
+  const x = titleWords(a);
+  const y = titleWords(b);
+  if (x.size < 2 || y.size < 2) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  let shared = 0;
+  for (const w of x) if (y.has(w)) shared++;
+  return shared / (x.size + y.size - shared) >= 0.8;
+}
+
+/**
+ * For each open item, the other open items of the same kind that are about the same source or carry
+ * a near-identical title, oldest first. Reads only ids, kinds, titles and sources of open items.
+ */
+export function similarOpen(db: HorizonDb, app: string): Map<string, { id: string; title: string }[]> {
+  const open = db.raw.prepare("SELECT id, kind, title, source_id FROM huddle_items WHERE application_id = ? AND status = 'open' ORDER BY created_at, id").all(app) as { id: string; kind: string; title: string; source_id: string | null }[];
+  const out = new Map<string, { id: string; title: string }[]>();
+  const byKind = new Map<string, typeof open>();
+  for (const i of open) byKind.set(i.kind, [...(byKind.get(i.kind) ?? []), i]);
+  for (const group of byKind.values()) {
+    const words = group.map((i) => titleWords(i.title));
+    for (let a = 0; a < group.length; a++)
+      for (let b = a + 1; b < group.length; b++) {
+        const x = group[a];
+        const y = group[b];
+        const sameSource = !!x.source_id && x.source_id === y.source_id;
+        if (!sameSource && !(words[a].size && words[b].size ? similarTitles(x.title, y.title) : false)) continue;
+        out.set(x.id, [...(out.get(x.id) ?? []), { id: y.id, title: y.title }]);
+        out.set(y.id, [...(out.get(y.id) ?? []), { id: x.id, title: x.title }]);
+      }
+  }
+  // Each item names the oldest similar item first.
+  const order = new Map(open.map((i, n) => [i.id, n]));
+  for (const list of out.values()) list.sort((p, q) => order.get(p.id)! - order.get(q.id)!);
+  return out;
+}
+
+/* ---------- Pages of summaries (hardening: Huddle growth) ---------- */
+
+export interface HuddlePageQuery {
+  /** open, decided, or everything (default). */
+  status?: 'open' | 'decided' | 'all';
+  /** Open items the person raised, voted on or commented on. */
+  mine?: boolean;
+  /** Words in the title or summary. */
+  q?: string;
+  limit?: number;
+  /** The `nextCursor` of the previous page. */
+  cursor?: string | null;
+}
+
+export const HUDDLE_PAGE = 50;
+const encodeCursor = (v: unknown[]) => Buffer.from(JSON.stringify(v)).toString('base64url');
+export function decodeCursor(c: string | null | undefined): [string, string] | null {
+  if (!c) return null;
+  try {
+    const v = JSON.parse(Buffer.from(c, 'base64url').toString('utf8')) as unknown;
+    return Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string' ? [v[0], v[1]] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of the application's items, newest first, as summaries. The cursor is the last item's
+ * (created_at, id), so items raised after the first page never shift later pages: no duplicates and
+ * no gaps. Options, votes, comment counts, decisions and links of the page are read in a fixed number
+ * of queries, not per item. Counts cover the whole application.
+ */
+export function listPage(db: HorizonDb, app: string, userId: string | null, q: HuddlePageQuery = {}) {
+  const limit = Math.max(1, Math.min(200, Math.trunc(Number.isFinite(q.limit) ? q.limit! : HUDDLE_PAGE)));
+  const where = ['i.application_id = ?'];
+  const args: unknown[] = [app];
+  const mine = `(i.raised_by = @me OR EXISTS (SELECT 1 FROM huddle_votes v WHERE v.item_id = i.id AND v.user_id = @me) OR EXISTS (SELECT 1 FROM huddle_comments c WHERE c.item_id = i.id AND c.user_id = @me))`;
+  if (q.status === 'open' || q.status === 'decided') where.push('i.status = ?'), args.push(q.status);
+  if (q.mine && userId) where.push(`i.status = 'open' AND ${mine.replace(/@me/g, '?')}`), args.push(userId, userId, userId);
+  const needle = q.q?.trim().slice(0, 100);
+  if (needle) {
+    const like = `%${needle.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+    where.push("(i.title LIKE ? ESCAPE '\\' OR i.summary LIKE ? ESCAPE '\\')"), args.push(like, like);
+  }
+  const after = decodeCursor(q.cursor);
+  if (after) where.push('(i.created_at < ? OR (i.created_at = ? AND i.id < ?))'), args.push(after[0], after[0], after[1]);
+  const rows = db.raw.prepare(`SELECT i.* FROM huddle_items i WHERE ${where.join(' AND ')} ORDER BY i.created_at DESC, i.id DESC LIMIT ?`).all(...args, limit + 1) as Row[];
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  const nextCursor = rows.length > limit && last ? encodeCursor([str(last.created_at), str(last.id)]) : null;
+
+  const ids = JSON.stringify(page.map((r) => str(r.id)));
+  const inPage = 'IN (SELECT value FROM json_each(?))';
+  const options = db.raw.prepare(`SELECT * FROM huddle_options WHERE item_id ${inPage} ORDER BY item_id, seq, rowid`).all(ids) as Row[];
+  const votes = db.raw.prepare(`SELECT v.item_id, v.option_id, v.user_id, u.initials FROM huddle_votes v JOIN users u ON u.id = v.user_id WHERE v.item_id ${inPage} ORDER BY v.rowid`).all(ids) as Row[];
+  const commenters = db.raw.prepare(`SELECT c.item_id, u.initials, COUNT(*) AS n FROM huddle_comments c JOIN users u ON u.id = c.user_id WHERE c.item_id ${inPage} GROUP BY c.item_id, u.id ORDER BY MIN(c.created_at), MIN(c.rowid)`).all(ids) as Row[];
+  const links = db.raw.prepare(`SELECT item_id, label, entity_ref, href FROM huddle_links WHERE entity_type = 'affects' AND item_id ${inPage} ORDER BY rowid`).all(ids) as Row[];
+  const decisions = db.raw.prepare(`SELECT d.item_id, d.option_id, d.reason, d.decided_at, u.name FROM huddle_decisions d JOIN users u ON u.id = d.decided_by WHERE d.item_id ${inPage}`).all(ids) as Row[];
+  const raisers = db.raw.prepare(`SELECT u.id, u.name, u.initials FROM users u WHERE u.id IN (SELECT raised_by FROM huddle_items WHERE id ${inPage} AND raised_by_type = 'user')`).all(ids) as Row[];
+  const similar = page.some((r) => r.status === 'open') ? similarOpen(db, app) : new Map<string, { id: string; title: string }[]>();
+  const group = <T extends Row>(xs: T[]) => {
+    const m = new Map<string, T[]>();
+    for (const x of xs) m.set(str(x.item_id), [...(m.get(str(x.item_id)) ?? []), x]);
+    return m;
+  };
+  const optionsBy = group(options);
+  const votesBy = group(votes);
+  const commentsBy = group(commenters);
+  const linksBy = group(links);
+  const decisionBy = new Map(decisions.map((d) => [str(d.item_id), d]));
+  const raiserBy = new Map(raisers.map((u) => [str(u.id), u]));
+
+  const items: HuddleSummaryView[] = page.map((r) => {
+    const id = str(r.id);
+    const kind = r.kind as HuddleKind;
+    const itemVotes = votesBy.get(id) ?? [];
+    const opts = (optionsBy.get(id) ?? []).map((o) => ({
+      id: str(o.id),
+      title: str(o.label),
+      detail: str(o.detail),
+      votes: itemVotes.filter((v) => v.option_id === o.id).map((v) => str(v.initials)),
+      keepsUpload: Number(o.keeps_upload) === 1,
+    }));
+    const raiser = r.raised_by_type === 'user' ? raiserBy.get(str(r.raised_by)) : undefined;
+    const talk = commentsBy.get(id) ?? [];
+    const dec = decisionBy.get(id);
+    return {
+      id,
+      kind,
+      title: str(r.title),
+      summary: str(r.summary),
+      raisedBy: raiser ? str(raiser.name) : str(r.raised_by),
+      raisedByType: r.raised_by_type as 'user' | 'agent',
+      raisedAt: str(r.created_at),
+      scope: str(r.scope),
+      people: [...new Set([raiser ? str(raiser.initials) : undefined, ...opts.flatMap((o) => o.votes), ...talk.map((c) => str(c.initials))].filter((x): x is string => !!x))],
+      openLabel: OPEN_LABEL[kind].label,
+      openTone: OPEN_LABEL[kind].tone,
+      affects: (linksBy.get(id) ?? []).map((l) => ({ label: str(l.label) || str(l.entity_ref), href: (l.href as string) ?? undefined })),
+      options: opts,
+      commentCount: talk.reduce((n, c) => n + Number(c.n), 0),
+      needsInput: Number(r.needs_input) === 1,
+      sourceId: (r.source_id as string) ?? null,
+      decision: dec ? { optionId: str(dec.option_id), reason: str(dec.reason), at: str(dec.decided_at), by: str(dec.name) } : undefined,
+      myVote: userId ? (itemVotes.find((v) => v.user_id === userId)?.option_id as string | undefined) ?? null : null,
+      similar: r.status === 'open' ? (similar.get(id) ?? []) : [],
+      detail: false,
+    };
+  });
+  return { items, nextCursor, counts: huddleCounts(db, app, userId) };
+}
+
+/** Open, decided and "mine" (open items the person raised, voted on or commented on) for the whole application. */
+export function huddleCounts(db: HorizonDb, app: string, userId: string | null) {
+  const c = db.raw.prepare("SELECT SUM(status = 'open') AS open, SUM(status = 'decided') AS decided FROM huddle_items WHERE application_id = ?").get(app) as { open: number | null; decided: number | null };
+  const mine = userId
+    ? (db.raw
+        .prepare(
+          `SELECT COUNT(*) AS n FROM huddle_items i WHERE i.application_id = ? AND i.status = 'open'
+             AND (i.raised_by = ? OR EXISTS (SELECT 1 FROM huddle_votes v WHERE v.item_id = i.id AND v.user_id = ?) OR EXISTS (SELECT 1 FROM huddle_comments c WHERE c.item_id = i.id AND c.user_id = ?))`,
+        )
+        .get(app, userId, userId, userId) as { n: number }).n
+    : 0;
+  return { open: c.open ?? 0, decided: c.decided ?? 0, mine };
 }
 
 /** An item of this application, or null (an item of another application is not found either). */

@@ -43,9 +43,19 @@ function updateAnswer(chatId: string, messageId: string, fn: (m: AssistantMessag
 /** All chats loaded in this session, for Search. */
 export const useChatList = () => useSyncExternalStore(subscribe, () => chatList);
 
-/* ---------- Recent chats, from the server ---------- */
+/* ---------- Recent chats, from the server, a page at a time ---------- */
 let recent: { id: string; title: string; updatedAt: string }[] = [];
+/** The cursor of the next older page of recents, or null when everything is loaded. */
+let recentCursor: string | null = null;
+/** True once older pages were loaded; a refresh of the first page then keeps them. */
+let recentExtended = false;
+let recentPage = { hasMore: false };
 export const useRecentChats = () => useSyncExternalStore(subscribe, () => recent);
+export const useRecentChatsPage = () => useSyncExternalStore(subscribe, () => recentPage);
+const setRecentCursor = (c: string | null) => {
+  recentCursor = c;
+  if (recentPage.hasMore !== !!c) recentPage = { hasMore: !!c };
+};
 export async function refreshRecents() {
   const epoch = sessionEpoch();
   try {
@@ -53,14 +63,35 @@ export async function refreshRecents() {
     if (!r.ok) return;
     // F10: the body is read first; the scope is checked right before the list is replaced, so a slow
     // old-scope body can never land after the new list.
-    const list = ((await r.json()) as { chats: typeof recent }).chats;
+    const body = (await r.json()) as { chats: typeof recent; nextCursor?: string | null };
     if (epoch === sessionEpoch()) {
-      recent = list;
+      if (recentExtended) {
+        // Older pages stay; a chat that moved to the top is listed once.
+        const top = new Set(body.chats.map((c) => c.id));
+        recent = [...body.chats, ...recent.filter((c) => !top.has(c.id))];
+      } else {
+        recent = body.chats;
+        setRecentCursor(body.nextCursor ?? null);
+      }
       emit();
     }
   } catch {
     /* keep the last list */
   }
+}
+/** Appends the next older page of recent chats. */
+export async function loadMoreRecents() {
+  if (!recentCursor) return;
+  const epoch = sessionEpoch();
+  const r = await http(`/api/chats?cursor=${encodeURIComponent(recentCursor)}`);
+  if (!r.ok) throw new Error(`Request failed (${r.status}).`);
+  const body = (await r.json()) as { chats: typeof recent; nextCursor?: string | null };
+  if (epoch !== sessionEpoch()) return;
+  const have = new Set(recent.map((c) => c.id));
+  recent = [...recent, ...body.chats.filter((c) => !have.has(c.id))];
+  recentExtended = true;
+  setRecentCursor(body.nextCursor ?? null);
+  emit();
 }
 if (typeof window !== 'undefined') {
   // A new sign-in or application: this session's chats belong to someone else now.
@@ -70,6 +101,8 @@ if (typeof window !== 'undefined') {
     loads.clear();
     requests.clear();
     recent = [];
+    recentExtended = false;
+    setRecentCursor(null);
     emit();
     void refreshRecents();
   });
@@ -96,6 +129,7 @@ interface ServerChat {
   createdBy: string;
   messages: Message[];
   artifacts: Record<string, Artifact>;
+  olderCursor?: number | null;
 }
 
 /** Loads a chat that is not in memory: missing, denied and failed are distinct, and nothing foreign is shown. */
@@ -118,15 +152,21 @@ export async function loadChat(chatId: string, force = false): Promise<void> {
     } else {
       const { chat } = (await res.json()) as { chat: ServerChat };
       if (epoch !== sessionEpoch()) return;
+      // The server sends the latest page. Older messages already on screen (a reload after a lost
+      // acknowledgement) stay in front of it.
+      const had = chats.get(chatId);
+      const at = had && chat.messages.length ? had.messages.findIndex((m) => m.id === chat.messages[0].id) : -1;
+      const keep = had && at > 0 ? had.messages.slice(0, at) : [];
       chats.set(chatId, {
         id: chat.id,
         title: chat.title,
         agent: (chat.agent || 'auto') as Agent,
         scope: chat.scope,
         testType: chat.testType,
-        messages: chat.messages,
-        artifacts: chat.artifacts,
+        messages: [...keep, ...chat.messages],
+        artifacts: { ...(had && at > 0 ? had.artifacts : {}), ...chat.artifacts },
         createdBy: chat.createdBy,
+        olderCursor: keep.length ? had!.olderCursor ?? null : chat.olderCursor ?? null,
       });
       loads.set(chatId, { state: 'ready' });
       // A UAT report in the chat marks its story as analysed for this session.
@@ -137,6 +177,29 @@ export async function loadChat(chatId: string, force = false): Promise<void> {
     loads.set(chatId, { state: 'error', error: (e as Error).message });
   }
   emit();
+}
+
+/** Reads the next older page of a loaded chat and puts it in front. Revision and approval ids are the server's. */
+const olderLoads = new Set<string>();
+export async function loadOlderMessages(chatId: string): Promise<void> {
+  const c = chats.get(chatId);
+  if (!c || c.olderCursor == null || olderLoads.has(chatId)) return;
+  const epoch = sessionEpoch();
+  olderLoads.add(chatId);
+  try {
+    const res = await http(`/api/chats/${encodeURIComponent(chatId)}?before=${c.olderCursor}`);
+    const body = (await res.json().catch(() => ({}))) as { chat?: ServerChat; error?: string };
+    if (epoch !== sessionEpoch()) return;
+    if (!res.ok || !body.chat) throw new Error(body.error ?? `Request failed (${res.status}).`);
+    const older = body.chat;
+    update(chatId, (now) => {
+      const have = new Set(now.messages.map((m) => m.id));
+      // The artifacts already shown are newer than the older page's, so they win.
+      return { ...now, messages: [...older.messages.filter((m) => !have.has(m.id)), ...now.messages], artifacts: { ...older.artifacts, ...now.artifacts }, olderCursor: older.olderCursor ?? null };
+    });
+  } finally {
+    olderLoads.delete(chatId);
+  }
 }
 
 export interface NewMessage {
