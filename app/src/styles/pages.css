@@ -188,6 +188,5 @@ legend { padding: 0; }
 .passage-pre { margin: 0; padding: 8px 10px; background: var(--hz-surface-muted); border-radius: var(--hz-radius-md); font: 12.5px/1.45 var(--hz-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
 .passage-table { overflow-x: auto; max-width: 100%; }
 .passage-table table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
-.passage-table th, .passage-table td { border: 1px solid var(--hz-divider); padding: 4px 8px; text-align: left; vertical-align: top; }
-.passage-table th { background: var(--hz-surface-muted); font-weight: 600; }
+.passage-table th, .passage-table td { border: 1px solid var(--hz-divider); padding: 4px 8px; text-align: left; vertical-align: top; overflow-wrap: normal; min-width: 4ch; }.passage-table th { background: var(--hz-surface-muted); font-weight: 600; }
 .decideform input.text { width: 100%; box-sizing: border-box; }

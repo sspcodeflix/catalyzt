@@ -262,7 +262,8 @@ export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: 
       // Line breaks are kept (R20): a Markdown table or list stays readable on the passage page.
       const t = buf
         .split('\n')
-        .map((l) => l.replace(/[^\S\n]+/g, ' ').trim())
+        // Leading indentation is kept (code blocks, nested lists); runs of spaces inside a line are not.
+        .map((l) => l.replace(/\s+$/, '').replace(/(\S)[^\S\n]+/g, '$1 '))
         .join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();

@@ -36,6 +36,8 @@ describe('passages', () => {
     const table = 'Method\t| Path\t| Description\n------ | ---- |:----:|\nGET\t| /accounts/current\t| Get current account data';
     const [c] = chunkDocs([{ path: 'README.md', text: `#### Account service\nContains general input logic.\n\n${table}\n` }]);
     expect(c.text).toBe(`#### Account service\nContains general input logic.\n\nMethod | Path | Description\n------ | ---- |:----:|\nGET | /accounts/current | Get current account data`);
+    const [code] = chunkDocs([{ path: 'README.md', text: '```yml\nspring:\n  application:\n    name: notification-service   \n```\n' }]);
+    expect(code.text).toBe('```yml\nspring:\n  application:\n    name: notification-service\n```');
   });
 
   it('R19: indexes build, container and CI files as line passages, within limits, and says so', () => {
