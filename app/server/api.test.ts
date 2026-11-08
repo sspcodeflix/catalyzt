@@ -668,3 +668,25 @@ describe('F19: a decision is authorised per component, not just per role', () =>
     expect(db.listTests('ABCD', { kind: 'manual' }).total).toBeGreaterThan(0);
   });
 });
+
+describe('R15: a newer analysis of the same story supersedes older pending proposals in other chats', () => {
+  it('expires the older approval, answers its decision with 409, and the Home card lists only the newest', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const ram = api.as('u-ram', 'ABCD');
+    const first = await sourav.run(uatRun('ABCD-1001', ids('1')));
+    const a1 = firstApproval(first)!;
+    const second = await ram.run(uatRun('ABCD-1001', ids('2')));
+    const a2 = firstApproval(second)!;
+    expect(db.getApproval(a1)).toMatchObject({ status: 'expired', supersededBy: saved(second)!.revisionId });
+    expect(db.getApproval(a2)?.status).toBe('pending');
+    await sourav.post(`/api/answers/${saved(first)!.revisionId}/rating`, { stars: 5 });
+    const res = await sourav.post(`/api/approvals/${a1}/decision`, { decision: 'approved' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/superseded/);
+    const home = (await (await ram.get('/api/home')).json()) as { pendingApprovals: { id: string }[] };
+    expect(home.pendingApprovals.map((p) => p.id)).toEqual([a2]);
+    // Another story's analysis leaves it alone.
+    await sourav.run(uatRun('ABCD-1002', ids('3')));
+    expect(db.getApproval(a2)?.status).toBe('pending');
+  });
+});

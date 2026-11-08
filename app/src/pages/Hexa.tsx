@@ -97,8 +97,8 @@ export function Hexa() {
           {tab === 'runs' ? (
             <Runs />
           ) : (
-            // Keyed on the result filter too, so the Failing now tile applies it even on this tab.
-            <TestList key={`${tab}-${params.get('result') ?? ''}`} tab={tab} compact={panelOpen} initialResult={params.get('result') ?? ''} />
+            // Keyed on the result and search filters too, so the Failing now tile and a citation's ?q= apply even on this tab.
+            <TestList key={`${tab}-${params.get('result') ?? ''}-${params.get('q') ?? ''}`} tab={tab} compact={panelOpen} initialResult={params.get('result') ?? ''} initialQuery={params.get('q') ?? ''} />
           )}
         </div>
       </div>
@@ -107,10 +107,11 @@ export function Hexa() {
   );
 }
 
-function TestList({ tab, compact, initialResult }: { tab: 'manual' | 'automated'; compact: boolean; initialResult: string }) {
+function TestList({ tab, compact, initialResult, initialQuery }: { tab: 'manual' | 'automated'; compact: boolean; initialResult: string; initialQuery: string }) {
   const [data, setData] = useState<TestsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [q, setQ] = useState('');
+  // A citation lands here with ?q=<component>; the search box starts with it and the list is filtered (R09).
+  const [q, setQ] = useState(initialQuery);
   const [purpose, setPurpose] = useState('');
   const [proposed, setProposed] = useState(false);
   const [result, setResult] = useState(initialResult);

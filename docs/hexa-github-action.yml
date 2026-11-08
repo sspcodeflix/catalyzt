@@ -73,7 +73,9 @@ jobs:
               "workflow": os.environ["GITHUB_WORKFLOW"],
               "runUrl": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
               "prNumber": int(pr) if pr.isdigit() else None, "mergeCommit": pr.isdigit(),
-              "junit": [open(f, encoding="utf-8").read() for f in glob.glob("test-results/*.xml")],
+              "framework": "JUnit",  # optional: what Hexa records as the tests' framework (JUnit, Jest, go test, pytest…)
+              # Each file may be a string, or {"path", "xml"} so Hexa keeps the module the report came from.
+              "junit": [{"path": f, "xml": open(f, encoding="utf-8").read()} for f in glob.glob("test-results/**/*.xml", recursive=True)],
           }
           req = urllib.request.Request(os.environ["HORIZON_URL"].rstrip("/") + "/api/hexa/results", data=json.dumps(body).encode(),
                                        headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["HEXA_INGEST_TOKEN"]})

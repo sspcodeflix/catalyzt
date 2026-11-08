@@ -255,8 +255,9 @@ describe('Hexa facts in answers (S03)', () => {
     const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
     expect(stream).toContain('[1] Hexa · checkoutservice');
     expect(stream).toContain('3 automated');
-    expect(stream).toContain('a Merchant Can Refund Part Of A Settled Card Payment (automated, latest result passed, linked to ABCD-1001#AC1)');
-    expect(stream).toContain('a Card Refund Needs A Reason (automated, latest result none, linked to ABCD-1001#AC3)');
+    expect(stream).toContain('a Merchant Can Refund Part Of A Settled Card Payment [PartialRefundsTest] (automated, latest result passed at ');
+    expect(stream).toContain(', linked to ABCD-1001#AC1)');
+    expect(stream).toContain('a Card Refund Needs A Reason [PartialRefundsTest] (automated, latest result none, linked to ABCD-1001#AC3)');
     expect(stream).toContain('Target build for acme/shop: PR #41');
     const cites = (events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>).citations;
     expect(cites).toEqual([{ n: 1, title: 'Hexa · checkoutservice', detail: 'checkoutservice · tests and latest results', href: '/hexa?tab=automated&q=checkoutservice' }]);

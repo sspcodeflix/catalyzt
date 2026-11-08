@@ -298,6 +298,8 @@ const VECTOR_FLOOR = 0.15;
  */
 const RERANK_FLOOR = -9;
 const RERANK_SPAN = 10;
+/** How much the keyword-and-vector agreement counts next to the reranker (0.6 × 0.5 average clears the 0.2 bar). */
+const TOPICAL_WEIGHT = 0.6;
 export const rerankRelevance = (logit: number) => Math.max(0, Math.min(1, (logit - RERANK_FLOOR) / RERANK_SPAN));
 
 /**
@@ -356,7 +358,11 @@ async function finish<T extends Candidate>(models: RetrievalModels, query: strin
   }
   const ranked: Ranked<T>[] = top.map((i, pos) => {
     const rr = rerankScores ? rerankScores[pos] : null;
-    const relevance = rr != null ? rerankRelevance(rr) : Math.max(kw[i], vs[i] ?? 0);
+    // The cross-encoder says how well a passage answers the question. A passage that is clearly about
+    // the question's subject (strong keyword and vector agreement) is still worth giving the model
+    // when nothing answers it outright, so it can say what the sources do and do not state.
+    const lexSem = vs[i] == null ? kw[i] : (kw[i] + vs[i]) / 2;
+    const relevance = rr != null ? Math.max(rerankRelevance(rr), TOPICAL_WEIGHT * lexSem) : Math.max(kw[i], vs[i] ?? 0);
     return { item: cands[i], relevance: Math.round(relevance * 1000) / 1000, keyword: kw[i], vector: vs[i], rerank: rr };
   });
   if (rerankScores) ranked.sort((a, b) => b.relevance - a.relevance || a.item.where.localeCompare(b.item.where));

@@ -90,6 +90,9 @@ const IMAGES: Record<Kind, string> = {
   python: 'python:3.12-slim',
 };
 
+/** What Hexa records as the framework of the tests each recipe runs. */
+const FRAMEWORK: Record<Target['kind'], string> = { go: 'go test', maven: 'JUnit (Maven)', 'node-jest': 'Jest', 'node-mocha': 'Mocha', python: 'pytest' };
+
 /** Default commands: every recipe ends with JUnit XML under /out, and never fails the container on test failures. */
 function command(t: Target): string {
   const cd = `cd "/work/${t.path}"`;
@@ -99,7 +102,8 @@ function command(t: Target): string {
     case 'go':
       return `${cd} && ${setup}export GOFLAGS=-buildvcs=false && go install github.com/jstemmer/go-junit-report/v2@latest && (go test -v -count=1 ./... 2>&1 | tee /out/go-test.log | "$(go env GOPATH)/bin/go-junit-report" -set-exit-code -out /out/go.xml; echo "go test exit $?")`;
     case 'maven':
-      return `${cd} && ${setup}(mvn -B -ntp -fae test -Dsurefire.printSummary=true 2>&1 | tee /out/mvn.log; echo "mvn exit $?") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;`;
+      // Reports are copied under their module directory (account-service/TEST-x.xml), so Hexa knows which module each test belongs to.
+      return `${cd} && ${setup}(mvn -B -ntp -fae test -Dsurefire.printSummary=true 2>&1 | tee /out/mvn.log; echo "mvn exit $?") && find . -path '*/surefire-reports/TEST-*.xml' | while read -r f; do d="/out/$(dirname "$(dirname "$(dirname "$f")")" | sed 's#^\\./##')"; mkdir -p "$d"; cp "$f" "$d/"; done`;
     case 'node-jest':
       return `${cd} && ${setup}(npm ci --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_OUTPUT_NAME=jest.xml npx jest --ci --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo "jest exit $?")`;
     case 'node-mocha':
@@ -171,15 +175,20 @@ async function runTarget(app: string, repo: string, github: string, cloneDir: st
     });
   });
   const seconds = Math.round((Date.now() - started) / 1000);
-  const xml = existsSync(outDir) ? readdirSync(outDir).filter((f) => f.endsWith('.xml')) : [];
+  // Every JUnit file under the results directory, by its path relative to it (the Maven recipe keeps module directories).
+  const walk = (dir: string, rel = ''): string[] =>
+    existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name), `${rel}${e.name}/`) : e.name.endsWith('.xml') ? [`${rel}${e.name}`] : []))
+      : [];
+  const xml = walk(outDir).sort();
   writeFileSync(join(outDir, 'run.json'), JSON.stringify({ app, repo, github, target: t, sha, branch, subject, pr, runId, attempt, image, exit, seconds, files: xml }, null, 2));
   if (xml.length === 0) {
     const detail = `container exit ${exit}, no JUnit XML produced (see ${outDir})`;
     console.log(`   ${detail}`);
     return { app, repo, target: t.name, status: exit === 0 ? 'no-results' : 'failed', seconds, files: 0, detail };
   }
-  const junit = xml.map((f) => readFileSync(join(outDir, f), 'utf8'));
-  const payload = { app, repo: github, sha, branch, event: 'push', runId, attempt, workflow: `local ci · ${t.name}`, runUrl: null, prNumber: pr, mergeCommit: pr !== null, junit };
+  const junit = xml.map((f) => ({ path: f, xml: readFileSync(join(outDir, f), 'utf8') }));
+  const payload = { app, repo: github, sha, branch, event: 'push', runId, attempt, workflow: `local ci · ${t.name}`, framework: FRAMEWORK[t.kind], runUrl: null, prNumber: pr, mergeCommit: pr !== null, junit };
   const ingest = await deliver(payload);
   console.log(`   ${xml.length} JUnit file(s) in ${seconds}s → ${JSON.stringify(ingest).slice(0, 200)}`);
   return { app, repo, target: t.name, status: 'delivered', seconds, files: xml.length, detail: `${xml.length} files`, ingest };
@@ -196,8 +205,8 @@ async function deliver(payload: Record<string, unknown>): Promise<unknown> {
     if (boot.db.runExists(String(payload.app), 'webhook', String(payload.repo), runId, Number(payload.attempt))) return { duplicate: true };
     const r = await ingestJUnit(
       boot.db,
-      (payload.junit as string[]).map((xml, i) => ({ filename: `results-${i + 1}.xml`, xml })),
-      { app: String(payload.app), source: 'webhook', repo: String(payload.repo), workflow: String(payload.workflow), externalRunId: runId, attempt: Number(payload.attempt), runUrl: null, event: 'push', branch: String(payload.branch), sha: String(payload.sha), prNumber: (payload.prNumber as number | null) ?? null, isMerge: payload.mergeCommit === true, startedAt: null },
+      (payload.junit as { path: string; xml: string }[]).map((j, i) => ({ filename: j.path || `results-${i + 1}.xml`, xml: j.xml })),
+      { app: String(payload.app), source: 'webhook', repo: String(payload.repo), workflow: String(payload.workflow), framework: (payload.framework as string) ?? null, externalRunId: runId, attempt: Number(payload.attempt), runUrl: null, event: 'push', branch: String(payload.branch), sha: String(payload.sha), prNumber: (payload.prNumber as number | null) ?? null, isMerge: payload.mergeCommit === true, startedAt: null },
       owner,
     );
     boot.db.raw.close();

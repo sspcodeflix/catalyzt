@@ -234,7 +234,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         if (!db.getApp(app)) throw new HttpError(400, `"${app}" is not a known application; "app" must be one of the application ids in Catalyzt.`);
         const expected = perApp[app] ?? opts.ingestToken;
         if (bearer !== expected) return send(res, 401, { error: `The token is not valid for application ${app}.` });
-        const junit = (Array.isArray(b.junit) ? b.junit : [b.junit]).filter(isStr).slice(0, 50);
+        // Each JUnit file is a string, or { path, xml } so the module the report came from is kept.
+        const junit = (Array.isArray(b.junit) ? b.junit : [b.junit])
+          .map((j: unknown) => {
+            if (isStr(j)) return { path: null as string | null, xml: j };
+            const o = j as Record<string, unknown> | null;
+            return o && isStr(o.xml) ? { path: isStr(o.path) ? o.path.slice(0, 300) : null, xml: o.xml } : null;
+          })
+          .filter((j): j is { path: string | null; xml: string } => !!j)
+          .slice(0, 50);
         const repo = isStr(b.repo) ? b.repo.slice(0, 200) : null;
         const runId = isStr(b.runId) || typeof b.runId === 'number' ? String(b.runId) : null;
         const attemptRaw = Number(b.attempt ?? 1);
@@ -250,11 +258,12 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           200,
           await ingestJUnit(
             db,
-            junit.map((xml, i) => ({ filename: `results-${i + 1}.xml`, xml })),
+            junit.map((j, i) => ({ filename: j.path ?? `results-${i + 1}.xml`, xml: j.xml })),
             {
               app,
               source: 'webhook',
               repo,
+              framework: isStr(b.framework) ? b.framework.slice(0, 60) : null,
               workflow: isStr(b.workflow) ? b.workflow.slice(0, 200) : null,
               externalRunId: runId,
               attempt,

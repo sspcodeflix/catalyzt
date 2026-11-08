@@ -720,4 +720,9 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX chunk_embeddings_model ON chunk_embeddings (model, text_sha);
   `,
+  // 12: CI-imported tests record a framework ('JUnit XML' when the delivery did not say one), so the
+  //     framework breakdown never counts automated tests as manual (R10).
+  `
+  UPDATE test_cases SET framework = 'JUnit XML' WHERE kind = 'automated' AND origin = 'ci_results' AND framework IS NULL;
+  `,
 ];

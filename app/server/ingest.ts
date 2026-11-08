@@ -85,6 +85,20 @@ function storeRun(db: HorizonDb, meta: RunMeta, cases: JUnitCase[], userId: stri
   return db.ingestRun(meta, results, userId);
 }
 
+/**
+ * The module a JUnit report belongs to, from where the file sat in the checkout:
+ * "account-service/target/surefire-reports/TEST-x.xml" → "account-service"; "results-1.xml" → null.
+ * Tests without a file attribute get this as their path, so a component finds them by its path.
+ */
+const REPORT_DIR = /^(?:target|build|test-results|surefire-reports|failsafe-reports|reports|junit|out)$/i;
+export function moduleOf(reportPath: string | null): string | null {
+  if (!reportPath) return null;
+  const segs = reportPath.replace(/\\/g, '/').replace(/^\.?\//, '').split('/').filter(Boolean);
+  segs.pop(); // the file itself
+  const cut = segs.findIndex((s) => REPORT_DIR.test(s));
+  return (cut >= 0 ? segs.slice(0, cut) : segs).join('/') || null;
+}
+
 export async function ingestJUnit(db: HorizonDb, files: { filename: string; xml: string }[], meta: RunMeta, userId: string) {
   if (files.length === 0) throw new IngestError('No JUnit XML was sent.');
   return asAgent(db, meta.app, userId, 'Results collector', `Record test results${meta.repo ? ` for ${meta.repo}` : ''}${meta.prNumber ? ` (PR #${meta.prNumber})` : ''}`, async (step) => {
@@ -92,7 +106,8 @@ export async function ingestJUnit(db: HorizonDb, files: { filename: string; xml:
     const cases: JUnitCase[] = [];
     for (const f of files) {
       try {
-        cases.push(...parseJUnit(f.xml));
+        const module = moduleOf(f.filename);
+        cases.push(...parseJUnit(f.xml).map((c) => (c.file ? c : { ...c, file: module })));
       } catch (e) {
         parse('failed', `${f.filename}: ${(e as Error).message}`);
         throw new IngestError(`${f.filename}: ${(e as Error).message}`);

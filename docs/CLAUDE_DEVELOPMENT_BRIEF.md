@@ -288,3 +288,102 @@ Scheduled review started at **04:08 GST**. This is an independent verification o
 - **Uncommitted workspace validation:** read-only parsers checked ABCD (16 stories, 9 manual tests, 48 steps) and WIMT (16 stories, 9 manual tests, 42 steps). No workspace warnings, duplicate keys, wrong project prefixes, empty criteria, CSV parser errors, unknown story/component references or invalid criterion links were found. Manifest/lock specifications and direct dependency entries match; the added `@huggingface/transformers` resolves to installed/locked 3.5.2. Backlog factual correctness and the embedding/model-download path were not exercised.
 
 - **Final concurrency check — 2026-11-08 04:18:37 GST:** HEAD is still `ceb814edbb8ad09ade0c3a19e927542b18954973`. All 189 captured source/document/config files match their pre-review hashes; no code change was detected during review. The working-tree state remained the capture state above before this append. The brief was re-read and its original bytes verified immediately before appending; only this dated appendix was added. No pre-existing content was replaced. The only intended project edit from this review is `docs/CLAUDE_DEVELOPMENT_BRIEF.md`.
+
+
+---
+
+## Data-model and scalability review — 8 November 2026, Asia/Dubai
+
+**Assessment:** the relational model is a useful foundation, but scalability has not yet been established. Keep **SQLite/better-sqlite3 and the TypeScript backend** for this release. Fix the integrity issues and bound the work performed per request before increasing the workload. A database replacement alone would not correct the evidence model, cross-application identities, unbounded reads or CPU-heavy matching.
+
+Reviewed **`77af06d6bdb29347a375b36213d10f86f4fe8b24`**, including the new hybrid retrieval implementation and migration 11. Line references and measurements below refer to that reviewed commit. This is a focused data-model review, not a fresh closure assessment of every earlier F01–F22 item. Existing observations F06 and F20 are referenced below rather than assigned duplicate IDs. All experiments used disposable databases, synthetic content or fake embedding providers; no live database, paid provider, model download or application-source change by this reviewer was involved. Claude made concurrent source edits near the end of review, recorded below.
+
+### What is already sound
+
+- Relational entities for applications, membership, conversations, answer revisions, ratings, approvals, tests/results and Huddle decisions give the product a coherent foundation.
+- Revision-bound artifacts and frozen approval payloads, with local execution and decision recording in one transaction, are worth retaining.
+- WAL, an explicit busy timeout, foreign-key enforcement, transactional versioned migrations, online backups and disposable restore tests are implemented. These are useful operational foundations, not proof of production capacity.
+- Uploaded bytes are separated from relational metadata through a blob-store interface. Keep that boundary so storage can change later without rewriting the domain model.
+
+### New actionable findings: F23–F28
+
+**F23 / P1 — Requirement identity is not application-scoped and normal seeding creates cross-application links.**
+
+- **Evidence:** `app/server/schema.ts:42–44` makes `requirements.id` globally unique. `app/server/db.ts:1668–1669` inserts a requirement with `INSERT OR IGNORE`, then links the story to that ID without checking its application.
+- **Reproduction/impact:** Give an IBGM fixture story requirement `FR-0231`, already present in ABCD. The IBGM story links to the requirement whose `application_id` is ABCD. This is a normal seeding-path defect, not merely a hypothetical direct-SQL bypass. Repeated external numbers will become more likely as teams and integrations are added.
+- **Remedy:** Separate durable internal identity from display/external identifiers. Use a scoped unique external key such as `(application_id, source_system, external_id)` and link by the internal requirement ID. Migrate existing relationships without merging applications. Regression: two applications use the same requirement number, retain different records and links, and reject a foreign-application association.
+
+**F24 / P2 — Retrieval loads and ranks the whole application's corpus for every question.**
+
+- **Evidence:** `app/server/context.ts:533–559` loads every passage and its vector for an application; workspace/status filtering happens afterward at `:618`. `app/server/retrieval.ts:313,328,335–340` scores and sorts the complete candidate collection before selecting the small reranking set. Returning four passages does not bound the work.
+- **Reproduction/impact:** With synthetic 1,032-character passages and keyword mode, the actual `retrieveContext` call returned four passages but took **12–22 ms at 1,000 passages**, **113–126 ms at 10,000**, and **607–646 ms at 50,000** across four calls per size. Essentially all that time elapsed before the first asynchronous yield. Other requests and SSE processing sharing the Node event loop can be delayed. These were in-memory fixture measurements, without model inference, HTTP overhead or production contention.
+- **Remedy:** Apply application/workspace/eligibility filters in SQL and retrieve a bounded candidate set before loading passage bodies/vectors. Use SQLite FTS5 for indexed lexical candidates; define and test a bounded semantic candidate strategy that preserves useful recall. Keep expensive ranking/inference off the HTTP event loop and cap concurrent work. A lexical-only prefilter must not silently remove the semantic matches that hybrid retrieval was introduced to find. Verify both relevance quality and latency as the corpus grows.
+
+**F25 / P2 — Re-indexing during embedding can persist an obsolete vector as current.**
+
+- **Evidence:** `app/server/retrieval.ts:402–414` reads chunk text, awaits embedding, then writes under the original chunk ID without rechecking its text hash/version. `app/server/context.ts:312–319` deletes changed chunks and reuses the same `<source>#<sequence>` IDs. The foreign key checks existence, not whether the content is still the content embedded.
+- **Reproduction/impact:** Pause a fake embedder after it receives the fixture's old refund text, change the document, run `syncSource`, then release the embedder. The job finishes with two vector rows, **one whose `text_sha` differs from the current chunk text**, after one embedding call. The pending-job query sees a vector row and does not repair it. Retrieval can rank current content using an obsolete vector while reporting it embedded.
+- **Remedy:** Bind embeddings to immutable chunk/source versions, model identity and content hash. Before writing, compare the expected hash/version with the current row; discard obsolete results and queue the new content. Pending selection and retrieval must reject stale hashes, with vector dimension/byte-length validation. Regression: pause embedding, re-index, resume, and verify every stored/used vector matches its exact content version.
+
+**F26 / P2 — A negative page size bypasses the test-list limit.**
+
+- **Evidence:** `app/server/api.ts:534` and `app/server/db.ts:704` apply `Math.min` without a positive lower bound. `limit=-1` reaches SQLite's unlimited `LIMIT` behavior.
+- **Reproduction/impact:** Against 25,000 synthetic tests, `limit=50` returned 50 rows in roughly **3.8 ms**; `limit=-1` returned all 25,000 in **205 ms**, synchronously, before serialization. The API's intended 200-row cap can therefore be bypassed.
+- **Remedy:** Validate finite integer limits and offsets at the API boundary and enforce bounds again in the repository. Reject or normalize negative, fractional and non-finite values; keep a hard maximum. Use cursor pagination for growing ordered lists. Regression: malformed limits never return more than the configured cap.
+
+**F27 / P2 — An upgrade leaves legacy approvals pending with an unusable payload.**
+
+- **Evidence:** `app/server/schema.ts:612` adds `payload` with default `{}` without backfilling or expiring old pending approvals. `app/server/sqlite.test.ts:150` currently expects that empty payload.
+- **Reproduction/impact:** Upgrade a disposable v6 database containing a pending UAT approval and its valid one-case artifact through `openDb` to v11. Foreign-key validation passes and the artifact survives, but the approval remains `pending` with `payload: {}`; the current handler cannot execute it. Schema integrity passing does not establish business-state migration correctness.
+- **Remedy:** Backfill only when the exact historical action can be reconstructed safely and verified; otherwise expire the approval explicitly with a reason and a re-analysis path. Add upgrade tests that assert usable or explicitly retired workflow states, not just column presence and row counts.
+
+**F28 / P2 — Restore validation overlooks uploaded App Context blobs.**
+
+- **Evidence:** `app/scripts/restore-check.ts:62–64` checks storage keys only from `attachments`, excluding non-null `context_sources.storage_key` values.
+- **Reproduction/impact:** A disposable backup with an uploaded context source, its blob missing, and an explicitly supplied empty files directory exits **0**, with no problems or missing-file warnings. A restore can be declared successful while original knowledge-source files are absent.
+- **Remedy:** Validate both chat-attachment and App Context storage references, including file existence and available size/hash metadata. Report “file validation not performed” distinctly when no file directory was supplied. Regression: a missing context blob makes the restore check fail, while a complete database-plus-files restore passes.
+
+### Required model and access-pattern hardening
+
+These requirements include reproduced model gaps and measured growth risks. They do not assert a new HTTP exploit or assign a capacity guarantee.
+
+| Area | Current evidence | Required direction |
+|---|---|---|
+| Tenant relationships | Disposable DB accepted an ABCD chat with an IBGM workspace, an IBGM run with an ABCD test, and an ABCD test linked to an IBGM criterion; `foreign_key_check` reported no violations. See `schema.ts:50,413,518`, `db.ts:1100`. The fixed F01 HTTP route remains a separate protection. | For relationships joining independently scoped parents, enforce same-application identity with composite foreign keys/unique keys and repository checks. Keep single-parent children normalized. Replace important polymorphic reference strings with typed relationships or an explicit validated association layer. Test jobs/imports directly, not only HTTP handlers. |
+| Historical evidence — existing F20 | Current `context.ts:312–319` still removes old passages and reuses IDs; `db.ts:1319` persists a citation link/version label without a durable historical chunk relationship. Re-indexing v1 to v2 removes all v1 passages. | Model `context_source → source_version → chunk → embedding`, with citations referencing the exact immutable version/chunk. Retention must preserve evidence used by answers, approvals and evaluations. |
+| Build evidence — existing F06 | `db.ts:1113–1117,1160` selects a single run for a repository and reads results only from it. | Represent repository/build identity separately from workflow runs and attempts: `build → workflow/job → attempt → test_result`. Select the target commit/branch explicitly, combine the required workflows' latest attempts, and retain failed/missing/skipped distinctions. Define the expected workflow set so incomplete CI cannot appear complete. |
+| Story hydration | `api.ts:390` loads the whole story backlog for each chat request; `api.ts:352` hydrates it merely to count on Home. `db.ts:297–299,480–483` performs child queries per story. A file-backed fixture with 10,003 stories took **67 ms** to hydrate. | Fetch only requested/detected story keys, use a count query for counts, batch dependent reads and paginate backlog lists. |
+| Conversation/Huddle growth | `db.ts:1361–1417` loads the full chat and performs queries per answer. `huddle.ts:159` loads every item and `:116–129` loads options/votes/comments/links per item. | Load recent message/item summaries first, use stable cursors and fetch detailed history on demand. Keep answer revision and approval identity stable across pages. |
+| Usage reporting | `db.ts:658–674` repeatedly aggregates history; `agentsStore.ts:123` polls usage every four seconds. At 100,000 model-call rows, a fixture query took **88 ms** and delayed a zero-delay timer about **90 ms**. | Use application/time-scoped queries and incremental summaries or bounded caches; do not recompute all-history breakdowns for every viewer/poll. |
+| Result ingestion | `ingest.ts:75` calls `results.ts:29,35`, repeatedly filtering the candidate inventory. Matching 1,000 synthetic results against 25,000 candidates took **484–736 ms** before database writes. | Build name/suite/path lookup maps once per import while preserving ambiguity rules. Put substantial parsing/matching in bounded worker work; keep SQLite transactions short. |
+| Query-aligned indexes | `EXPLAIN QUERY PLAN` shows full scans and temporary sorts for application-scoped scan/upload histories (`db.ts:829,1214`). Target-build lookup also needs sorting after its existing application/repository filter. | Add composite indexes justified by actual predicates and stable ordering, including application and time/ID fields where appropriate. Verify plans and write overhead on representative data. Avoid indexing every column speculatively. |
+| History, files and models | Runs/results, model calls, revisions, audit events, uploads and old embedding-model rows accumulate. | Define application quotas and retention/archive policies, orphan-file cleanup and old-model cleanup. Preserve referenced evidence and required audit records; garbage collection must be reference-aware. Measure DB, WAL and blob growth. |
+| Future migration boundary | `HorizonDb` is `ReturnType<typeof openDb>` (`db.ts:260`), with synchronous methods and `db.raw` SQL used by context, Huddle and retrieval. `docs/MIGRATION_NOTE.md` understates the work implied by “same signatures.” | Introduce explicit domain repository interfaces, required tenant parameters and transaction contracts. Keep database-specific SQL/PRAGMAs behind the SQLite implementation. Plan asynchronous I/O boundaries for a future client/server adapter; do not add another backend/database now. |
+
+Do not add organization-wide tenancy or distributed infrastructure merely for hypothetical scale. If external Jira/source IDs can overlap across connectors, scope those external IDs by application and connector/source while keeping stable internal IDs. Short display identifiers should not be the sole durable uniqueness mechanism for large inventories (`db.ts:253–257` currently truncates test identity hashes).
+
+### Scalability acceptance criteria for Claude
+
+1. Fix F23–F28 and the existing F06/F20 evidence-model gaps with migrations and outcome-based regression tests. Preserve current user data and approval history.
+2. Keep the application on one host with SQLite WAL and better-sqlite3. Cap requests, uploads and background concurrency; keep transactions short and exclude model/network work from them. SQLite WAL permits concurrent readers with a writer but still has **one writer at a time**, and its shared-memory design requires the same host. [SQLite WAL documentation](https://www.sqlite.org/wal.html).
+3. Establish a repeatable, disposable load-test profile covering multiple applications, large result history, long chats and concurrent ingestion/retrieval. Include the measured 50,000-passage, 25,000-test and 100,000-model-call cases as regression profiles, not as claimed production capacity. Add larger result-history cases before an actual deployment needs them.
+4. Report p50/p95/p99 API latency, event-loop delay, peak memory, transaction duration, busy/timeout rates, queue backlog, DB/WAL/blob growth and backup/restore duration under mixed workloads. Agree response-time and recovery objectives before declaring scalability complete; a user-count claim alone is insufficient.
+5. Validate an indexed lexical candidate path using the installed SQLite build and its maintenance/consistency rules. FTS5 provides indexed full-text retrieval within SQLite; using it does not require a new service. [SQLite FTS5 documentation](https://www.sqlite.org/fts5.html). Evaluate relevance/recall alongside performance, especially for synonym-only semantic matches.
+6. Keep future external actions idempotent and durably tracked. Before adding external side effects, define a SQLite-backed job/outbox record with operation identity, status, attempts and retry scheduling so process failure does not duplicate actions. No external broker or microservices are required for this stage.
+7. Revisit a client/server database only when measured write contention, recovery/backup limits, or a real multi-host availability requirement justifies it. Preserve the user's decision to defer PostgreSQL, Python rewrites and distributed infrastructure. [SQLite deployment guidance](https://www.sqlite.org/whentouse.html).
+
+### Verification and limits
+
+- **40 existing tests passed across four files:** SQLite 6, context 15, Hexa 10 and ingestion 9, in 2.26 seconds, with no warnings. These targeted tests were run from an isolated source snapshot with cache writes disabled. The full build/suite was not repeated for this documentation-only review.
+- Schema/upgrade reproductions used disposable databases; current F20 was rechecked against the latest implementation. Scale measurements used synthetic data: the retrieval test was in-memory, other database timings used file-backed WAL with warm caches, and the result-matching measurement was CPU-only. These are observations of individual operations on this machine, not production throughput, user capacity or a completed concurrent load test.
+- The controlled embedding race used a fake provider; no model or external endpoint was contacted. No real embedding/reranker inference time is included in the retrieval numbers.
+- Temporary evidence is under `/tmp/catalyzt-model-scale.ts`, `/tmp/catalyzt-schema-review-77/`, and the workflow review's `/tmp` snapshot. The reproduction details above are sufficient to recreate the checks if temporary files are removed.
+- `DATA_MODEL.md` still says “10” migrations while the reviewed commit has 11; Claude added migration 12 during this review. Update it and `docs/MIGRATION_NOTE.md` after the model fixes so their integrity, retrieval and portability claims match the implementation.
+
+### Concurrent development observed before append
+
+The final pre-append check caught new uncommitted work in `app/scripts/ci-runner.ts`, `app/server/api.ts`, `app/server/db.ts`, `app/server/evidence.ts`, `app/server/ingest.ts`, `app/server/schema.ts` and `app/src/pages/Hexa.tsx`. The reviewed diff adds CI report paths/framework metadata, component-aware test lookup, cross-chat proposal supersession, stale-workspace cleanup and a migration 12 framework backfill. The schema/database/API/ingestion changes were inspected to distinguish them from the recorded findings; they do not introduce the scoped requirement identity, embedding hash checks, positive page-size validation or legacy-approval migration required above. The 40-test result and timing measurements apply to the reviewed committed snapshot, **not** these concurrent edits. Those edits and existing simulation logs were preserved; no application source was modified by this reviewer. Re-run the targeted tests and benchmarks against Claude's final changes before closing findings.
+
+**Append verification — 2026-11-08 08:14:00 GST:** HEAD remained `77af06d6bdb29347a375b36213d10f86f4fe8b24`. Concurrent source edits were present as described above; evidence was kept tied to the reviewed commit. The brief was re-read immediately before this append, and all original bytes were preserved. The only project edit made by this reviewer is this appendix.
+
+At the exact append check, additional concurrent edits had also appeared in `app/server/api.test.ts` and `docs/hexa-github-action.yml`; those last-arriving changes were not reviewed or included in the test results above.

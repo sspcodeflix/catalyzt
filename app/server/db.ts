@@ -148,6 +148,21 @@ export interface RunMeta {
   prNumber: number | null;
   isMerge: boolean;
   startedAt: string | null;
+  /** The test framework the results came from (JUnit, go test, Jest…); 'JUnit XML' when the delivery did not say. */
+  framework?: string | null;
+}
+
+/** Words in a component name or path that say nothing about which tests belong to it. */
+const GENERIC_WORDS = new Set(['service', 'services', 'svc', 'api', 'app', 'application', 'core', 'lib', 'library', 'client', 'server', 'web', 'ui', 'module', 'component', 'backend']);
+/** Path words that would match every test (src/main/test, language and vendor segments). */
+const NOISE_WORDS = new Set(['src', 'main', 'test', 'tests', 'java', 'go', 'com', 'org', 'io', 'net', 'pkg', 'internal', 'cmd']);
+const escapeLike = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
+
+/** The distinctive words of a component ("account-service" → account; "ach-core" → ach; "frontend" → frontend). */
+export function componentKeywords(name: string, path: string | null): string[] {
+  const raw = [name, ...(path ?? '').split('/')].flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/)).filter((w) => w.length >= 3 && !NOISE_WORDS.has(w));
+  const specific = raw.filter((w) => !GENERIC_WORDS.has(w));
+  return [...new Set(specific.length ? specific : raw)];
 }
 
 export interface ScanRow {
@@ -677,9 +692,43 @@ export function openDb(path: string) {
 
     /* ---------- Hexa: test case inventory ---------- */
 
-    listTests(app: string, f: { q?: string; kind?: string; kinds?: string[]; purpose?: string; result?: string; origin?: string; framework?: string; repo?: string; limit?: number; offset?: number } = {}) {
+    /**
+     * SQL for "tests that belong to this component": linked to it, under its path in the repository,
+     * in a package or directory named after it (CI-imported tests have no path, only a suite such as
+     * com.piggymetrics.account.AccountControllerTest), or mentioning it by name. Null for an unknown component.
+     */
+    componentTestsWhere(app: string, name: string): { sql: string; args: unknown[] } | null {
+      const comp = db.prepare('SELECT name, repo, path FROM components WHERE application_id = ? AND LOWER(name) = LOWER(?)').get(app, name) as { name: string; repo: string | null; path: string | null } | undefined;
+      if (!comp) return null;
+      const parts: string[] = [];
+      const args: unknown[] = [];
+      parts.push("EXISTS (SELECT 1 FROM test_case_links l WHERE l.test_case_id = t.id AND l.entity_type = 'component' AND l.entity_ref = ?)");
+      args.push(`${app}/${comp.name}`);
+      const p = (comp.path ?? '').replace(/^\.?\/+/, '').replace(/\/+$/, '');
+      if (p) {
+        parts.push("(t.path = ? OR t.path LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\')");
+        args.push(p, `${escapeLike(p)}/%`, `%/${escapeLike(p)}/%`);
+      }
+      for (const kw of componentKeywords(comp.name, comp.path)) {
+        parts.push("(t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\')");
+        args.push(`%.${escapeLike(kw)}.%`, `${escapeLike(kw)}.%`, `%/${escapeLike(kw)}/%`, `%/${escapeLike(kw)}`);
+      }
+      const like = `%${escapeLike(comp.name)}%`;
+      parts.push("(t.title LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM test_case_links l WHERE l.test_case_id = t.id AND l.entity_ref LIKE ? ESCAPE '\\'))");
+      args.push(like, like, like);
+      return { sql: `(${parts.join(' OR ')})`, args };
+    },
+
+    listTests(app: string, f: { q?: string; kind?: string; kinds?: string[]; purpose?: string; result?: string; origin?: string; framework?: string; repo?: string; component?: string; limit?: number; offset?: number } = {}) {
       const where = ["t.status = 'active'", 't.application_id = ?'];
       const args: unknown[] = [app];
+      // A component filter, or a search that is exactly a component's name, means "its tests" (see componentTestsWhere).
+      const comp = f.component ? this.componentTestsWhere(app, f.component) : f.q ? this.componentTestsWhere(app, f.q.trim()) : null;
+      if (f.component) {
+        if (!comp) return { rows: [] as TestCaseRow[], total: 0 };
+        where.push(comp.sql);
+        args.push(...comp.args);
+      }
       if (f.kind) (where.push('t.kind = ?'), args.push(f.kind));
       if (f.kinds?.length) (where.push(`t.kind IN (${f.kinds.map(() => '?').join(', ')})`), args.push(...f.kinds));
       if (f.purpose) (where.push('t.purpose = ?'), args.push(f.purpose));
@@ -690,12 +739,14 @@ export function openDb(path: string) {
       if (f.repo) (where.push('t.repo = ?'), args.push(f.repo));
       if (f.q) {
         const like = `%${f.q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-        where.push(
-          `(t.title LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\' OR t.id LIKE ? ESCAPE '\\' OR t.external_id LIKE ? ESCAPE '\\' OR t.code_name LIKE ? ESCAPE '\\'
+        const text = `(t.title LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\' OR t.id LIKE ? ESCAPE '\\' OR t.external_id LIKE ? ESCAPE '\\' OR t.code_name LIKE ? ESCAPE '\\'
             OR EXISTS (SELECT 1 FROM test_case_links l WHERE l.test_case_id = t.id AND l.entity_ref LIKE ? ESCAPE '\\')
-            OR EXISTS (SELECT 1 FROM test_steps st WHERE st.test_case_id = t.id AND st.description LIKE ? ESCAPE '\\'))`,
-        );
+            OR EXISTS (SELECT 1 FROM test_steps st WHERE st.test_case_id = t.id AND st.description LIKE ? ESCAPE '\\'))`;
         args.push(like, like, like, like, like, like, like, like);
+        if (comp && !f.component) {
+          where.push(`(${text} OR ${comp.sql})`);
+          args.push(...comp.args);
+        } else where.push(text);
       }
       const w = where.join(' AND ');
       const total = (db.prepare(`SELECT COUNT(*) AS n FROM test_cases t WHERE ${w}`).get(...args) as { n: number }).n;
@@ -735,7 +786,8 @@ export function openDb(path: string) {
         total: (db.prepare(`SELECT COUNT(*) AS n FROM test_cases WHERE ${A}`).get(app) as { n: number }).n,
         byKind: one(`SELECT kind AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY kind`),
         byOrigin: one(`SELECT origin AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY origin`),
-        byFramework: one(`SELECT COALESCE(framework, 'Manual') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key ORDER BY n DESC`),
+        // Automated tests without a recorded framework are "Unknown", never "Manual".
+        byFramework: one(`SELECT CASE WHEN kind = 'automated' THEN COALESCE(framework, 'Unknown') ELSE 'Manual' END AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key ORDER BY n DESC`),
         byRepo: one(`SELECT COALESCE(repo, 'No repository') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key ORDER BY n DESC`),
         byResult: one(`SELECT COALESCE(last_result, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} AND kind = 'automated' GROUP BY key`),
         byPurpose: one(`SELECT COALESCE(purpose, 'none') AS key, COUNT(*) AS n FROM test_cases WHERE ${A} GROUP BY key`),
@@ -979,9 +1031,9 @@ export function openDb(path: string) {
             const ins = db
               .prepare(
                 `INSERT OR IGNORE INTO test_cases (id, application_id, title, suite, code_name, kind, framework, origin, repo, path, created_by, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, 'automated', NULL, 'ci_results', ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, ?, 'automated', ?, 'ci_results', ?, ?, ?, ?, ?)`,
               )
-              .run(id, meta.app, r.create.title.slice(0, 300), r.create.suite, r.create.codeName, meta.repo, r.create.path, userId, t, t);
+              .run(id, meta.app, r.create.title.slice(0, 300), r.create.suite, r.create.codeName, meta.framework?.trim() || 'JUnit XML', meta.repo, r.create.path, userId, t, t);
             if (ins.changes) created++;
           } else if (id) matched++;
           if (!id) continue;
@@ -1346,6 +1398,16 @@ export function openDb(path: string) {
               : {};
           ap.run(id, revisionId, action, JSON.stringify({ artifactId: b.approval.artifactId ?? null, storyKey: uat?.ticketKey ?? null }), JSON.stringify(b.approval.facts), JSON.stringify(payload), t);
         }
+        // A newer UAT analysis of the same story, in any chat of the application, supersedes older pending
+        // proposals for it: they describe evidence that has since been re-read (R15).
+        if (a.artifact?.kind === 'uat') {
+          db.prepare(
+            `UPDATE approvals SET status = 'expired', superseded_by = ? WHERE status = 'pending' AND action = 'add_uat_cases' AND revision_id != ?
+               AND json_extract(payload, '$.storyKey') = ?
+               AND revision_id IN (SELECT ar.id FROM answer_revisions ar JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id
+                                   WHERE c.application_id = (SELECT application_id FROM chats WHERE id = ?))`,
+          ).run(revisionId, revisionId, a.artifact.ticketKey, a.chatId);
+        }
         if (a.workflowRunId) db.prepare('UPDATE workflow_runs SET revision = ? WHERE id = ?').run(revision, a.workflowRunId);
         db.prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(t, a.chatId);
         return { revisionId, revision, approvals };
@@ -1619,6 +1681,13 @@ export function seedWorkspace(h: HorizonDb, ws: Workspace) {
       ).run(team.id, team.name, team.jiraProject, team.description);
       counts.apps++;
       for (const w of team.workspaces) db.prepare('INSERT OR IGNORE INTO workspaces (id, application_id, name) VALUES (?, ?, ?)').run(`${team.id}-${w}`, team.id, w);
+      // Workspaces the team no longer lists are removed (R12: stale names leaked into scopes and answers);
+      // chats and components that pointed at one fall back to the application.
+      const keep = team.workspaces.map((w) => `${team.id}-${w}`);
+      const marks = keep.map(() => '?').join(', ') || "''";
+      db.prepare(`UPDATE chats SET workspace_id = NULL WHERE application_id = ? AND workspace_id IS NOT NULL AND workspace_id NOT IN (${marks})`).run(team.id, ...keep);
+      db.prepare(`UPDATE components SET workspace_id = NULL WHERE application_id = ? AND workspace_id IS NOT NULL AND workspace_id NOT IN (${marks})`).run(team.id, ...keep);
+      db.prepare(`DELETE FROM workspaces WHERE application_id = ? AND id NOT IN (${marks})`).run(team.id, ...keep);
     }
     for (const p of ws.people) {
       db.prepare(
