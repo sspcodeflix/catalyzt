@@ -8,7 +8,11 @@ import { cleanFlatTable, isPlainFile, parseInline, parseMarkdown } from '../lib/
  * injected as HTML.
  */
 export function PassageText({ text, locator }: { text: string; locator: string }) {
-  if (isPlainFile(locator)) return <pre className="passage-pre">{text}</pre>;
+  if (isPlainFile(locator)) return (
+      <pre className="passage-pre" tabIndex={0} aria-label={`File: ${locator}`}>
+        {text}
+      </pre>
+    );
   const blocks = parseMarkdown(cleanFlatTable(text));
   return (
     <div className="passage-md">
@@ -26,7 +30,7 @@ export function PassageText({ text, locator }: { text: string; locator: string }
             return <blockquote key={i}>{inline(b.text)}</blockquote>;
           case 'code':
             return (
-              <pre key={i} className="passage-pre">
+              <pre key={i} className="passage-pre" tabIndex={0} aria-label="Code">
                 {b.text}
               </pre>
             );
@@ -43,7 +47,8 @@ export function PassageText({ text, locator }: { text: string; locator: string }
           }
           case 'table':
             return (
-              <div key={i} className="passage-table">
+              // A wide table scrolls sideways; keyboard users need to reach it to scroll it.
+              <div key={i} className="passage-table" tabIndex={0} role="region" aria-label={`Table: ${b.header.filter(Boolean).slice(0, 3).join(', ') || 'passage table'}`}>
                 <table>
                   <thead>
                     <tr>
