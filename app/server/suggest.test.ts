@@ -41,6 +41,18 @@ describe('suggested tests for uncovered criteria', () => {
     expect(db.coverageFor('ABCD-1001')[3].status).toBe('no-test');
   });
 
+  it('searches the whole component, not only its 200 newest tests (T11)', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    // 260 unrelated tests sort before the one that matches, so a 200-test window would never see it.
+    const dummies = Array.from({ length: 260 }, (_, i) => `<testcase classname="checkoutservice.Misc${i}Test" file="src/checkoutservice/aaa_${String(i).padStart(3, '0')}_test.go" name="unrelatedBehaviour${i}" time="0.1"/>`).join('');
+    const xml = `<testsuite name="checkoutservice">${dummies}<testcase classname="checkoutservice.SettlementWindowTest" file="src/checkoutservice/zzz_settlement_window_test.go" name="partialRefundsAllowedWithin45DaysFromSettlement" time="0.1"/></testsuite>`;
+    await ingestJUnit(db, [{ filename: 'r.xml', xml }], meta, 'u-sourav');
+    expect(db.listTests('ABCD', { component: 'checkoutservice', kind: 'automated', limit: 200 }).rows.some((t) => t.title.startsWith('Partial refunds allowed'))).toBe(false);
+    const cov = db.suggestTests('ABCD-1001', db.coverageFor('ABCD-1001'));
+    expect(cov[3].suggestions?.[0].why).toMatch(/^shares partial, refunds/);
+  });
+
   it('suggests nothing when no test shares enough of the criterion', () => {
     const db = fixtureDb();
     seedRefundTests(db);

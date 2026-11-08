@@ -1417,14 +1417,22 @@ export function openDb(path: string) {
     suggestTests(storyKey: string, coverage: CriterionCoverage[]): CriterionCoverage[] {
       const story = getStory(storyKey);
       if (!story) return coverage;
-      const pool = new Map<string, TestCaseRow>();
-      for (const comp of story.components) for (const r of this.listTests(story.applicationId, { component: comp, kind: 'automated', limit: 200 }).rows) pool.set(r.id, r);
+      // Every automated test of the story's components is a candidate (T11): a component with thousands of
+      // tests is scored whole, not by its 200 newest. Only the columns the scoring reads are loaded.
+      type Cand = { id: string; title: string; suite: string | null; codeName: string | null; repo: string | null };
+      const pool = new Map<string, Cand>();
+      for (const comp of story.components) {
+        const w = this.componentTestsWhere(story.applicationId, comp);
+        if (!w) continue;
+        const rows = db.prepare(`SELECT t.id, t.title, t.suite, t.code_name, t.repo FROM test_cases t WHERE t.application_id = ? AND t.status = 'active' AND t.kind = 'automated' AND (${w.sql})`).all(story.applicationId, ...w.args) as Row[];
+        for (const r of rows) pool.set(String(r.id), { id: String(r.id), title: String(r.title), suite: (r.suite as string) ?? null, codeName: (r.code_name as string) ?? null, repo: (r.repo as string) ?? null });
+      }
       if (!pool.size) return coverage;
       const STOP = new Set(['the', 'and', 'with', 'that', 'this', 'from', 'when', 'then', 'into', 'returns', 'return', 'shows', 'still', 'test', 'tests', 'should', 'http', 'only', 'have', 'does', 'their', 'there', 'which', 'after', 'before']);
       const words = (s: string) => new Set((s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((x) => x.length > 3 && !STOP.has(x)));
       const names = (s: string) => new Set(s.match(/\b[A-Za-z_][A-Za-z0-9_]*(?:Test|Tests|IT|Spec)\b|\bTest[A-Z][A-Za-z0-9_]*\b/g) ?? []);
       const buildResult = new Map<string, string | null>();
-      const resultOf = (t: TestCaseRow) => {
+      const resultOf = (t: Cand) => {
         if (!buildResult.has(t.id)) {
           const b = this.targetBuild(story.applicationId, t.repo);
           const r = b ? (b.runIds.map((id) => db.prepare('SELECT status FROM test_results WHERE run_id = ? AND test_case_id = ?').get(id, t.id) as { status: string } | undefined).find(Boolean)?.status ?? null) : null;
