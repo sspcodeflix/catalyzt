@@ -29,6 +29,16 @@ const STEP_HELP: Record<FlowKind, Partial<Record<StepKey, string>>> = {
     verify: 'The pipeline runs the new test in the target build. The step completes when it passes; nobody records anything by hand.',
   },
 };
+/** One line under each action waiting on the person looking: what doing it means. */
+const ACTION_HELP: Record<string, string> = {
+  'Review suggestions': 'A passing CI test looks like it already covers a criterion. Open the report, check it is really that criterion, and press Link; the criterion then counts as covered, with no manual case.',
+  'Review cases': 'The analyst drafted manual cases for criteria no test covers. Approve them (they go into Hexa for the UAT run) or send them back with a note saying what to change.',
+  'Record results': 'Run the manual case in the UAT environment and record Passed, Failed or Blocked on the story.',
+  'Sign off': 'Every criterion is verified. Sign the story off for UAT, or say why not.',
+  'Analyse again': 'The analysis failed or a reviewer asked for changes. Run it again to get fresh suggestions and cases.',
+  'Draft automation': 'Criteria still have no automated test. Draft the automation request for an engineer to send.',
+  'See failures': 'A linked test failed in the target build. Open the story to see which, and get it fixed before sign-off.',
+};
 const STATUS_TONE: Record<string, string> = { active: 'info', paused: 'warn', done: 'pass', cancelled: '' };
 const STATE_TONE: Record<string, string> = { done: 'pass', skipped: '', working: 'info', waiting: 'warn', blocked: 'crit', todo: '' };
 const STATE_LABEL: Record<string, string> = { done: 'Done', skipped: 'Not needed', working: 'Agent working', waiting: 'Waiting', blocked: 'Blocked', todo: 'Not started' };
@@ -559,6 +569,7 @@ export function FlowDetail() {
                         {w.stories.length > 6 ? ` and ${w.stories.length - 6} more` : ''}
                         {w.since ? ` · waiting ${ago(w.since)}` : ''}
                       </span>
+                      {w.you && ACTION_HELP[w.action] && <span className="actionhelp">{ACTION_HELP[w.action]}</span>}
                     </span>
                     {w.you && (
                       <button

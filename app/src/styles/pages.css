@@ -275,6 +275,7 @@ legend { padding: 0; }
 .flowwaiting li.you { background: var(--hz-info-tint); }
 .flowwaiting .who { font-weight: 600; min-width: 90px; }
 .flowwaiting .what { flex: 1; min-width: 200px; }
+.flowwaiting .actionhelp { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.4; color: var(--hz-text-muted); }
 /* Several stories waiting on one reviewer, approved together. */
 .bulkreview { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hz-border); display: flex; flex-direction: column; gap: 8px; }
 .bulkreview p { margin: 0; font-size: 13.5px; }
