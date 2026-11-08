@@ -44,6 +44,7 @@ import { RequestError } from './context';
 import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
 import { HuddleError, listItems, raiseFeedbackPattern } from './huddle';
 import { LocalBlobStore, type BlobStore } from './storage';
+import { maxScansFromEnv, RunLimiter, runLimitsFromEnv, type RunLimits } from './limits';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
 import { GitHubError } from './github';
 import { ScanError, startRepoScan } from './hexa';
@@ -170,6 +171,10 @@ export interface ApiOptions {
   reload?: () => { summary: string };
   /** Hybrid retrieval: the embedding and reranking models and the background embedding job. Absent: keyword-only. */
   retrieval?: RetrievalService;
+  /** Concurrent workflow runs per process and per person (default from HORIZON_MAX_RUNS*, else 8 and 2), or a shared limiter. */
+  runLimits?: RunLimits | RunLimiter;
+  /** Concurrent repository scans per process (default HORIZON_MAX_SCANS, else 2). */
+  maxScans?: number;
 }
 
 /** A query integer within [min, max], or the default for anything missing, non-finite or out of range. */
@@ -221,6 +226,8 @@ function addUatCases(db: HorizonDb, appId: string, story: StoredStory, cases: No
 export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => HorizonDb, opts: ApiOptions = {}) {
   const githubToken = opts.githubToken;
   const files = opts.files ?? new LocalBlobStore('data/attachments');
+  const runLimiter = opts.runLimits instanceof RunLimiter ? opts.runLimits : new RunLimiter(opts.runLimits ?? runLimitsFromEnv(process.env));
+  const maxScans = opts.maxScans ?? maxScansFromEnv(process.env);
 
   return async function api(req: IncomingMessage, res: ServerResponse, next: Next) {
     let full: URL;
@@ -392,6 +399,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       }
 
       if (url === '/api/run' && req.method === 'POST') {
+        // Criterion 2: a bounded number of workflows per process and per person. Over the limit the
+        // request is refused before its body is read, so nothing is written.
+        const slot = runLimiter.acquire(user.id);
+        if (!slot.ok) {
+          res.setHeader('Retry-After', String(slot.retryAfterSeconds));
+          return send(res, 429, { error: slot.message, limit: slot.scope });
+        }
+        res.once('close', slot.release);
+        res.once('finish', slot.release);
         const body = parseRunRequest(await readJson(req));
         // The ids the browser sends must belong together, to this application, and to this person,
         // before anything runs or is written. A chat of another application is not disclosed (404).
@@ -677,9 +693,10 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       if (url === '/api/hexa/scans' && req.method === 'POST') {
         const b = (await readJson(req)) as Record<string, unknown>;
         try {
-          return send(res, 202, startRepoScan(db, appId, String(b.repo ?? ''), user.id, githubToken));
+          return send(res, 202, startRepoScan(db, appId, String(b.repo ?? ''), user.id, githubToken, maxScans));
         } catch (e) {
-          if (e instanceof ScanError) throw new HttpError(400, e.message);
+          if (e instanceof ScanError && e.status === 429) res.setHeader('Retry-After', '30');
+          if (e instanceof ScanError) throw new HttpError(e.status, e.message);
           throw e;
         }
       }

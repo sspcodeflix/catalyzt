@@ -8,15 +8,27 @@ import { randomUUID } from 'node:crypto';
 
 import type { HorizonDb } from './db';
 import { extractTests, fetchFile, GitHubError, listTestFiles, MAX_FILES, parseRepoRef, type FoundTest } from './github';
+import { DEFAULT_MAX_SCANS } from './limits';
 
-export class ScanError extends Error {}
+export class ScanError extends Error {
+  constructor(
+    message: string,
+    /** 429 when the process already runs its limit of scans (HORIZON_MAX_SCANS). */
+    readonly status = 400,
+  ) {
+    super(message);
+  }
+}
 
 /** Starts a scan and returns its id at once; the scan continues in the background. */
-export function startRepoScan(db: HorizonDb, app: string, input: string, userId: string, token?: string): { scanId: string; repo: string } {
+export function startRepoScan(db: HorizonDb, app: string, input: string, userId: string, token?: string, maxScans = DEFAULT_MAX_SCANS): { scanId: string; repo: string } {
   const ref = parseRepoRef(input);
   if (!ref) throw new ScanError('Enter a GitHub repository as owner/repo or a github.com link.');
   const repo = `${ref.owner}/${ref.repo}`;
   if (db.runningScan(app, repo)) throw new ScanError(`${repo} is already being scanned.`);
+  // Background work stays bounded: a scan reads up to eight files at a time, and only a few scans run at once per process.
+  const running = (db.raw.prepare("SELECT COUNT(*) AS n FROM repo_scans WHERE status = 'running'").get() as { n: number }).n;
+  if (running >= maxScans) throw new ScanError(`${running} repository scans are running, the limit for this server. Nothing was started; try again when one finishes.`, 429);
 
   const scanId = randomUUID();
   const wf = randomUUID();
