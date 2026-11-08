@@ -290,6 +290,8 @@ async function runAnswer(chatId: string, answerId: string) {
   let answer = initialAnswer();
   let pending = false;
   let done = false;
+  // `done` also closes a failed or stopped answer locally; only the server's own `done` event means it finished.
+  let finished = false;
   let savedSeen = false;
   const render = () =>
     set((m) => ({
@@ -374,6 +376,7 @@ async function runAnswer(chatId: string, answerId: string) {
           continue;
         case 'done':
           done = true;
+          finished = true;
           render();
           set((m) => ({ ...m, status: 'done' }));
           void refreshRecents();
@@ -398,7 +401,8 @@ async function runAnswer(chatId: string, answerId: string) {
     if (running.get(chatId) === ctrl) running.delete(chatId);
     // F07: the answer finished but the `saved` acknowledgement was lost with the connection. The server
     // has the saved run; read it back so the revision and approval ids arrive without another model call.
-    if (done && !savedSeen && epoch === sessionEpoch()) void loadChat(chatId, true);
+    // Not after Stop or a failure before `done`: those keep their Stopped / Try again state.
+    if (finished && !savedSeen && epoch === sessionEpoch()) void loadChat(chatId, true);
   }
 }
 

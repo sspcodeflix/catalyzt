@@ -13,6 +13,10 @@ database, no model key (rules routing), the repository's `.myworkspace`.
   reported conflict excluded until the owner decides, citations that open the passage.
 - `branding.py`: Catalyzt title, mark and wordmark, scope switcher, real home entry points, phone chat/report tabs;
   writes screenshots to `docs/brand/`.
+- `recovery.py`: recovery and race paths through Playwright routes: a lost `saved` event or a stream cut after
+  `done` is recovered by reading the chat back (ratable, approval ids, one run); a cut before `done` and Stop
+  claim nothing; a missing chat is found after switching to its application; a late rating, a late old-scope
+  recents list and an upload during a switch do not land in the new revision or scope.
 
 ```bash
 pip install playwright && playwright install chromium
