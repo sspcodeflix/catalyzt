@@ -304,3 +304,16 @@ legend { padding: 0; }
 .homeflows { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 8px; }
 .homeflowshead { display: flex; align-items: baseline; justify-content: space-between; }
 @media (max-width: 600px) { .flowtimeline time { width: 90px; } .flowsteps { grid-template-columns: repeat(2, 1fr); } }
+
+/* Test flows inside a chat answer: the live card, the Start card, the waiting list. */
+.flowchat { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; margin: 8px 0; }
+.flowchat .flowtitle a { color: inherit; flex: 1; min-width: 0; }
+.flowchat .flowsteps { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
+.flowchat > .btn { align-self: flex-start; }
+.flowchatmine { display: flex; flex-direction: column; gap: 6px; }
+.flowchatothers { list-style: none; margin: 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.flowstartlist { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; border: 1px solid var(--hz-divider); border-radius: var(--hz-radius-md); }
+.flowstartlist li + li { border-top: 1px solid var(--hz-divider); }
+.flowstartlist label { display: flex; align-items: center; gap: 10px; padding: 8px 12px; flex-wrap: wrap; font-size: 13.5px; cursor: pointer; }
+.flowstartlist .grow { flex: 1; min-width: 160px; }
+.flowchatlist { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }

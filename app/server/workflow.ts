@@ -24,6 +24,7 @@ import { describeRetrieval, retrieveContext, scanOnlyComponents, type ContextPas
 import type { RetrievalModels } from './retrieval';
 import type { HorizonDb } from './db';
 import { hexaEvidence } from './evidence';
+import { flowChatAnswer } from './flows';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
 
@@ -235,6 +236,19 @@ export async function runWorkflow(
     // History comes from the browser, so it is untrusted: drop earlier user turns that break a policy and
     // any turn, whoever wrote it, that holds what looks like a secret (F05).
     req = { ...req, history: req.history.filter((h) => (h.role === 'user' ? checkInput(h.text).allowed : !containsSecret(h.text))) };
+
+    // Test flows (docs/FLOWS.md): start one, where one stands, what waits on me. Answered from the
+    // records by rules; the cards in the answer load the flow live, so an old chat never shows stale progress.
+    const member = db ? db.appsFor(userId).find((a) => a.id === app) : undefined;
+    const flowAnswer = db && member ? flowChatAnswer(db, member, userId, member.roles, req.text, req.tickets) : null;
+    if (flowAnswer) {
+      const coord = root.spawn('Test flows', 'tool_agent', 'Answer from the test flows');
+      const s = coord.step('tool', 'Reading the test flows', 'flows.read');
+      s({ detail: flowAnswer.blocks.some((b) => b.kind === 'flow_start') ? 'Found the stories for a new flow' : 'Read the flows from the records' });
+      coord.finish('done', { result: 'Answered from the test flows' });
+      emit({ type: 'answer', blocks: [{ kind: 'prose', text: flowAnswer.prose }, ...flowAnswer.blocks], citations: [] });
+      return end('done', `Test flows · ${total()}`);
+    }
 
     // A request to write test cases is authoring, even in a chat that started as a UAT analysis (whose
     // capability stays "Test analysis"): the words of this message decide, not the chat's first request.

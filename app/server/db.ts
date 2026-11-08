@@ -616,9 +616,9 @@ export function openDb(path: string) {
       const rows = (
         after
           ? db
-              .prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?')
+              .prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?')
               .all(app, userId, after[0], after[0], after[1], limit + 1)
-          : db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? ORDER BY updated_at DESC, id DESC LIMIT ?').all(app, userId, limit + 1)
+          : db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) ORDER BY updated_at DESC, id DESC LIMIT ?').all(app, userId, limit + 1)
       ) as Row[];
       const chats = rows.slice(0, limit).map((r) => ({ id: String(r.id), title: String(r.title), updatedAt: String(r.updated_at) }));
       const last = chats[chats.length - 1];

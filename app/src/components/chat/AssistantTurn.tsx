@@ -1,3 +1,4 @@
+import { FlowChatCard, FlowsWaitingCard, FlowStartCard } from './FlowCards';
 import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -157,6 +158,12 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
           />
         );
       }
+      case 'flow':
+        return <FlowChatCard key={i} flowId={b.flowId} />;
+      case 'flow_start':
+        return <FlowStartCard key={i} block={b} revisionId={message.revisionId} />;
+      case 'flows_waiting':
+        return <FlowsWaitingCard key={i} />;
       case 'rejected':
         return (
           <section key={i} className="rejected" role="alert" aria-label="Request rejected">

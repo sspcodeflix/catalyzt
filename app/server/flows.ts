@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 
 import { answerBlocks, applyEvent, initialAnswer } from '../src/lib/answerReducer';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
+import type { Block } from '../src/lib/types';
 import type { AppRecord, CriterionCoverage, HorizonDb, StoredStory } from './db';
 import type { DeepSeekConfig } from './deepseek';
 import { claim, complete, enqueue, fail, getJob } from './jobs';
@@ -418,7 +419,7 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
 
 /* ---------- Changes ---------- */
 
-export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; name: string }, roles: string[], input: { kind: FlowKind; title?: string; stories: string[] }) {
+export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; name: string }, roles: string[], input: { kind: FlowKind; title?: string; stories: string[]; origin?: string | null }) {
   if (!roles.includes('app_owner') && !roles.includes('component_manager')) throw new FlowError(403, 'Only an app owner or a component manager can start a test flow.');
   const keys = [...new Set(input.stories)].slice(0, MAX_FLOW_STORIES + 1);
   if (keys.length === 0) throw new FlowError(400, 'Choose at least one story.');
@@ -432,6 +433,11 @@ export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; na
     const foreign = stories.filter((s) => !s!.components.some((c) => mine.has(c))).map((s) => s!.key);
     if (foreign.length) throw new FlowError(403, `${foreign.join(', ')} touch no component you manage; ask the app owner to include them.`);
   }
+  // A Start card pressed twice (two tabs, a double click) gives the flow it already started.
+  if (input.origin) {
+    const made = db.raw.prepare('SELECT id FROM flows WHERE application_id = ? AND origin = ?').get(app.id, input.origin) as { id: string } | undefined;
+    if (made) return made.id;
+  }
   if (input.kind === 'regression') {
     const active = db.raw.prepare("SELECT title FROM flows WHERE application_id = ? AND kind = 'regression' AND status IN ('active', 'paused')").get(app.id) as { title: string } | undefined;
     if (active) throw new FlowError(409, `A regression flow is already running: "${active.title}". Add stories to it, or finish it first.`);
@@ -441,7 +447,7 @@ export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; na
   const base = measure(db, keys, input.kind);
   const title = (input.title?.trim() || (input.kind === 'uat' ? `UAT · ${keys.length === 1 ? keys[0] : `${keys.length} stories`}` : `Regression · ${app.name}`)).slice(0, 120);
   db.raw.transaction(() => {
-    db.raw.prepare('INSERT INTO flows (id, application_id, kind, title, owner_id, status, baseline, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, app.id, input.kind, title, user.id, 'active', JSON.stringify(base), t, t);
+    db.raw.prepare('INSERT INTO flows (id, application_id, kind, title, owner_id, status, baseline, created_at, updated_at, origin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, app.id, input.kind, title, user.id, 'active', JSON.stringify(base), t, t, input.origin ?? null);
     const ins = db.raw.prepare('INSERT INTO flow_items (flow_id, story_key, position, added_by, added_at) VALUES (?, ?, ?, ?, ?)');
     keys.forEach((k, i) => ins.run(id, k, i, user.id, t));
     event(db, id, user.id, 'start', `Started with ${plural(keys.length, 'story', 'stories')}: ${base.covered} of ${base.criteria} criteria covered.`);
@@ -616,4 +622,90 @@ export function flowWorker(getDb: () => HorizonDb, getConfig: () => DeepSeekConf
   const timer = setInterval(kick, 15_000);
   timer.unref?.();
   return { kick, stop: () => clearInterval(timer) };
+}
+
+/** The flow started from a chat answer's Start card, if any. */
+export function flowByOrigin(db: HorizonDb, app: string, origin: string): string | null {
+  return (db.raw.prepare('SELECT id FROM flows WHERE application_id = ? AND origin = ?').get(app, origin) as { id: string } | undefined)?.id ?? null;
+}
+
+/* ---------- Flows in chat ---------- */
+
+const WAITING_Q = /\b(what(?:'s| is)?\s+(?:waiting|pending)\s+(?:on|for)\s+me|waiting on me|my (?:pending|open) (?:items|reviews|tasks|work)|what do i (?:need|have) to do)\b/i;
+const STATUS_Q = /\b(where|status|progress|how far|stand(?:s|ing)?|blocked|stuck)\b[^?.!]{0,60}\b(uat|regression|test flows?|flows?)\b|\b(uat|regression|test flows?|flows?)\b[^?.!]{0,40}\b(status|progress|stand)\b/i;
+const START_Q = /^\s*(?:please\s+|can you\s+|could you\s+)?(?:start|begin|kick ?off|launch|set up|create|open)\b[^.?!]{0,40}\b(uat|regression)\b/i;
+const KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+
+export interface FlowAnswer {
+  prose: string;
+  blocks: Block[];
+}
+
+/**
+ * A request about test flows, answered from the records by rules, without a model: start a flow (a
+ * card listing the stories found, with Start), where a flow stands (its live card), or what waits on me.
+ */
+export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, roles: string[], text: string, tickets: string[]): FlowAnswer | null {
+  const keys = [...new Set([...tickets, ...(text.match(KEY_RE) ?? [])])];
+  const start = START_Q.exec(text);
+  if (start) {
+    const kind: FlowKind = /regression/i.test(start[1]) ? 'regression' : 'uat';
+    const version = /\b(?:release|version|fix version)?\s*(\d+\.\d+(?:\.\d+)?)\b/i.exec(text)?.[1] ?? null;
+    let stories: { key: string; summary: string; note?: string }[];
+    let how: string;
+    if (keys.length) {
+      stories = keys.flatMap((k) => {
+        const s = db.getStory(k);
+        return s && s.applicationId === app.id ? [{ key: s.key, summary: s.summary }] : [];
+      });
+      how = 'the stories you named';
+    } else if (kind === 'regression') {
+      stories = appCoverage(db, app).gaps.map((g) => ({ key: g.key, summary: g.summary, note: `${g.uncovered.length} of ${g.criteria} uncovered` }));
+      how = 'every story with a criterion that no passing automated test covers';
+    } else {
+      const all = db.listStories(app.id);
+      const picked = all.filter((s) => (version ? s.fixVersion === version : /ready for uat/i.test(s.status)));
+      stories = picked.map((s) => ({ key: s.key, summary: s.summary, note: s.status }));
+      how = version ? `the stories with fix version ${version}` : 'the stories in Ready for UAT';
+    }
+    stories = stories.slice(0, MAX_FLOW_STORIES);
+    const title = kind === 'uat' ? (version ? `UAT · release ${version}` : `UAT · ${stories.length === 1 ? stories[0].key : `${stories.length} stories`}`) : `Regression · ${app.name}`;
+    const allowed = roles.includes('app_owner') || roles.includes('component_manager');
+    const prose = !stories.length
+      ? `I found no stories for a ${kind === 'uat' ? 'UAT' : 'regression'} flow from ${how}. Name the stories, or check the Jira filter.`
+      : `I found ${plural(stories.length, 'story', 'stories')} for a ${kind === 'uat' ? 'UAT' : 'regression'} flow: ${how}. Untick any you want to leave out, then press Start. Nothing starts until you do.${allowed ? '' : ' Only an app owner or a component manager can start a flow.'}`;
+    return { prose, blocks: stories.length ? [{ kind: 'flow_start', flowKind: kind, title, stories }] : [] };
+  }
+  const flows = listFlows(db, app, userId);
+  if (WAITING_Q.test(text)) {
+    const mine = flows.flatMap((f) => f.waiting.filter((w) => w.you).map((w) => ({ f, w })));
+    const prose = !flows.length
+      ? 'No test flow is running in this application, so nothing in a flow waits on you.'
+      : mine.length
+        ? `In the test flows, ${plural(mine.reduce((n, x) => n + x.w.stories.length, 0), 'story waits', 'stories wait')} on you: ${mine.map((x) => `${x.w.action.toLowerCase()} for ${x.w.stories.join(', ')} in "${x.f.title}"`).join('; ')}.`
+        : `Nothing in the ${plural(flows.length, 'active test flow')} waits on you right now.`;
+    return { prose, blocks: flows.length ? [{ kind: 'flows_waiting' }] : [] };
+  }
+  if (STATUS_Q.test(text) && flows.length) {
+    const byKey = keys.length ? flows.filter((f) => itemsOf(db, f.id).some((i) => keys.includes(i.key))) : [];
+    const words = text.toLowerCase();
+    const byTitle = flows.filter((f) => f.title.toLowerCase().split(/[^a-z0-9.]+/).some((w) => w.length > 2 && /\d/.test(w) && words.includes(w)));
+    const byKind = flows.filter((f) => new RegExp(`\\b${f.kind}\\b`, 'i').test(text));
+    // A story that is in no flow gets the usual readiness answer, not some other flow.
+    if (keys.length && !byKey.length) return null;
+    const chosen = byKey.length ? byKey : byTitle.length ? byTitle : byKind.length ? byKind : flows;
+    const f = chosen[0];
+    const view = flowView(db, app, f.id, userId, roles);
+    const named = keys.map((k) => view.items.find((s) => s.key === k)).filter((s): s is FlowStory => !!s);
+    const label = (k: string) => STEPS[f.kind].find((s) => s.key === k)?.label ?? k;
+    const storyLines = named.map((s) => {
+      const st = s.steps.find((x) => x.key === s.current);
+      return st ? `${s.key} is at ${label(st.key)}: ${st.detail}${st.waitingOn.length ? ` It waits on ${st.waitingOn.map((p) => (p.id === userId ? 'you' : p.name)).join(' or ')}.` : ''}` : `${s.key} is through the flow.`;
+    });
+    const where = f.current ? `at ${f.current.label}: ${f.steps.map((s) => `${s.label} ${s.done} of ${f.stories}`).join(', ')}` : 'finished';
+    const prose = [`"${f.title}" is ${where}.`, ...storyLines, chosen.length > 1 ? `${plural(chosen.length - 1, 'other flow')} also matched; ask by name to see ${chosen.length > 2 ? 'them' : 'it'}.` : ''].filter(Boolean).join(' ');
+    return { prose, blocks: [{ kind: 'flow', flowId: f.id }] };
+  }
+  if (STATUS_Q.test(text) && /\b(test flows?|flows?)\b/i.test(text)) return { prose: 'No test flow is running in this application. Ask me to start one, for example "start UAT for the Ready for UAT stories".', blocks: [] };
+  return null;
 }

@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowView, flowWorker, listFlows, recordExecution, setStatus, signOff } from './flows';
+import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowView, flowWorker, listFlows, recordExecution, setStatus, signOff } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -396,13 +396,19 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         try {
           const str = (v: unknown, max = 200) => (isStr(v) ? v.slice(0, max) : '');
           const keys = (v: unknown) => (Array.isArray(v) ? v.filter(isStr).map((k) => k.trim()).filter((k) => /^[A-Z][A-Z0-9]+-\d+$/.test(k)).slice(0, 101) : []);
-          if (url === '/api/flows' && req.method === 'GET') return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
+          if (url === '/api/flows' && req.method === 'GET') {
+            // ?origin=<answer revision>: the flow a chat answer's Start card started, if any.
+            const origin = full.searchParams.get('origin');
+            if (origin) return send(res, 200, { flowId: /^[A-Za-z0-9_-]{1,80}$/.test(origin) ? flowByOrigin(db, appId, origin) : null });
+            return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
+          }
           if (url === '/api/flows/coverage' && req.method === 'GET') return send(res, 200, appCoverage(db, member));
           if (url === '/api/flows' && req.method === 'POST') {
             const b = (await readJson(req)) as Record<string, unknown>;
             const kind = b.kind === 'uat' || b.kind === 'regression' ? b.kind : null;
             if (!kind) throw new HttpError(400, 'kind must be uat or regression.');
-            const fid = createFlow(db, member, user, roles, { kind, title: str(b.title, 120), stories: keys(b.stories) });
+            const origin = str(b.origin, 80);
+            const fid = createFlow(db, member, user, roles, { kind, title: str(b.title, 120), stories: keys(b.stories), origin: /^[A-Za-z0-9_-]{1,80}$/.test(origin) ? origin : null });
             flows.kick();
             return send(res, 201, { flow: flowView(db, member, fid, user.id, roles) });
           }

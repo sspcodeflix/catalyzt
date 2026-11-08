@@ -15,6 +15,7 @@ export type AgentName =
   | 'Router'
   | 'Clarifier'
   | 'UAT analyst'
+  | 'Test flows'
   | 'Analysis agent'
   | 'Authoring agent'
   | 'Execution agent'

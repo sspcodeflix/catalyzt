@@ -113,6 +113,46 @@ describe('who a step waits on', () => {
   });
 });
 
+describe('test flows in chat', () => {
+  const ask = (text: string, n: string) => ({ text, agent: 'auto', scope: {}, testType: null, testTypeSource: null, tickets: [], components: [], history: [], chatId: `c${n}`, messageId: `m${n}`, answerId: `a${n}` });
+  const blocksOf = (events: { type: string; blocks?: { kind: string }[] }[]) => events.find((e) => e.type === 'answer')?.blocks ?? [];
+  it('proposes a flow with Start, then answers where it stands and what waits on me, live', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    // Start: a card with the stories found; nothing is created by the answer itself.
+    let events = (await sourav.run(ask('Start UAT for the Ready for UAT stories', '1'))) as never[];
+    const start = blocksOf(events).find((b) => b.kind === 'flow_start') as unknown as { stories: { key: string }[]; flowKind: string };
+    expect(start).toMatchObject({ flowKind: 'uat' });
+    expect(start.stories.map((s) => s.key)).toEqual(expect.arrayContaining(['ABCD-1001', 'ABCD-1002']));
+    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM flows').get()).toEqual({ n: 0 });
+    // Pressing Start (the card posts with the answer's revision as origin); pressing it again gives the same flow.
+    const one = (await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'], origin: 'a1-r1' })).json()) as { flow: FlowView };
+    const two = (await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'], origin: 'a1-r1' })).json()) as { flow: FlowView };
+    expect(two.flow.id).toBe(one.flow.id);
+    expect(((await (await sourav.get('/api/flows?origin=a1-r1')).json()) as { flowId: string }).flowId).toBe(one.flow.id);
+    await until('u-sourav', one.flow.id, (x) => step(x, 'analyse').state === 'done');
+    // The flow's own analysis chats are the flow's, not the person's recents.
+    const recents = ((await (await sourav.get('/api/chats')).json()) as { chats: { id: string }[] }).chats.map((c) => c.id);
+    const flowChat = (await view('u-sourav', one.flow.id)).items[0].chatId!;
+    expect(recents).not.toContain(flowChat);
+    expect(recents).toContain('c1');
+
+    // Where it stands: a live card for the flow holding the story, and a sentence naming its step.
+    events = (await sourav.run(ask('Where is the UAT for ABCD-1001?', '2'))) as never[];
+    expect(blocksOf(events)).toContainEqual({ kind: 'flow', flowId: one.flow.id });
+    const prose = (blocksOf(events).find((b) => b.kind === 'prose') as unknown as { text: string }).text;
+    expect(prose).toMatch(/ABCD-1001 is at Review cases: .* It waits on you\./);
+
+    // What waits on me.
+    events = (await sourav.run(ask("What's waiting on me?", '3'))) as never[];
+    expect(blocksOf(events).map((b) => b.kind)).toContain('flows_waiting');
+    expect((blocksOf(events).find((b) => b.kind === 'prose') as unknown as { text: string }).text).toMatch(/review cases for ABCD-1001/);
+
+    // A story in no flow still gets the readiness report.
+    events = (await sourav.run(ask('What is the UAT status of ABCD-1002?', '4'))) as never[];
+    expect(blocksOf(events).map((b) => b.kind)).not.toContain('flow');
+  });
+});
+
 describe('a regression flow', () => {
   it('asks for automation where a criterion has none, then waits for CI', async () => {
     const id = ((await (await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'regression', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;

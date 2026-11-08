@@ -89,6 +89,12 @@ export type Block =
   | { kind: 'artifact'; artifactId: string }
   | { kind: 'approval'; approval: Approval }
   | { kind: 'followups'; items: string[] }
+  /** A test flow, shown live: the card always loads the flow's current state, never a copy (docs/FLOWS.md). */
+  | { kind: 'flow'; flowId: string }
+  /** A proposed flow: the stories found for the request; nothing starts until a person presses Start. */
+  | { kind: 'flow_start'; flowKind: 'uat' | 'regression'; title: string; stories: { key: string; summary: string; note?: string }[] }
+  /** What waits on the person across the application's active flows, live. */
+  | { kind: 'flows_waiting' }
   /** A guardrail rejected the request. */
   | { kind: 'rejected'; title: string; text: string; by: string };
 

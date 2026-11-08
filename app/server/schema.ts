@@ -1030,4 +1030,9 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX manual_executions_test ON manual_executions (test_case_id, executed_at);
   `,
+  // 24: the chat answer a flow was started from, so its card shows the flow instead of a second Start.
+  `
+  ALTER TABLE flows ADD COLUMN origin TEXT;
+  CREATE INDEX flows_origin ON flows (origin);
+  `,
 ];

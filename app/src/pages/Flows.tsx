@@ -41,7 +41,7 @@ function Head({ title, children }: { title: string; children?: React.ReactNode }
 }
 
 /** The steps as a row: what is done across the flow's stories, and where the flow is. */
-function Stepper({ flow }: { flow: FlowSummary }) {
+export function Stepper({ flow }: { flow: FlowSummary }) {
   return (
     <ol className="flowsteps" aria-label="Steps">
       {flow.steps.map((s, i) => {
@@ -65,7 +65,7 @@ function Stepper({ flow }: { flow: FlowSummary }) {
   );
 }
 
-function Coverage({ c, kind }: { c: FlowSummary['coverage']; kind: FlowKind }) {
+export function Coverage({ c, kind }: { c: FlowSummary['coverage']; kind: FlowKind }) {
   return (
     <p className="flowcov">
       <span>
@@ -512,7 +512,7 @@ export function FlowDetail() {
   );
 }
 
-function StoryRow({ flow, story, open, onToggle, post }: { flow: FlowView; story: FlowStory; open: boolean; onToggle: () => void; post: (path: string, body: unknown) => Promise<void> }) {
+export function StoryRow({ flow, story, open, onToggle, post }: { flow: FlowView; story: FlowStory; open: boolean; onToggle: () => void; post: (path: string, body: unknown) => Promise<void> }) {
   const me = useSession().me?.user.name;
   const step = story.steps.find((s) => s.key === story.current);
   const labels = STEPS[flow.kind];
