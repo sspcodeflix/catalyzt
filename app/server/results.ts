@@ -23,23 +23,48 @@ export interface Candidate {
 export const rawName = (n: string) => n.replace(/\(.*\)\s*$/, '').trim();
 const lastPart = (cls: string) => cls.split(/[./\\:]/).filter(Boolean).pop() ?? '';
 
-export function matchCase(c: JUnitCase, cands: Candidate[]): Candidate | undefined {
+type Positioned = Candidate & { pos: number };
+
+/** Lookup maps over the candidate inventory, built once per import so matching does not rescan it per result. */
+export interface CandidateIndex {
+  byCodeName: Map<string, Positioned[]>;
+  byTitle: Map<string, Positioned[]>;
+  bySuiteTitle: Map<string, Positioned[]>;
+  byTitleLower: Map<string, Positioned[]>;
+}
+
+const push = <K>(m: Map<K, Positioned[]>, k: K, x: Positioned) => {
+  const list = m.get(k);
+  if (list) list.push(x);
+  else m.set(k, [x]);
+};
+
+export function indexCandidates(cands: Candidate[]): CandidateIndex {
+  const idx: CandidateIndex = { byCodeName: new Map(), byTitle: new Map(), bySuiteTitle: new Map(), byTitleLower: new Map() };
+  cands.forEach((c, pos) => {
+    const x = { ...c, pos };
+    if (c.codeName) push(idx.byCodeName, c.codeName, x);
+    push(idx.byTitle, c.title, x);
+    if (c.suite) push(idx.bySuiteTitle, `${c.suite} ${c.title}`, x);
+    push(idx.byTitleLower, c.title.toLowerCase(), x);
+  });
+  return idx;
+}
+
+export function matchCase(c: JUnitCase, cands: Candidate[], idx: CandidateIndex = indexCandidates(cands)): Candidate | undefined {
   const raw = rawName(c.name);
   const cls = lastPart(c.classname);
-  const byName = cands.filter((x) => x.codeName && x.codeName === raw);
+  const byName = idx.byCodeName.get(raw) ?? [];
   const agrees = (x: Candidate) =>
     (!!cls && (x.suite === cls || (x.path?.includes(cls) ?? false))) || (!!c.file && !!x.path && (c.file.endsWith(x.path) || x.path.endsWith(c.file)));
+  // Rule 3, in inventory order: the title alone, "<suite> <title>", or the classname plus title.
+  const literal = [...(idx.byTitle.get(c.name) ?? []), ...(idx.bySuiteTitle.get(c.name) ?? [])].sort((a, b) => a.pos - b.pos).find((x) => x.title === c.name || (!!x.suite && `${x.suite} ${x.title}` === c.name) || (x.suite === c.classname && x.title === c.name));
   // Titles of scanned tests are the method name in words, so this also matches tests that were
   // recorded before code names were stored.
   const words = humanize(raw).toLowerCase();
-  const byTitle = cands.filter((x) => x.title.toLowerCase() === words);
-  return (
-    byName.find(agrees) ??
-    (byName.length === 1 ? byName[0] : undefined) ??
-    cands.find((x) => x.title === c.name || (x.suite && `${x.suite} ${x.title}` === c.name) || (x.suite === c.classname && x.title === c.name)) ??
-    byTitle.find(agrees) ??
-    (byTitle.length === 1 ? byTitle[0] : undefined)
-  );
+  const byTitle = idx.byTitleLower.get(words) ?? [];
+  const strip = (x: Positioned | undefined): Candidate | undefined => (x ? { id: x.id, suite: x.suite, codeName: x.codeName, title: x.title, path: x.path } : undefined);
+  return strip(byName.find(agrees) ?? (byName.length === 1 ? byName[0] : undefined) ?? literal ?? byTitle.find(agrees) ?? (byTitle.length === 1 ? byTitle[0] : undefined));
 }
 
 /** A stable id for a test first seen in CI results, so later runs land on it. */

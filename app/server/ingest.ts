@@ -13,7 +13,7 @@ import type { HorizonDb, RunMeta } from './db';
 import { GitHubError, parseRepoRef } from './github';
 import { JUnitError, parseJUnit, type JUnitCase } from './junit';
 import { parseCsv, parseXlsx, readOctaneRows } from './octane';
-import { ciSuite, ciTestId, ciTitle, matchCase, rawName } from './results';
+import { ciSuite, ciTestId, ciTitle, indexCandidates, matchCase, rawName } from './results';
 
 export class IngestError extends Error {}
 
@@ -72,8 +72,10 @@ export async function importManual(db: HorizonDb, app: string, file: { filename:
 /** Matches parsed cases to known tests and stores the run. */
 function storeRun(db: HorizonDb, meta: RunMeta, cases: JUnitCase[], userId: string) {
   const cands = db.automatedCandidates(meta.app, meta.repo);
+  // Lookup maps once per import: matching a thousand results against a large inventory stays linear.
+  const idx = indexCandidates(cands);
   const results = cases.map((c) => {
-    const hit = matchCase(c, cands);
+    const hit = matchCase(c, cands, idx);
     return {
       testCaseId: hit?.id ?? null,
       create: hit ? undefined : { id: ciTestId(meta.app, meta.repo, c), title: ciTitle(c), suite: ciSuite(c), codeName: rawName(c.name), path: c.file },

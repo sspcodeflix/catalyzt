@@ -252,6 +252,13 @@ function migrate(db: Database.Database) {
 /** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
 export const componentId = (app: string, name: string) => `${app}/${name}`;
 
+/**
+ * Usage totals are polled by every open Agents page; they are recomputed at most once per few seconds
+ * per application and whenever a model call is recorded (the hardening review's "usage reporting").
+ */
+const USAGE_CACHE = new WeakMap<Database.Database, Map<string, { at: number; value: unknown }>>();
+const USAGE_TTL_MS = 5000;
+
 /** JUnit failure messages arrive with XML entities ("&#10;" for a newline); people read them decoded (R11). */
 export function decodeEntities(s: string | null): string | null {
   if (!s) return s;
@@ -688,10 +695,20 @@ export function openDb(path: string) {
         `INSERT INTO model_calls (workflow_run_id, agent_run_id, agent, user_id, model, purpose, status, prompt_tokens, completion_tokens, latency_ms, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(c.workflowRunId, c.agentRunId, c.agent, c.userId, c.model, c.purpose, c.status, c.promptTokens, c.completionTokens, Math.round(c.latencyMs), now());
+      USAGE_CACHE.get(db)?.clear();
     },
 
-    /** Token totals for an application (or everything): all time, today, by agent, model, user and day. */
+    /** Token totals for an application (or everything): all time, today, by agent, model, user and day. Cached briefly between polls. */
     usage(app: string | null = null) {
+      const cache = USAGE_CACHE.get(db) ?? new Map<string, { at: number; value: unknown }>();
+      USAGE_CACHE.set(db, cache);
+      const hit = cache.get(app ?? '*');
+      if (hit && Date.now() - hit.at < USAGE_TTL_MS) return hit.value as ReturnType<typeof compute>;
+      const value = compute();
+      cache.set(app ?? '*', { at: Date.now(), value });
+      return value;
+
+      function compute() {
       const sum = `COUNT(*) AS calls, COALESCE(SUM(m.prompt_tokens), 0) AS prompt, COALESCE(SUM(m.completion_tokens), 0) AS completion,
                    COALESCE(SUM(m.prompt_tokens), 0) + COALESCE(SUM(m.completion_tokens), 0) AS total,
                    SUM(CASE WHEN m.prompt_tokens IS NULL THEN 1 ELSE 0 END) AS unreported`;
@@ -709,6 +726,7 @@ export function openDb(path: string) {
           .all(app, app) as (Tot & { key: string })[],
         byDay: db.prepare(`SELECT substr(m.created_at, 1, 10) AS key, ${sum} ${from} GROUP BY key ORDER BY key DESC LIMIT 14`).all(app, app) as (Tot & { key: string })[],
       };
+      }
     },
 
     /* ---------- Hexa: test case inventory ---------- */
@@ -1590,6 +1608,11 @@ export function openDb(path: string) {
            GROUP BY capability, reason HAVING COUNT(*) >= ? ORDER BY count DESC`,
         )
         .all(app, daysAgo(days), atLeast) as { capability: string; reason: string; count: number; people: number }[];
+    },
+
+    /** How many stories an application has, without hydrating any of them. */
+    countStories(app: string): number {
+      return (db.prepare('SELECT COUNT(*) AS n FROM stories WHERE application_id = ?').get(app) as { n: number }).n;
     },
 
     /**

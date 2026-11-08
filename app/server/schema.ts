@@ -810,4 +810,15 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE source_chunks ADD COLUMN retired_at TEXT;
   CREATE INDEX source_chunks_current ON source_chunks (source_id, retired_at);
   `,
+  // 16: indexes behind the predicates the hardening review found scanning: the runs of one commit
+  //     (F06), scan and upload histories per application, saved UAT reports by kind, model calls by
+  //     run (usage) and ratings by time (feedback patterns).
+  `
+  CREATE INDEX IF NOT EXISTS test_runs_commit ON test_runs (application_id, repo, sha);
+  CREATE INDEX IF NOT EXISTS repo_scans_app ON repo_scans (application_id, started_at);
+  CREATE INDEX IF NOT EXISTS hexa_uploads_app ON hexa_uploads (application_id, uploaded_at);
+  CREATE INDEX IF NOT EXISTS artifacts_kind ON artifacts (kind, created_at);
+  CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls (workflow_run_id);
+  CREATE INDEX IF NOT EXISTS ratings_created ON ratings (created_at);
+  `,
 ];

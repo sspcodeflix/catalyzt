@@ -72,7 +72,7 @@ export interface NewHuddleItem {
 const OPEN_LABEL: Record<HuddleKind, { label: string; tone: string }> = {
   conflict: { label: 'Needs a decision', tone: 'warn' },
   mapping: { label: 'Needs a decision', tone: 'warn' },
-  risk: { label: 'Security sign-off', tone: 'crit' },
+  risk: { label: 'Risk acceptance', tone: 'warn' },
   feedback: { label: 'Pattern to review', tone: 'info' },
 };
 

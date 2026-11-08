@@ -102,6 +102,18 @@ const id = (v: unknown) => (isStr(v) && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : un
 /** A story as the browser's Ticket type expects; UAT state is kept per session in the browser. */
 const asTicket = (s: StoredStory) => ({ ...s, uat: { state: 'not-analysed' as const, covered: 0, total: s.acceptanceCriteria.length } });
 
+const STORY_KEY = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+/** The application's stories a request can refer to: attached keys and keys written in the text or the recent history. */
+function mentionedStories(db: HorizonDb, app: string, body: { text: string; tickets: string[]; history: { text: string }[] }): StoredStory[] {
+  const keys = new Set<string>([...body.tickets, ...(body.text.match(STORY_KEY) ?? []), ...body.history.slice(-10).flatMap((h) => h.text.match(STORY_KEY) ?? [])]);
+  const out: StoredStory[] = [];
+  for (const key of keys) {
+    const s = db.getStory(key);
+    if (s && s.applicationId === app) out.push(s);
+  }
+  return out;
+}
+
 function parseRunRequest(b: unknown): Omit<RunRequest, 'syncedTickets'> {
   const r = (b ?? {}) as Record<string, unknown>;
   if (!isStr(r.text) || !r.text.trim()) throw new HttpError(400, '`text` is required.');
@@ -373,7 +385,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         return send(res, 200, {
           pendingApprovals: db.listPendingApprovals(appId, 10),
           openDecisions: listItems(db, appId).filter((i) => !i.decision).length,
-          stories: db.listStories(appId).length,
+          stories: db.countStories(appId),
           runs: { recent: runs.length, failed: runs.filter((r) => r.status === 'failed').length, latest: latest ? { id: latest.id, repo: latest.repo, status: latest.status, at: latest.at, prNumber: latest.prNumber } : null },
           tests: db.testStats(appId).total,
         });
@@ -411,7 +423,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           // Revisions are numbered by the server; the browser's number is never trusted.
           revision: body.answerId ? db.nextRevision(body.answerId) : 1,
           scope: { appName: member.name, appId, workspace: body.scope.workspace || member.workspaces[0] || '' },
-          syncedTickets: db.listStories(appId).map(asTicket),
+          // Only the stories the request can refer to are hydrated (attached keys, keys in the text or
+          // recent history), never the whole backlog per request.
+          syncedTickets: mentionedStories(db, appId, body).map(asTicket),
           knownComponents: member.components.map((c) => c.name),
           attachments,
         };

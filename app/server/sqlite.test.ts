@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { openDb, seedWorkspace } from './db';
-import { FIXTURE, seedRefundTests } from './fixture';
+import { FIXTURE, fixtureDb, seedRefundTests } from './fixture';
 import { MIGRATIONS } from './schema';
 
 const fresh = () => join(mkdtempSync(join(tmpdir(), 'hz-sqlite-')), 'horizon.db');
@@ -156,5 +156,21 @@ describe('schema upgrades keep identities and relationships', () => {
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'hexa.proposal_retired'").get()).toEqual({ n: 1 });
     expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name IN ('attachments', 'attachment_text') ORDER BY name").all()).toEqual([{ name: 'attachment_text' }, { name: 'attachments' }]);
     db.raw.close();
+  });
+});
+
+describe('query plans use the indexes the hot paths need', () => {
+  const plan = (db: ReturnType<typeof fixtureDb>, sql: string, ...args: unknown[]) => (db.raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as { detail: string }[]).map((r) => r.detail).join(' | ');
+  it('runs of a commit, scan and upload histories, saved UAT reports, usage and feedback patterns are indexed', () => {
+    const db = fixtureDb();
+    expect(plan(db, 'SELECT id FROM test_runs WHERE application_id = ? AND repo IS ? AND sha = ?', 'ABCD', 'acme/shop', 'abc')).toContain('test_runs_commit');
+    expect(plan(db, 'SELECT id FROM repo_scans WHERE application_id = ? ORDER BY started_at DESC', 'ABCD')).toContain('repo_scans_app');
+    expect(plan(db, 'SELECT id FROM hexa_uploads WHERE application_id = ? ORDER BY uploaded_at DESC', 'ABCD')).toContain('hexa_uploads_app');
+    expect(plan(db, "SELECT body FROM artifacts WHERE kind = 'uat_report' ORDER BY created_at DESC")).toContain('artifacts_kind');
+    expect(plan(db, 'SELECT COUNT(*) FROM model_calls m LEFT JOIN workflow_runs w ON w.id = m.workflow_run_id WHERE w.application_id = ?', 'ABCD')).toContain('model_calls_run');
+    expect(plan(db, 'SELECT status FROM test_results WHERE test_case_id = ?', 'x')).toContain('test_results_case');
+    expect(plan(db, 'SELECT revision_id FROM ratings WHERE created_at >= ?', '2026-01-01')).toContain('ratings_created');
+    // Current passages of a source never scan the whole table.
+    expect(plan(db, 'SELECT id FROM source_chunks WHERE source_id = ? AND retired_at IS NULL', 's')).toMatch(/source_chunks_current|source_chunks_source/);
   });
 });
