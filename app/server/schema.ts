@@ -1057,4 +1057,25 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE approvals ADD COLUMN note TEXT;
   `,
+  // 28: who approves a story's drafted cases in a flow. The managers of its components always do; a manager
+  // can add people to a story, and each required approver records one decision per proposal.
+  `
+  CREATE TABLE flow_story_approvers (
+    flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    story_key TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    added_by TEXT NOT NULL REFERENCES users(id),
+    added_at TEXT NOT NULL,
+    removed_at TEXT,
+    PRIMARY KEY (flow_id, story_key, user_id)
+  );
+  CREATE TABLE flow_reviews (
+    approval_id TEXT NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    decision TEXT NOT NULL CHECK (decision IN ('approved', 'declined')),
+    note TEXT,
+    at TEXT NOT NULL,
+    PRIMARY KEY (approval_id, user_id)
+  );
+  `,
 ];

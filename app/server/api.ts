@@ -42,7 +42,7 @@ import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
 import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
 import { RequestError } from './context';
-import { CHAT_PAGE, componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
+import { CHAT_PAGE, componentId, OwnershipError, STATUSES, type ApprovalOutcome, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
 import { HuddleError, huddleCounts, raiseFeedbackPattern } from './huddle';
 import { LocalBlobStore, type BlobStore } from './storage';
 import { maxScansFromEnv, RunLimiter, runLimitsFromEnv, type RunLimits } from './limits';
@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, setStatus, signOff, storiesInFlows } from './flows';
+import { analyseAgain, appCoverage, appPeople, castReview, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, setApprovers, setStatus, signOff, storiesInFlows } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -204,6 +204,18 @@ export function ingestTokensFromEnv(env: Record<string, string | undefined>): Re
 }
 
 /** The UAT analyst's proposed cases become manual tests in Hexa, linked to the story and its criteria. */
+/** Approving drafted UAT cases adds them to Hexa from the payload frozen with the approval, inside the decision's transaction. */
+function casesExecutor(db: HorizonDb, appId: string, user: { id: string; name: string }) {
+  return (payload: ApprovalPayload): ApprovalOutcome => {
+    const story = payload.storyKey ? db.getStory(payload.storyKey) : undefined;
+    if (!story || story.applicationId !== appId) throw new HttpError(409, 'The story this approval refers to is no longer in this application.');
+    if (!payload.cases?.length) throw new HttpError(409, 'This approval has no test cases to add.');
+    const r = addUatCases(db, appId, story, payload.cases, user);
+    const n = r.created + r.updated;
+    return { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
+  };
+}
+
 function addUatCases(db: HorizonDb, appId: string, story: StoredStory, cases: NonNullable<ApprovalPayload['cases']>, user: { id: string; name: string }) {
   const tests = cases.slice(0, 50).map((c) => ({
     externalId: c.id,
@@ -396,6 +408,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         try {
           const str = (v: unknown, max = 200) => (isStr(v) ? v.slice(0, max) : '');
           const keys = (v: unknown) => (Array.isArray(v) ? v.filter(isStr).map((k) => k.trim()).filter((k) => /^[A-Z][A-Z0-9]+-\d+$/.test(k)).slice(0, 101) : []);
+          const ids = (v: unknown) => (Array.isArray(v) ? v.filter(isStr).map((k) => k.trim()).filter((k) => /^[A-Za-z0-9_.@-]{1,64}$/.test(k)).slice(0, 20) : []);
           if (url === '/api/flows' && req.method === 'GET') {
             // ?origin=<answer revision>: the flow a chat answer's Start card started, if any.
             // ?stories=K1,K2: the active flows holding any of these stories, for the bar in a chat about them.
@@ -409,6 +422,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
           }
           if (url === '/api/flows/coverage' && req.method === 'GET') return send(res, 200, appCoverage(db, member));
+          if (url === '/api/flows/people' && req.method === 'GET') return send(res, 200, { people: appPeople(db, appId) });
           if (url === '/api/flows/taken' && req.method === 'GET') {
             const kind = full.searchParams.get('kind') === 'regression' ? 'regression' : 'uat';
             return send(res, 200, { taken: [...storiesInFlows(db, appId, kind)].map(([key, f]) => ({ key, ...f })) });
@@ -422,7 +436,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             flows.kick();
             return send(res, 201, { flow: flowView(db, member, fid, user.id, roles) });
           }
-          const fm = /^\/api\/flows\/([A-Za-z0-9_-]{1,64})(?:\/(status|stories|analyse|signoff))?$/.exec(url);
+          const fm = /^\/api\/flows\/([A-Za-z0-9_-]{1,64})(?:\/(status|stories|analyse|signoff|approvers))?$/.exec(url);
           if (fm && !fm[2] && req.method === 'GET') return send(res, 200, { flow: flowView(db, member, fm[1], user.id, roles) });
           if (fm && fm[2] && req.method === 'POST') {
             const b = (await readJson(req)) as Record<string, unknown>;
@@ -436,6 +450,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             } else if (fm[2] === 'analyse') {
               analyseAgain(db, member, fm[1], user, roles, str(b.storyKey, 40));
               flows.kick();
+            } else if (fm[2] === 'approvers') {
+              setApprovers(db, member, fm[1], user, roles, str(b.storyKey, 40), ids(b.add), ids(b.remove), casesExecutor(db, appId, user));
             } else {
               const decision = b.decision === 'signed_off' || b.decision === 'rejected' ? b.decision : null;
               if (!decision) throw new HttpError(400, 'decision must be signed_off or rejected.');
@@ -618,36 +634,44 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           throw new HttpError(409, a.status === 'expired' ? 'This approval was superseded by a newer revision of the answer.' : `This was already ${a.status}.`);
         };
         if (found.status !== 'pending') return settled(found);
-        // Server-side rules: an owner or a component manager decides. In chat, approving needs a rating first.
-        // The proposal a test flow is reviewing (its newest drafted cases for a story in the flow) is decided
-        // as the flow's own step instead: the decision is about the requirements and their cases, not feedback
-        // on the answer, so no rating is asked for, and asking for changes says what to change.
-        requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
-        const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && isFlowReview(db, appId, found.id, found.payload.storyKey);
         const note = typeof b.note === 'string' ? b.note.trim().slice(0, 1000) : '';
-        if (decision === 'approved' && !inFlow && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
-        if (decision === 'declined' && inFlow && note.length < 3) throw new HttpError(400, 'Say what should change in the drafted cases.');
-        // F19: a component manager decides only changes to components they manage, taken from the frozen
-        // payload (older approvals: the story's components); an owner decides any. A change that names no
-        // component is the owner's to decide.
-        if (!roles.includes('app_owner')) {
-          const targets = found.payload.components ?? (found.payload.storyKey ? db.getStory(found.payload.storyKey)?.components ?? [] : []);
-          if (targets.length === 0) throw new HttpError(403, 'This change names no component you manage; only an app owner can decide it.');
-          const foreign = targets.filter((name) => member.components.find((c) => c.name === name)?.managerId !== user.id);
-          if (foreign.length) throw new HttpError(403, `Only the manager of ${foreign.join(', ')} or an app owner can decide this change.`);
+        const targets = found.payload.components ?? (found.payload.storyKey ? db.getStory(found.payload.storyKey)?.components ?? [] : []);
+        // The proposal a test flow is reviewing (its newest drafted cases for a story in the flow) is decided as
+        // the flow's own step: each required approver (the managers of the story's components, plus anyone a
+        // manager added) approves once, the cases are added when the last approval is in, and asking for
+        // changes ends the review with a note. No rating is asked for: the decision is about the requirements
+        // and their cases, not feedback on the answer.
+        const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && isFlowReview(db, appId, found.id, found.payload.storyKey);
+        let approvedBy: { id: string; name: string }[] = [];
+        if (inFlow) {
+          if (decision === 'declined' && note.length < 3) throw new HttpError(400, 'Say what should change in the drafted cases.');
+          let gate: ReturnType<typeof castReview>;
+          try {
+            gate = castReview(db, member, { id: found.id, storyKey: found.payload.storyKey!, components: targets }, user, decision, note || null);
+          } catch (e) {
+            if (e instanceof FlowError) throw new HttpError(e.status, e.message);
+            throw e;
+          }
+          approvedBy = gate.approvedBy;
+          if (!gate.complete) {
+            noteStory(db, appId, found.payload.storyKey!, user.id, 'review', `${user.name} approved the drafted cases for ${found.payload.storyKey}; waiting on ${gate.waitingOn.map((p) => p.name).join(' and ')}.`);
+            return send(res, 200, { approval: view(found), waitingOn: gate.waitingOn });
+          }
+        } else {
+          // In chat: an owner or a component manager decides, and approving needs a rating first.
+          requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
+          if (decision === 'approved' && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+          // F19: a component manager decides only changes to components they manage, taken from the frozen
+          // payload (older approvals: the story's components); an owner decides any. A change that names no
+          // component is the owner's to decide.
+          if (!roles.includes('app_owner')) {
+            if (targets.length === 0) throw new HttpError(403, 'This change names no component you manage; only an app owner can decide it.');
+            const foreign = targets.filter((name) => member.components.find((c) => c.name === name)?.managerId !== user.id);
+            if (foreign.length) throw new HttpError(403, `Only the manager of ${foreign.join(', ')} or an app owner can decide this change.`);
+          }
         }
         // The action runs from the payload frozen with the approval, inside the decision's transaction.
-        const execute =
-          decision === 'approved' && found.action === 'add_uat_cases'
-            ? (payload: ApprovalPayload) => {
-                const story = payload.storyKey ? db.getStory(payload.storyKey) : undefined;
-                if (!story || story.applicationId !== appId) throw new HttpError(409, 'The story this approval refers to is no longer in this application.');
-                if (!payload.cases?.length) throw new HttpError(409, 'This approval has no test cases to add.');
-                const r = addUatCases(db, appId, story, payload.cases, user);
-                const n = r.created + r.updated;
-                return { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
-              }
-            : undefined;
+        const execute = decision === 'approved' && found.action === 'add_uat_cases' ? casesExecutor(db, appId, user) : undefined;
         const result = db.decideApproval(found.id, decision, user.id, execute, note || null);
         if (result.kind === 'missing') return send(res, 404, { error: 'This approval does not exist in this application.' });
         if (result.kind === 'already') return settled(result.approval);
@@ -660,7 +684,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             user.id,
             decision,
             decision === 'approved'
-              ? `Approved the drafted cases for ${found.payload.storyKey}${inFlow ? '' : ' in chat'}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`
+              ? `Approved the drafted cases for ${found.payload.storyKey}${inFlow ? (approvedBy.length > 1 ? ` (${approvedBy.map((p) => p.name).join(' and ')})` : '') : ' in chat'}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`
               : inFlow
                 ? `Asked for changes to the drafted cases for ${found.payload.storyKey}: "${note}"`
                 : `Declined an older proposal of cases for ${found.payload.storyKey} in chat.`,

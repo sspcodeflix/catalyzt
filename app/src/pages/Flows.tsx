@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { approvalBlockReason } from '../lib/approvalRights';
 import type { DecidedApproval } from '../lib/chatStore';
 import { api } from '../lib/hexa';
 import { flowsChanged, STEPS, type FlowKind, type FlowStory, type FlowSummary, type FlowView, type StepKey, type StoryStep } from '../lib/flows';
@@ -684,7 +683,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
               <span>
                 <b>{c.id}</b> {c.text}
               </span>
-              {flow.kind === 'uat' && cases.map((m) => <ManualRow key={m.id} m={m} canExecute={runnable && flow.canExecute && flow.status === 'active'} />)}
+              {flow.kind === 'uat' && cases.map((m) => <ManualRow key={m.id} m={m} canExecute={runnable && story.can.execute && flow.status === 'active'} />)}
             </li>
           );
         })}
@@ -708,7 +707,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
               {story.signoff.stale ? ' · the evidence has changed since' : ''}
             </p>
           )}
-          {signStep.state === 'waiting' && flow.canSignOff && flow.status === 'active' && (
+          {signStep.state === 'waiting' && story.can.signoff && flow.status === 'active' && (
             <>
               <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (needed when you do not sign off)" aria-label={`Sign-off note for ${story.key}`} />
               <div className="row">
@@ -721,7 +720,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
               </div>
             </>
           )}
-          {signStep.state === 'waiting' && !flow.canSignOff && <p className="muted">A product owner or the app owner signs off.</p>}
+          {signStep.state === 'waiting' && !story.can.signoff && <p className="muted">The manager of the story's components signs off (a product owner or an app owner may too).</p>}
         </div>
       )}
     </div>
@@ -729,27 +728,28 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
 }
 
 /**
- * The flow's own review step: each requirement of the story with the cases drafted for it, then Approve or
- * Request changes. It decides the approval from the analysis; no rating of the answer is asked for here.
+ * The flow's own review step: each requirement of the story with the cases drafted for it, who has to approve
+ * (the components' managers, plus anyone a manager added) and where each stands, then Approve or Request
+ * changes for the person looking, if they are one of them. No rating of the answer is asked for here.
  */
 export function CaseReview({ flow, story, onDecided }: { flow: FlowView; story: FlowStory; onDecided?: (a: DecidedApproval) => void }) {
-  const session = useSession();
+  const me = useSession().userId;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const review = story.review!;
-  const step = story.steps.find((s) => s.key === 'review');
-  // Who may decide is the server's rule for approvals (an app owner, or the manager of every component the
-  // cases touch), mirrored here so the buttons are only offered to someone the server will accept.
-  const blocked = approvalBlockReason(session.me?.app, session.userId, review.components);
-  const canDecide = flow.status === 'active' && !blocked;
+  const approvers = review.approvers;
+  const mine = approvers.find((a) => a.id === me);
+  const others = approvers.filter((a) => a.id !== me && a.decision !== 'approved');
   const decide = async (decision: 'approved' | 'declined') => {
     setBusy(true);
     setError('');
     try {
       const r = await api<{ approval: DecidedApproval }>(`/api/approvals/${review.approvalId}/decision`, { method: 'POST', body: JSON.stringify({ decision, note: decision === 'declined' ? note : undefined }) });
       onDecided?.(r.approval);
+      setAsking(false);
+      setNote('');
       flowsChanged();
     } catch (e) {
       setError((e as Error).message);
@@ -758,11 +758,14 @@ export function CaseReview({ flow, story, onDecided }: { flow: FlowView; story: 
     }
   };
   const n = review.cases.length;
+  const several = approvers.length > 1;
+  const next = flow.kind === 'uat' ? 'Run tests' : 'Automate';
   return (
     <section className="flowreview" id={`review-${story.key}`} aria-label={`Review the drafted cases for ${story.key}`}>
       <h3>Review the drafted cases</h3>
       <p className="muted small">
-        Check each requirement and the cases drafted for it. Approving adds {n === 1 ? 'the case to Hexa as a manual UAT test' : `the ${n} cases to Hexa as manual UAT tests`} and moves {story.key} to Run tests.
+        Check each requirement and the cases drafted for it. {several ? `Each of the ${approvers.length} approvers approves once; the last approval ` : 'Approving '}
+        adds {n === 1 ? 'the case to Hexa as a manual UAT test' : `the ${n} cases to Hexa as manual UAT tests`} and moves {story.key} to {next}.
       </p>
       <ol className="reviewreqs">
         {story.criteria.map((c) => {
@@ -792,14 +795,15 @@ export function CaseReview({ flow, story, onDecided }: { flow: FlowView; story: 
           );
         })}
       </ol>
-      {canDecide ? (
+      <Approvers flow={flow} story={story} />
+      {story.can.review ? (
         <>
           {asking && (
             <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should change: a missing requirement, a wrong step, a case to drop…" aria-label={`What should change for ${story.key}`} autoFocus />
           )}
           <div className="row">
             <button type="button" className="btn ink" disabled={busy} onClick={() => void decide('approved')}>
-              Approve {n === 1 ? 'the case' : `${n} cases`}
+              {several ? 'Approve' : `Approve ${n === 1 ? 'the case' : `${n} cases`}`}
             </button>
             {asking ? (
               <button type="button" className="btn" disabled={busy || note.trim().length < 3} onClick={() => void decide('declined')}>
@@ -812,18 +816,90 @@ export function CaseReview({ flow, story, onDecided }: { flow: FlowView; story: 
             )}
           </div>
         </>
-      ) : (
-        <p className="muted small">
-          {flow.status !== 'active' ? `The flow is ${flow.status}; the review continues when it is resumed. ` : ''}
-          {step?.waitingOn.length ? `${step.waitingOn.map((p) => p.name).join(' or ')} reviews these cases.` : 'A component manager reviews these cases.'}
-        </p>
-      )}
+      ) : mine?.decision === 'approved' ? (
+        <p className="muted small">You approved. {others.length ? `Waiting on ${others.map((a) => a.name).join(' and ')}.` : ''}</p>
+      ) : flow.status !== 'active' ? (
+        <p className="muted small">The flow is {flow.status}; the review continues when it is resumed.</p>
+      ) : null}
       {error && (
         <p className="errtext" role="alert">
           {error}
         </p>
       )}
     </section>
+  );
+}
+
+/** Who approves a story's cases, where each stands, and (for a manager) adding or removing people. */
+function Approvers({ flow, story }: { flow: FlowView; story: FlowStory }) {
+  const review = story.review!;
+  const [people, setPeople] = useState<{ id: string; name: string; roles: string[] }[] | null>(null);
+  const [pick, setPick] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const canManage = story.can.manageApprovers;
+  useEffect(() => {
+    if (!canManage || people) return;
+    api<{ people: { id: string; name: string; roles: string[] }[] }>('/api/flows/people')
+      .then((d) => setPeople(d.people))
+      .catch(() => setPeople([]));
+  }, [canManage, people]);
+  const change = async (body: { add?: string[]; remove?: string[] }) => {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/flows/${flow.id}/approvers`, { method: 'POST', body: JSON.stringify({ storyKey: story.key, ...body }) });
+      setPick('');
+      flowsChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const options = (people ?? []).filter((p) => !review.approvers.some((a) => a.id === p.id));
+  return (
+    <div className="approvers">
+      <h4>Who approves</h4>
+      <ul>
+        {review.approvers.map((a) => (
+          <li key={a.id}>
+            <span className={`pill ${a.decision === 'approved' ? 'pass' : a.decision === 'declined' ? 'crit' : 'warn'}`}>{a.decision === 'approved' ? 'Approved' : a.decision === 'declined' ? 'Asked for changes' : 'Waiting'}</span>
+            <b>{a.name}</b>
+            <span className="muted">{a.why}</span>
+            {canManage && a.why.startsWith('added by') && a.decision !== 'approved' && (
+              <button type="button" className="btn small plain" disabled={busy} onClick={() => void change({ remove: [a.id] })}>
+                Remove
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {canManage && (
+        <div className="addapprover">
+          <label>
+            Also needs approval from{' '}
+            <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={`Add an approver for ${story.key}`}>
+              <option value="">Choose a person…</option>
+              {options.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.roles.length ? ` · ${p.roles.map((r) => r.replace(/_/g, ' ')).join(', ')}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="btn small" disabled={busy || !pick} onClick={() => void change({ add: [pick] })}>
+            Add
+          </button>
+        </div>
+      )}
+      {error && (
+        <p className="errtext" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

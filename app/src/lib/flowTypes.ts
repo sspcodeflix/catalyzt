@@ -58,7 +58,19 @@ export interface FlowStory {
   manual: ManualCase[];
   signoff: { decision: string; by: string; at: string; note: string | null; stale: boolean } | null;
   /** Drafted cases waiting for review (or sent back with a note), for the flow's own review step. */
-  review: { approvalId: string; status: string; cases: { id: string; title: string; criterion: string; steps: string[] }[]; note: string | null; decidedBy: string | null; chatId: string; components: string[] } | null;
+  review: {
+    approvalId: string;
+    status: string;
+    cases: { id: string; title: string; criterion: string; steps: string[] }[];
+    note: string | null;
+    decidedBy: string | null;
+    chatId: string;
+    components: string[];
+    /** Everyone whose approval the cases need (the components' managers, plus people added), with their decision so far. */
+    approvers: { id: string; name: string; why: string; decision: 'approved' | 'declined' | null; at: string | null; note: string | null }[];
+  } | null;
+  /** What the person looking can do on this story. */
+  can: { review: boolean; manageApprovers: boolean; execute: boolean; signoff: boolean };
   removed?: boolean;
 }
 export interface FlowSummary {

@@ -74,16 +74,17 @@ describe('a UAT flow', () => {
     expect(step(f, 'run').state).not.toBe('done');
     expect((await api.as('u-ram', 'ABCD').post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(409);
 
-    // AC3's test passes in CI: everything is verified and the app owner signs off; the flow is done.
+    // AC3's test passes in CI: everything is verified and the component manager signs off; the flow is done.
     const ac3 = db.coverageFor('ABCD-1001')[2].tests[0].id;
     db.ingestRun({ app: 'ABCD', source: 'webhook', repo: 'acme/shop', workflow: 'CI', externalRunId: 'r2', attempt: 1, runUrl: null, event: 'push', branch: 'main', sha: 'seed124', prNumber: 42, isMerge: true, startedAt: new Date().toISOString() },
       db.coverageFor('ABCD-1001').flatMap((c) => c.tests.filter((t) => t.kind === 'automated')).map((t) => ({ testCaseId: t.id, status: 'passed' as const, durationMs: 1, message: null })), 'u-sourav');
     expect(ac3).toBeTruthy();
     f = await view('u-ram', id);
     expect(step(f, 'run').state).toBe('done');
-    expect(step(f, 'signoff')).toMatchObject({ state: 'waiting', waitingOn: [{ id: 'u-ram' }] });
-    expect((await sourav.post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(403);
-    expect((await api.as('u-ram', 'ABCD').post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(200);
+    // Sign-off waits on the story's manager, not the app owner; a plain member cannot sign off.
+    expect(step(f, 'signoff')).toMatchObject({ state: 'waiting', waitingOn: [{ id: 'u-sourav', name: 'Sourav' }] });
+    expect((await api.as('u-devi', 'ABCD').post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(403);
+    expect((await sourav.post(`/api/flows/${id}/signoff`, { storyKey: 'ABCD-1001', decision: 'signed_off' })).status).toBe(200);
     f = await view('u-sourav', id);
     expect(f.status).toBe('done');
     expect(f.coverage.now).toBe(100);
@@ -105,7 +106,7 @@ describe('a UAT flow', () => {
 });
 
 describe('who a step waits on', () => {
-  it('leaves cases for components of two managers to the app owner, who alone can approve them', async () => {
+  it('needs every manager of a story spanning two managers\' components; the app owner is not required and cannot approve for them', async () => {
     // ABCD-1001 now spans checkoutservice (Sourav) and frontend (Devi as its manager, for this test).
     db.raw.prepare("UPDATE components SET manager_id = 'u-devi' WHERE application_id = 'ABCD' AND name = 'frontend'").run();
     db.raw.prepare("INSERT INTO story_components (story_key, component_id) SELECT 'ABCD-1001', id FROM components WHERE application_id = 'ABCD' AND name = 'frontend'").run();
@@ -113,7 +114,57 @@ describe('who a step waits on', () => {
     api = await startApi(db);
     const id = ((await (await api.as('u-ram', 'ABCD').post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
     const f = await until('u-ram', id, (x) => step(x, 'analyse').state === 'done');
-    expect(step(f, 'review')).toMatchObject({ state: 'waiting', waitingOn: [{ id: 'u-ram' }] });
+    expect(step(f, 'review').waitingOn.map((p) => p.id).sort()).toEqual(['u-devi', 'u-sourav']);
+    expect(f.items[0].review!.approvers.map((a) => [a.id, a.why])).toEqual(expect.arrayContaining([['u-sourav', 'manages checkoutservice'], ['u-devi', 'manages frontend']]));
+    expect(f.items[0].can.review).toBe(false);
+    const approvalId = f.items[0].review!.approvalId;
+    expect((await api.as('u-ram', 'ABCD').post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(403);
+    // Devi approves: one of two approvals is in; the cases are not added yet and the step waits on Sourav.
+    expect((await api.as('u-devi', 'ABCD').post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    expect(db.getApproval(approvalId)?.status).toBe('pending');
+    let g = await view('u-sourav', id);
+    expect(step(g, 'review')).toMatchObject({ state: 'waiting', waitingOn: [{ id: 'u-sourav' }] });
+    expect(step(g, 'review').detail).toMatch(/approved by Devi; 1 approval still to come\.$/);
+    expect(g.items[0].can.review).toBe(true);
+    // Sourav approves: the proposal is decided and the cases added.
+    expect((await api.as('u-sourav', 'ABCD').post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    expect(db.getApproval(approvalId)?.status).toBe('approved');
+    g = await view('u-sourav', id);
+    expect(step(g, 'review')).toMatchObject({ state: 'done', detail: 'Cases approved by Devi and Sourav.' });
+  });
+
+  it('lets a manager add people whose approval the cases also need, and remove them', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    const f = await until('u-sourav', id, (x) => step(x, 'review').state === 'waiting');
+    const approvalId = f.items[0].review!.approvalId;
+    const approvers = (body: unknown, who = 'u-sourav') => api.as(who, 'ABCD').post(`/api/flows/${id}/approvers`, body);
+    // The members to choose from. A plain member cannot change the list; a manager is not added twice; outsiders are refused.
+    const people = ((await (await sourav.get('/api/flows/people')).json()) as { people: { id: string }[] }).people.map((p) => p.id);
+    expect(people).toEqual(expect.arrayContaining(['u-ram', 'u-sourav', 'u-devi']));
+    expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-ram'] }, 'u-devi')).status).toBe(403);
+    expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-sourav'] })).status).toBe(400);
+    expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-nobody'] })).status).toBe(400);
+    // Ram and Devi are added: three approvals needed, and each sees the story waiting on them.
+    expect((await approvers({ storyKey: 'ABCD-1001', add: ['u-ram', 'u-devi'] })).status).toBe(200);
+    let g = await view('u-ram', id);
+    expect(step(g, 'review').waitingOn.map((p) => p.id).sort()).toEqual(['u-devi', 'u-ram', 'u-sourav']);
+    expect(g.items[0].review!.approvers.find((a) => a.id === 'u-ram')?.why).toBe('added by Sourav');
+    expect(g.waiting.find((w) => w.you)).toMatchObject({ action: 'Review cases', stories: ['ABCD-1001'] });
+    expect(g.items[0].can.review).toBe(true);
+    // Sourav and Ram approve; Devi is removed: nothing is left to wait for, so the cases are added.
+    expect((await sourav.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    expect((await api.as('u-ram', 'ABCD').post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    expect(db.getApproval(approvalId)?.status).toBe('pending');
+    expect((await approvers({ storyKey: 'ABCD-1001', remove: ['u-devi'] })).status).toBe(200);
+    expect(db.getApproval(approvalId)?.status).toBe('approved');
+    g = await view('u-sourav', id);
+    expect(step(g, 'review').state).toBe('done');
+    const texts = g.events.map((e) => e.text).join('\n');
+    expect(texts).toMatch(/Asked .+ to also approve the cases for ABCD-1001\./);
+    expect(texts).toMatch(/Sourav approved the drafted cases for ABCD-1001; waiting on /);
+    expect(texts).toMatch(/no longer needs to approve the cases for ABCD-1001\./);
+    expect(texts).toMatch(/Approved the drafted cases for ABCD-1001: Added/);
   });
 });
 

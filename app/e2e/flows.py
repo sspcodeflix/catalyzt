@@ -102,6 +102,7 @@ with sync_playwright() as p:
         panel = page.locator('.flowreview').first
         check('review: the requirements are listed with the cases drafted for them', panel.locator('.reviewreqs > li').count() >= 2 and panel.locator('.reviewcase').count() >= 1)
         check('review: no rating is asked for', 'Rate' not in panel.inner_text() and panel.locator('.stars, [aria-label*="Rate"]').count() == 0)
+        check('review: it says who approves and why, and a manager can add people', 'manages' in panel.locator('.approvers').inner_text() and panel.locator('.addapprover select').count() == 1)
         key = (panel.get_attribute('id') or '').replace('review-', '')
         # The link a chat gives (?review=KEY) opens the same review.
         page.goto(BASE + f'/flows/{flow_id}?review={key}')

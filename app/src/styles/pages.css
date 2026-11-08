@@ -359,3 +359,10 @@ legend { padding: 0; }
 .casesteps { flex-basis: 100%; font-size: 13px; }
 .casesteps > summary { cursor: pointer; color: var(--hz-text-secondary); }
 .casesteps ol { margin: 6px 0 0; padding-left: 22px; color: var(--hz-text-secondary); }
+
+/* Who approves a story's cases in a flow, and adding people. */
+.approvers h4 { margin: 4px 0 6px; font-size: 13.5px; }
+.approvers ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.approvers li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.addapprover { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 13.5px; }
+.addapprover select { height: 32px; padding: 0 8px; border: 1px solid var(--hz-border-strong); border-radius: var(--hz-radius-md); background: var(--hz-surface); color: var(--hz-text); font-size: 13.5px; max-width: 100%; }

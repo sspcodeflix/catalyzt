@@ -36,23 +36,25 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 
 ## Who it waits on
 
-- **Review cases:** the component's manager. When a story spans components of two managers, only the
-  app owner can approve the drafted cases, so the flow says it waits on the app owner.
-- **How cases are reviewed:** opening the story in the flow (or "Review cases" from any chat card or
-  story chat) shows each requirement with the cases drafted for it, then **Approve** or **Request
-  changes**. Sending cases back needs a note saying what to change; the note shows on the story and in
-  the timeline, and the story waits on the flow's owner to analyse again. No rating of the AI's answer is
-  asked for: rating is feedback that makes the assistant better, the review is a decision about the
-  cases. In a chat, the approval card for such a story is that same review, so it can be approved or sent back right there; it acts on the flow. Drafted cases for a
-  story in no flow keep the chat approval card, where approving still asks for a rating first.
+The component manager owns the flow for their stories and can take a story from analysis to sign-off
+alone. Nothing in a flow needs an app owner: owners are only the fallback for a component that has no
+manager, and they can add or remove approvers.
+
+- **Review cases:** every manager of the story's components approves the drafted cases, once each; a story
+  spanning two managers' components needs both. A manager (or the flow's owner, or an app owner) can add
+  people to a story, and their approval is needed too; "Who approves" on the story shows each person, why,
+  and where they stand. The cases are added to Hexa when the last approval is in. Anyone required can ask
+  for changes instead, with a note, which ends the review: the flow's owner analyses again. An app owner who
+  is not among the approvers cannot approve for them.
 - **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
   No manual case is drafted for that criterion.
-- **Run tests:** people with the UAT tester role, or the app owner when there are none. A failing test
-  waits on the component manager.
-- **Sign off:** people with the product owner role, or the app owner. Sign-off is refused while any
-  criterion is unverified. A sign-off with a gap needs a risk acceptance in Huddle.
-- **Automate:** people with the automation engineer role, or the component manager.
-- **Analyse, again:** the flow's owner, when an analysis failed or a reviewer declined the cases.
+- **Run tests:** the story's managers run the manual cases in the UAT environment and record Passed, Failed
+  or Blocked. People with the UAT tester or product owner role may record too, but nothing waits on them.
+  A failing test waits on the component manager.
+- **Sign off:** the story's managers sign off; a product owner or an app owner may too. Sign-off is refused
+  while any criterion is unverified. A sign-off with a gap needs a risk acceptance in Huddle.
+- **Automate:** the story's managers; an automation engineer may do the work, but nothing waits on a role.
+- **Analyse, again:** the flow's owner, when an analysis failed or a reviewer asked for changes.
 
 ## Chat and the flow: who keeps what
 
@@ -118,5 +120,5 @@ shows today's progress, and acting in a card acts on the flow itself.
 
 ## Data
 
-Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads); 27 adds `approvals.note` (what a reviewer asked to change). Step
+Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads); 27 adds `approvals.note` (what a reviewer asked to change); 28 adds `flow_story_approvers` (people added to a story's review) and `flow_reviews` (one decision per required approver and proposal). Step
 states are derived on each read from reports, approvals, test links and results.
