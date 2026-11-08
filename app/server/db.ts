@@ -750,9 +750,10 @@ export function openDb(path: string) {
       }
       const w = where.join(' AND ');
       const total = (db.prepare(`SELECT COUNT(*) AS n FROM test_cases t WHERE ${w}`).get(...args) as { n: number }).n;
-      const rows = db
-        .prepare(`SELECT * FROM test_cases t WHERE ${w} ORDER BY t.updated_at DESC, t.repo, t.path, t.line LIMIT ? OFFSET ?`)
-        .all(...args, Math.min(f.limit ?? 50, 200), f.offset ?? 0) as Row[];
+      // F26: the repository enforces the bounds too; a negative or non-finite limit never means "all".
+      const limit = Number.isFinite(f.limit) && (f.limit as number) >= 1 ? Math.min(Math.trunc(f.limit as number), 200) : 50;
+      const offset = Number.isFinite(f.offset) && (f.offset as number) >= 0 ? Math.trunc(f.offset as number) : 0;
+      const rows = db.prepare(`SELECT * FROM test_cases t WHERE ${w} ORDER BY t.updated_at DESC, t.repo, t.path, t.line LIMIT ? OFFSET ?`).all(...args, limit, offset) as Row[];
       const links = db.prepare('SELECT entity_type AS type, entity_ref AS ref FROM test_case_links WHERE test_case_id = ? ORDER BY entity_type, entity_ref');
       const stepCount = db.prepare('SELECT COUNT(*) AS n FROM test_steps WHERE test_case_id = ?');
       const out: TestCaseRow[] = rows.map((r) => ({
@@ -1709,7 +1710,8 @@ export function seedWorkspace(h: HorizonDb, ws: Workspace) {
         ).run(componentId(team.id, c.name), team.id, c.name, c.manager, team.workspaces.includes(c.workspace) ? `${team.id}-${c.workspace}` : null, repo?.github ?? c.repo, c.path, c.language, c.tests);
         counts.components++;
       }
-      db.prepare('INSERT OR IGNORE INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at) VALUES (?, ?, ?, ?, ?)').run(
+      // The "last sync" is the last import of the backlog from the workspace (F22): every seed updates it.
+      db.prepare('INSERT INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(application_id) DO UPDATE SET last_sync_at = excluded.last_sync_at').run(
         team.id,
         team.jiraProject,
         JSON.stringify(['Ready for UAT', 'In Progress']),

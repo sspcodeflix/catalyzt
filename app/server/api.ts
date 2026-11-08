@@ -160,6 +160,12 @@ export interface ApiOptions {
   retrieval?: RetrievalService;
 }
 
+/** A query integer within [min, max], or the default for anything missing, non-finite or out of range. */
+const boundedInt = (v: string | null, def: number, max: number, min = 1) => {
+  const n = Number(v);
+  return v != null && v !== '' && Number.isFinite(n) && n >= min ? Math.min(Math.trunc(n), max) : def;
+};
+
 /** Reads HEXA_INGEST_TOKEN_<APP> variables into { APP: token }. */
 export function ingestTokensFromEnv(env: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -540,8 +546,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             result: pick('result', ['passed', 'failed', 'skipped', 'not_run', 'none']),
             origin: pick('origin', ['repo_scan', 'uat_analyst', 'authoring', 'manual', 'upload', 'ci_results']),
             repo: p.get('repo')?.slice(0, 200) || undefined,
-            limit: Math.min(Number(p.get('limit')) || 50, 200),
-            offset: Math.max(Number(p.get('offset')) || 0, 0),
+            // F26: a page size is a positive integer up to the cap; anything else is the default.
+            limit: boundedInt(p.get('limit'), 50, 200),
+            offset: boundedInt(p.get('offset'), 0, 1_000_000, 0),
           }),
           stats: db.testStats(appId),
           scans: db.listScans(appId, 8),
@@ -728,8 +735,13 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
       }
 
       if (url === '/api/jira/sync' && req.method === 'POST') {
-        const filter = db.markSynced(appId);
-        return send(res, 200, { stories: db.listStories(appId, filter), filter });
+        // F22: stories come from the workspace backlog, not a live Jira. An owner re-imports the backlog
+        // (the same reload as the workspace); anyone else re-reads the rows, and nothing claims a sync happened.
+        let notice = 'Stories come from the workspace backlog; there is no live Jira connection in this build.';
+        if (opts.reload && roles.includes('app_owner')) notice = `Backlog re-imported from the workspace. ${opts.reload().summary}`;
+        else notice += opts.reload ? ' Only an app owner can re-import the backlog.' : ' Restart the service to re-import an edited backlog.';
+        const filter = db.getFilter(appId);
+        return send(res, 200, { stories: db.listStories(appId, filter), filter, notice });
       }
 
       if (url === '/api/jira/filter' && req.method === 'PUT') {

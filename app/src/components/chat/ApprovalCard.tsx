@@ -70,7 +70,7 @@ export function ApprovalCard({ approval, revision, lockReason, busy = false, err
           </div>
         ) : approval.status === 'expired' ? (
           <span role="status" className="pill">
-            Superseded by a newer answer
+            {approval.outcome?.text ?? 'Superseded by a newer answer'}
           </span>
         ) : (
           <span role="status" className={`pill ${approval.status === 'approved' ? 'pass' : ''}`}>

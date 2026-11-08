@@ -57,11 +57,17 @@ const cross = [
 ].filter(([, n]) => (n as number) > 0);
 for (const [what, n] of cross) problems.push(`${n} ${what} rows cross an application boundary`);
 
+// F28: every stored file the database refers to, chat attachments and App Context uploads alike.
 let missingFiles: string[] = [];
+let fileValidation = 'not performed: no files directory was given (pass it as the second argument)';
 if (filesDir) {
-  const keys = (raw.prepare('SELECT storage_key FROM attachments').all() as { storage_key: string }[]).map((r) => r.storage_key);
-  missingFiles = keys.filter((k) => !existsSync(join(filesDir, k)));
-  if (missingFiles.length) problems.push(`${missingFiles.length} attachments have no file under ${filesDir}`);
+  const keys = [
+    ...(raw.prepare("SELECT storage_key AS k, 'attachment' AS kind FROM attachments WHERE storage_key IS NOT NULL").all() as { k: string; kind: string }[]),
+    ...(raw.prepare("SELECT storage_key AS k, 'App Context upload' AS kind FROM context_sources WHERE storage_key IS NOT NULL").all() as { k: string; kind: string }[]),
+  ];
+  missingFiles = keys.filter((x) => !existsSync(join(filesDir, x.k))).map((x) => `${x.kind} ${x.k}`);
+  if (missingFiles.length) problems.push(`${missingFiles.length} of ${keys.length} stored files (chat attachments, App Context uploads) are missing under ${filesDir}`);
+  fileValidation = `performed: ${keys.length} stored files checked under ${filesDir}`;
 }
 
 const running = count("SELECT COUNT(*) AS n FROM workflow_runs WHERE status = 'running'");
@@ -78,7 +84,8 @@ console.log(
       runsStillMarkedRunning: running,
       note: running ? 'The server marks these stopped at start-up (stopOrphans).' : undefined,
       applications: apps,
-      missingAttachmentFiles: missingFiles.slice(0, 20),
+      fileValidation,
+      missingFiles: missingFiles.slice(0, 20),
       problems,
     },
     null,

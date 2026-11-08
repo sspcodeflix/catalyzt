@@ -72,7 +72,7 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
       sources: listSources(db, app.id),
       conflicts: listConflicts(db, app.id, 'open'),
       // Honest connector states: nothing here pretends to be connected.
-      connectors: { confluence: 'not_connected', fabric: 'none', jira: 'dummy', github: 'scan' },
+      connectors: { confluence: 'not_connected', fabric: 'none', jira: 'workspace', github: 'scan' },
       limits: { maxUploadMb: MAX_UPLOAD_MB, readable: ['Markdown', 'text', 'CSV', 'JSON', 'YAML', 'XML', 'logs', 'source code'], storedOnly: ['PDF', 'Word', 'images', 'ZIP'] },
       // How passages are found right now, for this application: keyword-only until vectors exist.
       retrieval: retrieval ? retrieval.status(db, app.id) : KEYWORD_ONLY(db, app.id),

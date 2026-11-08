@@ -373,39 +373,63 @@ async function finish<T extends Candidate>(models: RetrievalModels, query: strin
 
 const BATCH = 32;
 
-/** Rows of the configured model, for the status line. */
+/** Passages whose text hash is missing (rows from before migration 13) get it, so staleness can be checked in SQL. */
+function backfillTextSha(db: HorizonDb) {
+  const pick = db.raw.prepare('SELECT id, text FROM source_chunks WHERE text_sha IS NULL LIMIT 500');
+  const set = db.raw.prepare('UPDATE source_chunks SET text_sha = ? WHERE id = ? AND text_sha IS NULL');
+  for (;;) {
+    const rows = pick.all() as { id: string; text: string }[];
+    if (rows.length === 0) return;
+    db.raw.transaction(() => rows.forEach((r) => set.run(textSha(r.text), r.id)))();
+  }
+}
+
+/** Passages with a vector computed from their current text, for the status line. */
 export function embeddingCounts(db: HorizonDb, model: string | null, app?: string): { embedded: number; pending: number } {
   const where = app ? 'WHERE s.application_id = ?' : '';
   const args = app ? [app] : [];
   const total = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id ${where}`).get(...args) as { n: number }).n;
   if (!model) return { embedded: 0, pending: total };
-  const embedded = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? ${where}`).get(model, ...args) as { n: number }).n;
+  const embedded = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha ${where}`).get(model, ...args) as { n: number }).n;
   return { embedded, pending: total - embedded };
 }
 
 /**
- * Embeds every passage that has no vector for this embedder, in batches, each batch its own short
- * transaction. Returns how many were embedded. Safe to run again at any time.
+ * Embeds every passage that has no vector for this embedder computed from its current text, in
+ * batches, each batch its own short transaction. A passage whose text changed while it was being
+ * embedded is not written with the old vector (F25); the next pass embeds the new text. Returns how
+ * many were embedded. Safe to run again at any time.
  */
 export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { app?: string; log?: (line: string) => void; signal?: AbortSignal } = {}): Promise<{ embedded: number; failed: number }> {
+  backfillTextSha(db);
   const pick = db.raw.prepare(
-    `SELECT c.id, c.text FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
+    `SELECT c.id, c.text, c.text_sha FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
      LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ?
-     WHERE e.chunk_id IS NULL ${opts.app ? 'AND s.application_id = ?' : ''} ORDER BY c.rowid LIMIT ?`,
+     WHERE (e.chunk_id IS NULL OR e.text_sha != c.text_sha) ${opts.app ? 'AND s.application_id = ?' : ''} ORDER BY c.rowid LIMIT ?`,
   );
+  const current = db.raw.prepare('SELECT text_sha FROM source_chunks WHERE id = ?');
   const upsert = db.raw.prepare('INSERT OR REPLACE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
-  const store = db.raw.transaction((rows: { id: string; text: string }[], vectors: Float32Array[], at: string) => {
-    rows.forEach((r, i) => upsert.run(r.id, embedder.id, vectors[i].length, toBlob(vectors[i]), textSha(r.text), at));
+  // Writes only the vectors whose passage still has the text they were computed from; returns how many were written.
+  const store = db.raw.transaction((rows: { id: string; text_sha: string }[], vectors: Float32Array[], at: string) => {
+    let written = 0;
+    rows.forEach((r, i) => {
+      const now = current.get(r.id) as { text_sha: string } | undefined;
+      if (!now || now.text_sha !== r.text_sha || vectors[i].length === 0) return;
+      upsert.run(r.id, embedder.id, vectors[i].length, toBlob(vectors[i]), r.text_sha, at);
+      written++;
+    });
+    return written;
   });
   let embedded = 0;
   let failed = 0;
+  let idlePasses = 0;
   const t0 = Date.now();
   for (;;) {
     if (opts.signal?.aborted) break;
     const args: unknown[] = [embedder.id];
     if (opts.app) args.push(opts.app);
     args.push(BATCH);
-    const rows = pick.all(...args) as { id: string; text: string }[];
+    const rows = pick.all(...args) as { id: string; text: string; text_sha: string }[];
     if (rows.length === 0) break;
     let vectors: Float32Array[];
     try {
@@ -415,14 +439,11 @@ export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { ap
       opts.log?.(`[retrieval] embedding stopped: ${(e as Error).message}`);
       break;
     }
-    // The passage may have been re-indexed meanwhile; INSERT OR REPLACE with the cascade keeps it consistent.
-    try {
-      store(rows, vectors, new Date().toISOString());
-    } catch (e) {
-      // A chunk deleted between read and write fails its foreign key; the next pass picks up its successor.
-      if (!/FOREIGN KEY/i.test((e as Error).message)) throw e;
-    }
-    embedded += rows.length;
+    const written = store(rows, vectors, new Date().toISOString());
+    embedded += written;
+    // Nothing written twice in a row (passages keep changing under us): stop; the next schedule() continues.
+    idlePasses = written ? 0 : idlePasses + 1;
+    if (idlePasses >= 3) break;
   }
   if (embedded) opts.log?.(`[retrieval] embedded ${embedded} passage${embedded === 1 ? '' : 's'} with ${embedder.id} in ${Date.now() - t0} ms`);
   return { embedded, failed };

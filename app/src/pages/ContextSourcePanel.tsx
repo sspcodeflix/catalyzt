@@ -131,7 +131,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
         <Tabs.Content value="passages" className="tabpane" style={{ gap: 12 }}>
           {chunks.length === 0 && (
             <p className="muted">
-              {source.status === 'stored' ? (source.note ?? 'Catalyzt cannot read this file in this build.') : source.type === 'Jira' ? 'Stories are read live from the Jira feed; open a story from Jira Stories.' : 'No passages were found in this source.'}
+              {source.status === 'stored' ? (source.note ?? 'Catalyzt cannot read this file in this build.') : source.type === 'Jira' ? 'Stories come from the workspace backlog and are not split into passages; open a story from Jira Stories.' : 'No passages were found in this source.'}
             </p>
           )}
           {chunks.map((c) => (

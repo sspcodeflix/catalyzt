@@ -284,9 +284,9 @@ export async function runWorkflow(
     }
 
     // 3b. UAT analyst: tools over Jira and test evidence, no model needed for the facts. When the
-    //     person chose another capability themselves (say, authoring tests for the story), that
-    //     choice stands and the specialist gets the ticket as evidence instead.
-    const analysisWanted = req.agent === 'auto' || req.agent === 'analysis';
+    //     person chose another capability themselves (say, authoring tests for the story), or Auto
+    //     resolved the request to one (F21), that stands and the specialist gets the ticket as evidence.
+    const analysisWanted = req.agent === 'analysis' || (req.agent === 'auto' && intent.capability === 'analysis');
     const ticket = intent.testType === 'uat' && analysisWanted ? intent.tickets.map((k) => req.syncedTickets.find((t) => t.key === k)).find(Boolean) : undefined;
     if (ticket) {
       router.finish('done', { result: `Assigned to the UAT analyst: ${ticket.key}`, ...routerUsage });

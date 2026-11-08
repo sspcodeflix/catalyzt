@@ -725,4 +725,13 @@ export const MIGRATIONS: string[] = [
   `
   UPDATE test_cases SET framework = 'JUnit XML' WHERE kind = 'automated' AND origin = 'ci_results' AND framework IS NULL;
   `,
+  // 13: passages carry the hash of their text, so a vector is used or kept only while it matches the
+  //     text it was computed from (F25; the server fills it in for existing rows at the next embedding
+  //     pass). Approvals left pending by the version-7 upgrade with an empty frozen payload can never
+  //     execute; they are expired with the reason instead of waiting forever (F27).
+  `
+  ALTER TABLE source_chunks ADD COLUMN text_sha TEXT;
+  UPDATE approvals SET status = 'expired', outcome = '{"ok":false,"text":"Expired on upgrade: this approval predates frozen payloads. Analyse the story again for a current proposal."}'
+    WHERE status = 'pending' AND action = 'add_uat_cases' AND (payload IS NULL OR payload = '{}');
+  `,
 ];

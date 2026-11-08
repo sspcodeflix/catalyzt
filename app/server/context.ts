@@ -310,12 +310,12 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
       byText.set(v.text_sha, list);
     }
     db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ?').run(sourceId);
-    const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insVec = db.raw.prepare('INSERT OR IGNORE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
     chunks.forEach((c, i) => {
       const id = `${sourceId}#${i + 1}`;
-      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length);
       const h = textSha(c.text);
+      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length, h);
       for (const v of byText.get(h) ?? []) insVec.run(id, v.model, v.dims, v.vector, h, iso(at));
     });
     db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
@@ -325,10 +325,12 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
 
 /* ---------- Seeding from the workspace ---------- */
 
+/** Honest about the source (F22): the backlog is a workspace file imported at start or reload, not a live Jira. */
 const jiraSubtitle = (db: HorizonDb, app: string) => {
   const f = db.getFilter(app);
-  return `filter: project = ${f.project} AND status in (${f.statuses.map((s) => `"${s}"`).join(', ')}) · synced every ${f.everyMinutes} min`;
+  return `filter: project = ${f.project} AND status in (${f.statuses.map((s) => `"${s}"`).join(', ')}) · workspace backlog, no live Jira connection`;
 };
+const JIRA_NOTE = 'Stories come from the workspace backlog (stories.json), imported when the server starts or an owner reloads the workspace; they are not split into passages here.';
 
 const UPSERT = `
   INSERT INTO context_sources (id, application_id, scope_type, scope_ref, type, title, subtitle, trust, status, stage, content, note, href, location, created_by, created_at, updated_at, synced_at)
@@ -384,7 +386,7 @@ export function seedContext(db: HorizonDb, ws: Workspace, at = Date.now()) {
       trust: 'Tickets',
       status: 'ready',
       content: `${db.listStories(team.id).length} tickets in the filter`,
-      note: 'Stories are retrieved live from the Jira feed; they are not split into passages here.',
+      note: JIRA_NOTE,
       href: '/tickets',
       location: null,
       at: iso(at),
@@ -494,9 +496,9 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
       notice = `${s.title} synced: ${r.chunks} passage${r.chunks === 1 ? '' : 's'}${r.changed ? `, now version ${r.version}` : ', unchanged'}.`;
     }
   } else if (s.type === 'Jira') {
-    db.markSynced(app);
-    db.raw.prepare('UPDATE context_sources SET subtitle = ?, content = ? WHERE id = ?').run(jiraSubtitle(db, app), `${db.listStories(app).length} tickets in the filter`, id);
-    notice = `${s.title} synced.`;
+    // No live Jira: the row is refreshed from what the workspace import left in the database (F22).
+    db.raw.prepare('UPDATE context_sources SET subtitle = ?, content = ?, note = ? WHERE id = ?').run(jiraSubtitle(db, app), `${db.listStories(app).length} tickets in the filter`, JIRA_NOTE, id);
+    notice = `${s.title}: ${db.listStories(app).length} tickets from the workspace backlog; there is no live Jira to sync.`;
   } else {
     throw new RequestError(400, `${s.title} is an upload and has nothing to sync. Upload a new version instead.`);
   }
@@ -530,18 +532,22 @@ interface Cand extends Candidate {
   scope: string;
 }
 
-/** Every passage of the application, with its vector for the given embedding model when it has one. */
-function candidates(db: HorizonDb, app: string, model: string | null): Cand[] {
+/**
+ * Every passage of the application, with its vector for the given embedding model when it has one
+ * that was computed from the passage's current text (F25) and has the model's dimensions.
+ */
+function candidates(db: HorizonDb, app: string, model: string | null, dims = 0): Cand[] {
   const rows = db.raw
     .prepare(
       `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
          (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted,
          e.vector AS vector
        FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
-       LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ?
+       LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha
        WHERE s.application_id = ?`,
     )
     .all(model ?? '', app) as Row[];
+  const usable = (v: unknown): v is Buffer => Buffer.isBuffer(v) && v.byteLength > 0 && v.byteLength % 4 === 0 && (!dims || v.byteLength === dims * 4);
   return rows.map((r) => ({
     key: str(r.id),
     chunkId: str(r.id),
@@ -552,7 +558,7 @@ function candidates(db: HorizonDb, app: string, model: string | null): Cand[] {
     locator: str(r.locator),
     where: `${str(r.title)} · ${str(r.locator)}`,
     text: str(r.text),
-    vector: Buffer.isBuffer(r.vector) ? fromBlob(r.vector) : null,
+    vector: usable(r.vector) ? fromBlob(r.vector) : null,
     reason: exclusionReason(r),
     href: chunkHref(str(r.sid), Number(r.seq)),
     scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
@@ -591,7 +597,7 @@ export const describeRetrieval = (r: { mode: RetrievalMode; reranked: boolean; e
  * and why, plus Jira stories and Hexa test titles so the person sees everything considered.
  */
 export async function testQuestion(db: HorizonDb, app: AppRecord, question: string, models: RetrievalModels = NO_MODELS) {
-  const cands: Cand[] = candidates(db, app.id, models.embedder?.id ?? null);
+  const cands: Cand[] = candidates(db, app.id, models.embedder?.id ?? null, models.embedder?.dims ?? 0);
   const stories = db.listStories(app.id);
   for (const s of stories) cands.push({ key: `jira:${s.key}`, chunkId: null, sourceId: jiraSourceId(app.id), sourceTitle: 'Jira', sourceType: 'Jira', version: 1, locator: s.key, where: `Jira · ${s.key}`, text: [s.summary, ...s.acceptanceCriteria].join(' '), reason: null, href: `/tickets/${s.key}`, scope: 'App' });
   const tests = db.listTests(app.id, { limit: 200 }).rows;
@@ -615,7 +621,7 @@ export async function testQuestion(db: HorizonDb, app: AppRecord, question: stri
  */
 export async function retrieveContext(db: HorizonDb, app: string, query: string, opts: RetrievalOptions = {}): Promise<Retrieval> {
   const models = opts.models ?? NO_MODELS;
-  const usable = candidates(db, app, models.embedder?.id ?? null).filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace));
+  const usable = candidates(db, app, models.embedder?.id ?? null, models.embedder?.dims ?? 0).filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace));
   const r = await rank(models, query, usable, { limit: opts.limit ?? 4, minRelevance: opts.minRelevance ?? MIN_RELEVANCE });
   return {
     passages: r.ranked.map(({ item: c }) => ({ chunkId: c.chunkId!, sourceId: c.sourceId!, sourceTitle: c.sourceTitle, sourceType: c.sourceType, version: c.version, locator: c.locator, text: c.text, href: c.href! })),
@@ -707,7 +713,7 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
     const exists = db.raw.prepare('SELECT 1 FROM source_chunks WHERE source_id = ? AND text = ?').get(source.id, compare[0].value);
     if (!exists) {
       const { n } = db.raw.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM source_chunks WHERE source_id = ?').get(source.id) as { n: number };
-      db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)').run(`${source.id}#${n}`, source.id, claimLocator, compare[0].value, n, source.version, compare[0].value.length);
+      db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)').run(`${source.id}#${n}`, source.id, claimLocator, compare[0].value, n, source.version, compare[0].value.length, textSha(compare[0].value));
     }
     db.raw.prepare('UPDATE source_chunks SET excluded_reason = ? WHERE source_id = ?').run(reason, source.id);
     db.raw.prepare("UPDATE context_sources SET status = 'review', updated_at = ? WHERE id = ?").run(iso(at), source.id);

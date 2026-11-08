@@ -68,8 +68,9 @@ export function Tickets() {
             <div>
               <h1 className="pagetitle">Jira Stories</h1>
               <p className="muted">
-                Catalyzt pulls stories from Jira every {sync.everyMinutes} minutes and keeps them here. Pick one to analyse
-                it for UAT: each acceptance criterion is checked against your tests.
+                Stories come from the workspace backlog for project {sync.project || '…'}; there is no live Jira connection in this
+                build, and an app owner re-imports the backlog after editing it. Pick one to analyse it for UAT: each acceptance
+                criterion is checked against your tests.
               </p>
             </div>
             <Link to="/tickets/new" className="btn ink">
@@ -84,12 +85,12 @@ export function Tickets() {
               <b>Jira · project {sync.project}</b> <span className="mono">{sync.filter}</span>
             </span>
             <span className="muted" role="status">
-              {sync.error ? `Could not load stories: ${sync.error}` : sync.syncing ? 'Syncing…' : `Last sync ${relTime(sync.lastSync)} · every ${sync.everyMinutes} min`}
+              {sync.error ? `Could not load stories: ${sync.error}` : sync.syncing ? 'Re-reading the backlog…' : `Last import ${relTime(sync.lastSync)} · workspace backlog`}
             </span>
             <span className="grow" />
             <button type="button" className="btn" onClick={syncNow} disabled={sync.syncing}>
               <Icon name="retry" small />
-              Sync now
+              Re-import backlog
             </button>
             <button type="button" className="btn plain" aria-expanded={editing} aria-controls={filterId} onClick={() => setEditing(!editing)}>
               <Icon name="filter" small />

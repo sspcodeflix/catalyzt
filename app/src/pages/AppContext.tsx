@@ -307,14 +307,14 @@ const statusFilters: { value: 'all' | SourceStatus; label: string }[] = [
 ];
 
 function SourceTable({ sources: raw, loaded, compact, selectedId }: { sources: Source[]; loaded: boolean; compact: boolean; selectedId?: string }) {
-  // The Jira row shows the live sync state from the ticket store, so it matches the Tickets page.
+  // The Jira row shows the backlog state from the ticket store, so it matches the Tickets page (F22: a workspace import, not a live sync).
   const tickets = useTickets();
   const sync = useJiraSync();
   const sources = useMemo(
     () =>
       raw.map((s) =>
         s.type === 'Jira'
-          ? { ...s, sub: `filter: ${sync.filter} · synced every ${sync.everyMinutes} min`, content: `${tickets.length} tickets in the filter`, updatedAt: sync.lastSync }
+          ? { ...s, sub: `filter: ${sync.filter} · workspace backlog, no live Jira connection`, content: `${tickets.length} tickets in the filter`, updatedAt: sync.lastSync }
           : s,
       ),
     [raw, tickets, sync],

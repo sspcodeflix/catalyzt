@@ -25,6 +25,9 @@ export const summariseCoverage = (statuses: CriterionStatus[]): Ticket['uat'] =>
   return { state: covered === statuses.length && statuses.length > 0 ? 'ready' : 'gaps', covered, total: statuses.length };
 };
 
+/** A story is a UAT candidate once Jira says it is ready for UAT (or further along); earlier states are flagged (R06). */
+export const isUatCandidate = (status: string) => /\b(uat|done|release|accept)/i.test(status);
+
 /** What a UAT analysis of a ticket produces, given what Hexa knows about each criterion. */
 export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artifact: UatArtifact; covered: number; gaps: number; notRun: number; failing: number } {
   const criteria = t.acceptanceCriteria.map((text, i) => ({
@@ -43,7 +46,7 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
       id: `uat-${t.key.toLowerCase()}`,
       kind: 'uat',
       title: `UAT readiness · ${t.key}`,
-      subtitle: `${t.summary}${t.fixVersion ? ` · ${t.fixVersion}` : ''} · ${criteria.length} acceptance criteria`,
+      subtitle: `${t.summary}${t.fixVersion ? ` · ${t.fixVersion}` : ''} · ${criteria.length} acceptance criteria${isUatCandidate(t.status) ? '' : ` · ${t.status} in Jira, not a UAT candidate yet`}`,
       cardLabel: 'UAT report',
       ticketKey: t.key,
       criteria,
@@ -77,11 +80,14 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
   if (notRun) parts.push(`${plural(notRun, 'has a test with', 'have tests with')} no result yet`);
   if (gaps) parts.push(`${plural(gaps, 'has', 'have')} no test`);
   const ready = n > 0 && covered === n;
-  const summary = ready
-    ? `All ${n} acceptance criteria of \`${t.key}\` [1] are covered by tests that passed in the latest pipeline run [2]. It is ready for UAT sign-off.`
+  const candidate = isUatCandidate(t.status);
+  const core = ready
+    ? `All ${n} acceptance criteria of \`${t.key}\` [1] are covered by tests that passed in the latest pipeline run [2]. ${candidate ? 'It is ready for UAT sign-off.' : 'The evidence is in place for when it reaches UAT.'}`
     : `\`${t.key}\` has ${plural(n, 'acceptance criterion', 'acceptance criteria')} [1]. ${joinParts(parts)}. ${
         gaps ? `I drafted ${plural(gaps, 'UAT test case', 'UAT test cases')} for the gaps.` : failing ? 'Fix the failing tests before sign-off.' : 'Run the remaining tests before sign-off.'
       }`;
+  // R06: a story that Jira still has in progress is not a UAT candidate, whatever the coverage says.
+  const summary = candidate ? core : `\`${t.key}\` is still ${t.status} in Jira [1], so it is not a UAT candidate yet. ${core}`;
 
   const builds = [...new Map(coverage.flatMap((c) => (c.builds ?? []).map((b) => [b.label, b] as const))).values()];
   const linked = artifact.criteria.filter((c) => c.status !== 'no-test').length;
@@ -96,7 +102,10 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
       {
         n: 2,
         title: 'Hexa: linked tests and their results in the target build',
-        detail: builds.length ? `${builds.map((b) => `${b.label}, ${ageOf(b.at)}`).join('; ')} · ${linked} of ${n} criteria have linked tests` : `${linked} of ${n} criteria have linked tests · no pipeline run recorded yet`,
+        // R05: without a build there is nothing automated to read; say what the linked tests are instead of hinting at a missing pipeline.
+        detail: builds.length
+          ? `${builds.map((b) => `${b.label}, ${ageOf(b.at)}`).join('; ')} · ${linked} of ${n} criteria have linked tests`
+          : `${linked} of ${n} criteria have linked tests · ${linked ? 'the linked tests are manual or have no recorded run, so there is no automated result to read' : 'no automated result to read'}`,
       },
     ],
     blocks: [

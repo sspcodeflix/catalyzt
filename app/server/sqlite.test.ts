@@ -147,7 +147,8 @@ describe('schema upgrades keep identities and relationships', () => {
     expect(db.raw.pragma('foreign_key_check')).toEqual([]);
     expect(db.raw.prepare('SELECT id, local_id, revision_id FROM artifacts').get()).toEqual({ id: 'a1-r1/uat-app-1', local_id: 'uat-app-1', revision_id: 'a1-r1' });
     expect(db.getArtifact('a1-r1', 'uat-app-1')).toMatchObject({ id: 'uat-app-1' });
-    expect(db.getApproval('a1-r1-a0')).toMatchObject({ status: 'pending', payload: {}, target: { storyKey: 'APP-1' }, outcome: null });
+    // F27: a pending approval from before frozen payloads cannot execute; the upgrade expires it and says why.
+    expect(db.getApproval('a1-r1-a0')).toMatchObject({ status: 'expired', payload: {}, target: { storyKey: 'APP-1' }, outcome: { ok: false, text: expect.stringMatching(/Expired on upgrade/) } });
     expect(db.raw.prepare('SELECT attempt FROM test_runs').get()).toEqual({ attempt: 1 });
     expect(db.runExists('APP', 'webhook', 'o/r', '77', 1)).toBe(true);
     // Old-style proposal ids are retired, not silently renamed, and the retirement is on record.

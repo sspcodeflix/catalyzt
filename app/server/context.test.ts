@@ -279,3 +279,47 @@ describe('hybrid retrieval (embeddings and reranking)', () => {
     expect(plain.results.some((x) => x.where.startsWith('Jira · ABCD-1001'))).toBe(true);
   });
 });
+
+describe('vectors follow the text they were computed from (F25)', () => {
+  it('a passage that changes while it is being embedded never keeps the old vector, and is embedded again', async () => {
+    const { db, cloneDir } = fixtureWithDocs();
+    const inner = fakeModels();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow: RetrievalModels = {
+      embedder: {
+        id: 'slow',
+        dims: 64,
+        embed: async (texts) => {
+          await gate;
+          return inner.embedder!.embed(texts);
+        },
+      },
+      reranker: null,
+    };
+    // The job reads the old refund text and waits in the model; meanwhile the document changes and is re-indexed.
+    const job = embedPending(db, slow.embedder!);
+    await new Promise((r) => setTimeout(r, 5));
+    writeFileSync(join(cloneDir, 'docs', 'refunds.md'), REFUNDS_DOC.replace('45 days', '365 days'));
+    const repo = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!;
+    expect(syncSource(db, 'ABCD', repo.id).source.version).toBe(2);
+    release();
+    await job;
+    // No vector row disagrees with its passage's text, and nothing is left pending.
+    expect(db.raw.prepare('SELECT COUNT(*) AS n FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id WHERE e.text_sha != c.text_sha').get()).toEqual({ n: 0 });
+    expect(embeddingCounts(db, 'slow', 'ABCD').pending).toBe(0);
+    expect(inner.calls.embed).toBeGreaterThanOrEqual(2);
+    const hits = await retrieveContext(db, 'ABCD', 'refund window', { models: slow });
+    expect(hits.mode).toBe('hybrid');
+    expect(hits.passages.some((p) => p.text.includes('365 days'))).toBe(true);
+  });
+
+  it('a vector with the wrong dimensions is ignored, so a model change never ranks with foreign vectors', async () => {
+    const { db } = fixtureWithDocs();
+    const m = fakeModels();
+    await embedPending(db, m.embedder!);
+    const other: RetrievalModels = { embedder: { id: m.embedder!.id, dims: 8, embed: async (t) => t.map(() => new Float32Array(8).fill(0.35)) }, reranker: null };
+    const r = await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?', { models: other });
+    expect(r.mode).toBe('keyword');
+  });
+});
