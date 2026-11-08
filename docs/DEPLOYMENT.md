@@ -141,23 +141,59 @@ start applies migrations if the backup predates the current schema.
 
 ## Load profile
 
-`npm run load-profile` builds a disposable database at the sizes the scalability review measured and
-times the hot operations on this machine. It touches no real data and calls no model. Observed on the
-development machine (one run, 8 November 2026; synthetic passages with random unit vectors, so the
-semantic side is representative of cost, not of relevance):
+`npm run load-profile` (add `-- --json` for machine-readable output) builds a disposable database in
+a temporary directory and times the hot operations on this machine. It touches no real data, calls no
+model, and removes everything it wrote. Sizes are flags (see the script header); the defaults are the
+review's regression case for ABCD (50,000 passages with vectors, 25,000 tests with results, 100,000
+model calls) plus three more applications with 10,000 passages and 5,000 tests each, one chat of
+4,000 messages and 3,000 answer revisions, 100 uploaded files of 256 KB, and 20 JUnit imports of
+1,000 results run by a second process (its own connection) while this one keeps retrieving and saving
+answers.
 
-| Operation at 50,000 passages, 25,000 tests, 100,000 model calls (207 MB) | p50 | p95 |
+Observed on the development machine, 8 November 2026, one run at the defaults while other work was
+running on the host (load average 4 to 8). Synthetic passages share one vocabulary and carry random
+unit vectors, so the semantic side is representative of cost, not of relevance. These are
+observations on this machine, not capacity or user-count claims.
+
+| Operation (ABCD at the regression sizes; 4 applications loaded, 320 MB database) | p50 | p95 |
 |---|---|---|
-| Retrieval, keyword only | 41 ms | 50 ms |
-| Retrieval, hybrid (first call builds the vector matrix: 467 ms) | 74 ms | 75 ms |
-| Test search (`listTests` with a query) | 14 ms | 16 ms |
-| Usage totals (first call 97 ms, then cached for 5 s) | 0 ms | 0 ms |
+| Retrieval, keyword only | 55 ms | 64 ms |
+| Retrieval, hybrid (first call builds the vector matrix: 617 ms) | 88 ms | 180 ms |
+| Retrieval, hybrid, interleaved across the 4 applications (first call per 10k-passage app: about 360 ms) | 53 ms | 185 ms |
+| Test search (`listTests` with a query) | 14 ms | 17 ms |
+| Usage totals (first call 97 ms, then cached) | 0 ms | 0 ms |
 | Coverage of a story, UAT states of an application | < 1 ms | < 1 ms |
-| Longest event-loop block during hybrid retrievals | 74 ms | 179 ms (max) |
+| Long chat: `addUserMessage`, `saveAnswer` (one transaction each) | 0.1 ms | 0.1 ms (p99 8 ms) |
+| Long chat read (`getChatFull`, 4,000 messages, 3,000 revisions) | 36 ms | 46 ms |
+| JUnit import of 1,000 results in the second process (parse, match, store) | 65 ms | 104 ms |
+| Its write transaction (`ingestRun`) | 6.5 ms | 30 ms |
+| Retrieval while the second process ingests (versus alone: 94 / 276 ms) | 94 ms | 296 ms |
+| Saving a chat turn while the second process ingests (versus alone: 0.4 / 0.7 ms) | 0.4 ms | 8.9 ms |
 
-Before the bounded candidates, the same keyword retrieval took about 620 ms at this size (the
-review's measurement). These are observations, not capacity or user-count claims; agree response-time
-and recovery objectives against them before calling scalability done.
+| Under mixed load | Observed |
+|---|---|
+| `SQLITE_BUSY` errors, turns that waited more than 50 ms for the write lock | 0 and 0 (both processes) |
+| Share of the ingestion phase the second process held the write lock | 11 % of 1.75 s |
+| Event-loop delay during that phase | p50 95 ms, p99 297 ms (a retrieval holds the loop for its whole duration) |
+| Peak RSS: this process, the ingestion process | 431 MB, 454 MB (each about 160 MB is the vite-node runtime; the vector matrices of 80,000 passages add about 230 MB) |
+| Database, WAL, blob files across the run | 320 → 332 MB; WAL 180 MB after the bulk fill until a `wal_checkpoint(TRUNCATE)` (43 ms) empties it; blobs 0 → 25 MB |
+| Online backup (`db.raw.backup`) of 332 MB | 359 ms |
+| Restore check: in process (copy, open, integrity, foreign keys), and `npm run restore-check` end to end | 0.7 s and 1.1 s, passed |
+
+Timings varied between runs on the busy host by up to two times at p95 (hybrid p50 88 to 181 ms
+across three runs); p50 values were steadier. With the other three applications loaded, ABCD's keyword
+retrieval took 55 to 60 ms against 42 to 45 ms with ABCD alone: the full-text candidate query ranks
+matches across every application before the application filter applies. Before the bounded
+candidates, keyword retrieval at the regression size took about 620 ms (the review's measurement).
+Agree response-time and recovery objectives against these observations before calling scalability
+done.
+
+`npm run retrieval-eval` measures relevance with the real local models (`HORIZON_MODELS_DIR` set to
+the cached models, `HORIZON_MODELS_OFFLINE=1`): 293 fixture passages, 59 labelled questions, keyword,
+hybrid and hybrid with reranker, each with the bounded candidates and over every passage. See the
+script header for the metrics and `--pad` for adding the cloned repositories' documentation as
+distractors.
+
 - Not externally validated here: the GitHub Actions push against a real GitHub workflow (the
   payload and its handling are tested against the API), and a real sign-in proxy (the header mode
   is tested with synthetic requests).
