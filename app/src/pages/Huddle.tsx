@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { kindInfo, loadHuddle, loadMoreHuddle, useHuddleState, type HuddleFilter, type HuddleItem, type HuddleSummary } from '../lib/huddleData';
+import { DOMAINS, domainInfo, kindInfo, loadHuddle, loadMoreHuddle, useHuddleState, type HuddleDomain, type HuddleFilter, type HuddleItem, type HuddleSummary } from '../lib/huddleData';
 import { useSession } from '../lib/session';
 import { relTime } from './Tickets';
 import '../styles/pages.css';
@@ -10,15 +10,25 @@ import '../styles/pages.css';
 type Filter = HuddleFilter;
 
 export const itemStatus = (i: HuddleItem | HuddleSummary) =>
-  i.decision
-    ? { label: 'Decided', tone: 'pass' }
-    : i.needsInput
-      ? { label: 'Needs more input', tone: 'info' }
-      : { label: i.openLabel, tone: i.openTone };
+  i.stage === 'closed'
+    ? { label: i.answer && !i.decision ? 'Answered' : 'Closed', tone: 'pass' }
+    : i.stage === 'follow_up'
+      ? { label: 'Follow-up', tone: 'info' }
+      : i.stage === 'decided' || i.decision
+        ? { label: 'Decided', tone: 'pass' }
+        : i.needsInput
+          ? { label: 'Needs more input', tone: 'info' }
+          : { label: i.openLabel, tone: i.openTone };
+
+/** A date as "12 Nov 2026". */
+export const shortDate = (iso: string) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
+};
 
 /** Huddle: the team's shared place for decisions that the model or one person should not make alone. */
 export function Huddle() {
-  const { items, loaded, error, counts, query, nextCursor, loadingMore } = useHuddleState();
+  const { items, loaded, error, counts, waiting, domains, query, nextCursor, loadingMore } = useHuddleState();
   const location = useLocation();
   const panelOpen = /^\/huddle\/[^/]+/.test(location.pathname);
   const selectedId = panelOpen ? decodeURIComponent(location.pathname.split('/')[2]) : undefined;
@@ -29,6 +39,8 @@ export function Huddle() {
   const searchId = useId();
   const { loaded: sessionLoaded } = useSession();
   const setFilter = (f: Filter) => void loadHuddle(false, { filter: f });
+  const setDomain = (d: HuddleDomain | null) => void loadHuddle(false, { domain: d });
+  const domain = query.domain;
 
   useEffect(() => {
     if (sessionLoaded) void loadHuddle();
@@ -48,6 +60,7 @@ export function Huddle() {
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'open', label: 'Open' },
+    { id: 'waiting', label: 'Waiting on me' },
     { id: 'decided', label: 'Decided' },
     { id: 'mine', label: 'Mine' },
   ];
@@ -58,6 +71,10 @@ export function Huddle() {
       ? `Could not load decisions: ${error}`
       : q
         ? 'No decisions match your search.'
+        : domain && filter === 'open'
+          ? `Nothing open in ${domainInfo[domain].label}.`
+        : filter === 'waiting'
+          ? 'Nothing waits on you: no item is yours to decide and you own no open action.'
         : filter === 'open'
           ? 'Nothing to decide right now. Decisions appear when someone raises one, when a source conflicts with a higher-trust source, or when Catalyzt finds a pattern in low ratings.'
           : filter === 'decided'
@@ -76,8 +93,8 @@ export function Huddle() {
               </span>
               <h1>Huddle · Decisions</h1>
               <p>
-                Decisions Catalyzt won't make on its own: conflicting sources, disputed mappings, accepted risks and
-                patterns in feedback. Votes are advisory; an app owner decides, with a reason that is kept.
+                Concerns, decisions and accepted risks across testing, reliability and security, and the actions they
+                create. Votes are advisory; the domain's decider decides, with a reason that is kept.
               </p>
             </div>
           </div>
@@ -93,10 +110,21 @@ export function Huddle() {
             <div className="segctl" role="group" aria-label="Show">
               {filters.map((f) => (
                 <button key={f.id} type="button" className={filter === f.id ? 'on' : undefined} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
-                  {f.label} {counts[f.id]}
+                  {f.label} {f.id === 'waiting' ? waiting : counts[f.id]}
                 </button>
               ))}
             </div>
+          </div>
+          <div className="chips domainchips" role="group" aria-label="Domain">
+            <button type="button" className={`chip${!domain ? ' on' : ''}`} aria-pressed={!domain} onClick={() => setDomain(null)}>
+              All
+            </button>
+            {DOMAINS.map((d) => (
+              <button key={d} type="button" className={`chip${domain === d ? ' on' : ''}`} aria-pressed={domain === d} onClick={() => setDomain(d)}>
+                {domainInfo[d].label}
+                {domains && domains[d] > 0 ? <span className="muted"> {domains[d]}</span> : null}
+              </button>
+            ))}
           </div>
 
           <section className="card hlist" aria-label={`${filters.find((f) => f.id === filter)!.label} decisions`} aria-busy={!loaded}>
@@ -115,7 +143,10 @@ export function Huddle() {
                     <Icon name={kindInfo[i.kind].icon} small />
                   </span>
                   <div style={{ minWidth: 0 }}>
-                    <span className="kind">{kindInfo[i.kind].label}</span>
+                    <span className="kind">
+                      <span className="kindbadge">{kindInfo[i.kind].label}</span> · {domainInfo[i.domain].label}
+                      {i.severity ? ` · ${i.severity[0].toUpperCase()}${i.severity.slice(1)}` : ''}
+                    </span>
                     <b>{i.title}</b>
                     <small>{i.summary}</small>
                     <div className="meta">
@@ -127,6 +158,11 @@ export function Huddle() {
                         ))}
                       </span>
                       Raised by {i.raisedBy} · {relTime(i.raisedAt)}
+                      {i.dueAt && <span>· Due {shortDate(i.dueAt)}</span>}
+                      {i.expiresAt && <span>· {i.stage === 'open' && i.reopenNote ? 'Expired' : 'Expires'} {shortDate(i.expiresAt)}</span>}
+                      {i.actions.some((a) => a.status === 'open') && <span>· {i.actions.filter((a) => a.status === 'open').length} open action{i.actions.filter((a) => a.status === 'open').length === 1 ? '' : 's'}</span>}
+                      {i.overdue && <span className="pill crit">Overdue</span>}
+                      {i.waitingOnMe && <span className="pill info">Waiting on you</span>}
                     </div>
                   </div>
                   <span className={`pill ${st.tone}`}>{st.label}</span>

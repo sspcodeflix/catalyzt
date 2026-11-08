@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useId, useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 
 import { approvalBlockReason } from '../../lib/approvalRights';
 import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
+import { domainInfo, raiseFromChat, type HuddleDomain } from '../../lib/huddleData';
 import { useSession } from '../../lib/session';
 import { useTickets } from '../../lib/ticketStore';
 import { STALE_TEXT, staleTestFacts } from '../../lib/staleAnswer';
@@ -35,6 +37,15 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
   const [decideErrors, setDecideErrors] = useState<Record<string, string>>({});
   const session = useSession();
   const tickets = useTickets();
+  // "Raise with the team": a Concern in Huddle with the question, the answer's opening and its sources.
+  const [raising, setRaising] = useState(false);
+  const [raiseTitle, setRaiseTitle] = useState('');
+  const [raiseNote, setRaiseNote] = useState('');
+  const [raiseBusy, setRaiseBusy] = useState(false);
+  const [raiseError, setRaiseError] = useState<string | null>(null);
+  const [raised, setRaised] = useState<{ id: string; title: string; already: boolean } | null>(null);
+  const raiseTitleId = useId();
+  const raiseNoteId = useId();
 
   const status = message.status ?? 'done';
   const live = status === 'working' || status === 'streaming';
@@ -70,6 +81,32 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
     else {
       setPendingStars(stars);
       setRateError(null);
+    }
+  };
+
+  const at = chat.messages.findIndex((m) => m.id === message.id);
+  const question = at > 0 ? [...chat.messages.slice(0, at)].reverse().find((m) => m.role === 'user') : undefined;
+  const questionText = question && question.role === 'user' ? question.text : '';
+  const raiseDomain: HuddleDomain = message.capability === 'cloudops' ? 'reliability' : message.capability === 'security' ? 'security' : 'testing';
+  const openRaise = () => {
+    setRaiseTitle(questionText.slice(0, 160));
+    setRaiseError(null);
+    setRaising(true);
+  };
+  const submitRaise = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!raiseTitle.trim()) return;
+    setRaiseBusy(true);
+    setRaiseError(null);
+    try {
+      const r = await raiseFromChat({ chatId: chat.id, messageId: message.id, title: raiseTitle, note: raiseNote });
+      setRaised({ id: r.item.id, title: r.item.title, already: r.already });
+      setRaising(false);
+      setRaiseNote('');
+    } catch (err) {
+      setRaiseError((err as Error).message);
+    } finally {
+      setRaiseBusy(false);
     }
   };
 
@@ -200,6 +237,11 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
             >
               <Icon name="retry" small />
             </button>
+            {finished && message.revisionId && (
+              <button type="button" className="icon" aria-label="Raise with the team" title="Raise with the team: a concern in Huddle with this question, the answer and its sources" aria-expanded={raising} onClick={() => (raising ? setRaising(false) : openRaise())}>
+                <Icon name="people" small />
+              </button>
+            )}
             {finished && (
               <>
                 <StarRating value={pendingStars ?? message.rating} onRate={onRate} disabled={saving || !message.revisionId} />
@@ -218,6 +260,43 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
               </span>
             )}
           </div>
+        )}
+        {raising && (
+          <form className="raiseform" onSubmit={(e) => void submitRaise(e)} aria-label="Raise with the team">
+            <span className="muted">
+              A concern in Huddle · {domainInfo[raiseDomain].label}, decided by {domainInfo[raiseDomain].decider}. It carries the question, the answer's opening and its sources, and links this chat.
+            </span>
+            <label htmlFor={raiseTitleId}>
+              Title
+              <input id={raiseTitleId} value={raiseTitle} onChange={(e) => setRaiseTitle(e.target.value)} maxLength={200} required />
+            </label>
+            <label htmlFor={raiseNoteId}>
+              Note for the team (optional)
+              <textarea id={raiseNoteId} rows={2} value={raiseNote} onChange={(e) => setRaiseNote(e.target.value)} maxLength={1500} placeholder="What you are unsure about" />
+            </label>
+            {raiseError && (
+              <span className="errtext" role="alert">
+                {raiseError}
+              </span>
+            )}
+            <div className="acts">
+              <button type="button" className="btn plain" onClick={() => setRaising(false)} disabled={raiseBusy}>
+                Cancel
+              </button>
+              <button type="submit" className="btn ink" disabled={!raiseTitle.trim() || raiseBusy} aria-busy={raiseBusy}>
+                {raiseBusy ? 'Raising…' : 'Raise concern'}
+              </button>
+            </div>
+          </form>
+        )}
+        {raised && !raising && (
+          <p className="callout raised" role="status">
+            <Icon name="people" small />
+            <span>
+              {raised.already ? 'Already raised with the team: ' : 'Raised with the team: '}
+              <Link to={`/huddle/${raised.id}`}>{raised.title}</Link>
+            </span>
+          </p>
         )}
         {pendingStars !== null && (
           <FeedbackForm stars={pendingStars} capability={message.capability} busy={saving} error={rateError} onSubmit={(reasons, comment) => void submitRating(pendingStars, { reasons, comment })} onCancel={() => setPendingStars(null)} />

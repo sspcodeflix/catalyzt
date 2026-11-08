@@ -3,10 +3,10 @@ import { Link, useParams } from 'react-router-dom';
 
 import { Prose } from '../components/chat/Prose';
 import { Icon } from '../components/Icon';
-import { addComment, decide, fetchItem, kindInfo, markNeedsInput, me, useHuddleItem, vote } from '../lib/huddleData';
+import { addAction, addComment, answerConcern, completeAction, decide, domainInfo, fetchItem, fetchPeople, kindInfo, markNeedsInput, useHuddleItem, vote, type HuddleItem, type HuddlePerson } from '../lib/huddleData';
 import { reasonFavoursOther } from '../lib/huddleReason';
 import { useSession } from '../lib/session';
-import { itemStatus } from './Huddle';
+import { itemStatus, shortDate } from './Huddle';
 import { relTime } from './Tickets';
 
 /** One Huddle decision: Catalyzt's cited summary, options with votes, discussion, and the owner's decision. */
@@ -24,19 +24,23 @@ const when = (iso: string) => {
 function ItemPanel({ itemId }: { itemId: string | undefined }) {
   // The full item (discussion, cited summary) is read when it opens; the list holds summaries only.
   const item = useHuddleItem(itemId);
-  const { loaded: sessionLoaded } = useSession();
+  const { loaded: sessionLoaded, me: session } = useSession();
   const ref = useRef<HTMLElement>(null);
   const [lookup, setLookup] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'error'>('idle');
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
   const [choice, setChoice] = useState<string>('');
   const [reason, setReason] = useState('');
+  const [expiry, setExpiry] = useState('');
+  const [answer, setAnswer] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const commentId = useId();
   const reasonId = useId();
   const voteName = useId();
   const decideName = useId();
+  const answerId = useId();
+  const expiryId = useId();
 
   // Read the item from the server when it opens (a click in the list, a deep link, a reload), so votes
   // and comments are current.
@@ -77,6 +81,9 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   const st = itemStatus(item);
   const myVote = item.myVote;
   const leading = [...item.options].sort((a, b) => b.votes.length - a.votes.length)[0];
+  const myId = session?.user.id;
+  const canAnswer = item.kind === 'concern' && item.stage === 'open' && (item.canDecide || item.raisedBy === session?.user.name);
+  const choiceAccepts = !!item.options.find((o) => o.id === choice)?.accepts;
   const decidedOption = item.decision && item.options.find((o) => o.id === item.decision!.optionId);
   // R16: a warning, never a block, when the reason seems to argue for another option.
   const favoured = deciding ? reasonFavoursOther(reason, item.options, choice) : null;
@@ -109,14 +116,23 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
 
   const startDecide = () => {
     setChoice(myVote ?? leading.id);
+    setExpiry(item.expiresAt && item.expiresAt > new Date().toISOString() ? item.expiresAt.slice(0, 10) : '');
     setDeciding(true);
   };
   const confirmDecide = (e: FormEvent) => {
     e.preventDefault();
     if (!choice || !reason.trim()) return;
     void run('decide', async () => {
-      await decide(item.id, choice, reason);
+      await decide(item.id, choice, reason, choiceAccepts ? expiry : undefined);
       setDeciding(false);
+    });
+  };
+  const postAnswer = (e: FormEvent) => {
+    e.preventDefault();
+    if (!answer.trim()) return;
+    void run('answer', async () => {
+      await answerConcern(item.id, answer);
+      setAnswer('');
     });
   };
 
@@ -133,9 +149,59 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
       </div>
 
       <div className="pbody" style={{ gap: 18 }}>
-        <div>
+        <div className="chips">
           <span className={`pill ${st.tone}`}>{st.label}</span>
+          {item.overdue && <span className="pill crit">Overdue</span>}
+          {item.waitingOnMe && <span className="pill info">Waiting on you</span>}
         </div>
+
+        <dl className="facts">
+          <div>
+            <dt>Kind</dt>
+            <dd>{kindInfo[item.kind].label}</dd>
+          </div>
+          <div>
+            <dt>Domain</dt>
+            <dd>{domainInfo[item.domain].label}</dd>
+          </div>
+          {item.severity && (
+            <div>
+              <dt>Severity</dt>
+              <dd>{item.severity[0].toUpperCase() + item.severity.slice(1)}</dd>
+            </div>
+          )}
+          {item.dueAt && (
+            <div>
+              <dt>Due</dt>
+              <dd>{shortDate(item.dueAt)}</dd>
+            </div>
+          )}
+          {item.expiresAt && (
+            <div>
+              <dt>{item.reopenNote && !item.decision ? 'Acceptance expired' : 'Acceptance ends'}</dt>
+              <dd>{shortDate(item.expiresAt)}</dd>
+            </div>
+          )}
+          <div>
+            <dt>Decided by</dt>
+            <dd>{domainInfo[item.domain].decider}</dd>
+          </div>
+        </dl>
+
+        {item.reopenNote && !item.decision && (
+          <p className="callout" role="note">
+            <Icon name="warn" small />
+            <span>{item.reopenNote}</span>
+          </p>
+        )}
+
+        {item.answer && (
+          <div className="answer" role="status">
+            <b>Answered by {item.answer.by}</b>
+            <span>{item.answer.text}</span>
+            <span>{when(item.answer.at)}</span>
+          </div>
+        )}
 
         {error && (
           <p className="errtext" role="alert">
@@ -199,7 +265,41 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
           </div>
         )}
 
-        <fieldset className="block options" disabled={!!item.decision || busy === 'vote'}>
+        {item.links.length > 0 && (
+          <div className="block">
+            <span className="blockhead">Linked</span>
+            <div className="chips">
+              {item.links.map((l) =>
+                l.href ? (
+                  <Link key={`${l.type}:${l.ref}`} to={l.href} className="pill">
+                    {linkLabel(l)}
+                  </Link>
+                ) : (
+                  <span key={`${l.type}:${l.ref}`} className="pill">
+                    {linkLabel(l)}
+                  </span>
+                ),
+              )}
+            </div>
+          </div>
+        )}
+
+        {canAnswer && (
+          <form className="block answerform" onSubmit={postAnswer}>
+            <label htmlFor={answerId} className="blockhead">
+              Answer this concern <span className="muted">(closes it; open actions stay to be done)</span>
+            </label>
+            <textarea id={answerId} rows={3} value={answer} onChange={(e) => setAnswer(e.target.value)} disabled={busy === 'answer'} />
+            <div className="acts">
+              <button type="submit" className="btn ink" disabled={!answer.trim() || busy === 'answer'} aria-busy={busy === 'answer'}>
+                {busy === 'answer' ? 'Saving…' : 'Post answer'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {item.options.length > 0 && (
+        <fieldset className="block options" disabled={!!item.decision || item.stage !== 'open' || busy === 'vote'}>
           <legend className="blockhead">Options {item.decision ? '' : '· your vote'}</legend>
           {item.options.map((o) => (
             <label key={o.id} className={`option${myVote === o.id || decidedOption?.id === o.id ? ' on' : ''}`}>
@@ -214,9 +314,12 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
             </label>
           ))}
           <span className="muted" style={{ fontSize: 12.5 }}>
-            Votes are advisory. An app owner decides.
+            Votes are advisory. {domainInfo[item.domain].decider[0].toUpperCase() + domainInfo[item.domain].decider.slice(1)} decides.
           </span>
         </fieldset>
+        )}
+
+        <Actions item={item} myId={myId} run={run} busy={busy} />
 
         <div className="block" style={{ gap: 14 }}>
           <span className="blockhead">Discussion</span>
@@ -244,15 +347,15 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
           </form>
         </div>
 
-        {!item.decision && (
+        {!item.decision && item.stage === 'open' && item.options.length > 0 && (
           <div className="card decidebox">
             {!deciding ? (
               <div className="foot">
                 <span className="lockline">
                   <Icon name="lock" small />
-                  Decided by an app owner. The decision and its reason are kept with every affected item.
+                  Decided by {domainInfo[item.domain].decider}. The decision and its reason are kept with every affected item.
                 </span>
-                {me.role === 'owner' && (
+                {item.canDecide && (
                   <div className="acts">
                     <button type="button" className="btn plain" disabled={item.needsInput || busy === 'input'} onClick={() => void run('input', () => markNeedsInput(item.id))}>
                       {item.needsInput ? 'Asked for more input' : 'Needs more input'}
@@ -278,6 +381,14 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
                   Reason <span className="muted">(required, kept with every affected item)</span>
                 </label>
                 <textarea id={reasonId} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required aria-describedby={favoured ? `${reasonId}-warn` : undefined} />
+                {choiceAccepts && (
+                  <>
+                    <label htmlFor={expiryId} className="blockhead">
+                      Accepted until <span className="muted">(the item reopens on this date; empty keeps the default)</span>
+                    </label>
+                    <input id={expiryId} type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
+                  </>
+                )}
                 {favoured && (
                   <p id={`${reasonId}-warn`} className="callout reasonwarn" role="status">
                     <Icon name="warn" small />
@@ -300,5 +411,120 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
         )}
       </div>
     </section>
+  );
+}
+
+const LINK_LABEL: Record<string, string> = { story: 'Story', test: 'Test', run: 'Run', component: 'Component', chat: 'Chat', cve: 'CVE', deployment: 'Deployment' };
+const linkLabel = (l: HuddleItem['links'][number]) => (l.type === 'cve' ? l.label : `${LINK_LABEL[l.type] ?? l.type}: ${l.label}`);
+
+/** Follow-up actions: owner, due date, done. The item closes when every action of a decided item is done. */
+function Actions({ item, myId, run, busy }: { item: HuddleItem; myId: string | undefined; run: (what: string, fn: () => Promise<unknown>) => Promise<boolean>; busy: string | null }) {
+  const [adding, setAdding] = useState(false);
+  const [people, setPeople] = useState<HuddlePerson[] | null>(null);
+  const [title, setTitle] = useState('');
+  const [owner, setOwner] = useState('');
+  const [due, setDue] = useState('');
+  const [link, setLink] = useState('');
+  const ids = { title: useId(), owner: useId(), due: useId(), link: useId() };
+  const closed = item.stage === 'closed';
+  if (closed && item.actions.length === 0) return null;
+
+  const open = () => {
+    setAdding(true);
+    setOwner(myId ?? '');
+    if (!people) fetchPeople().then(setPeople, () => setPeople([]));
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !owner) return;
+    void run('action', async () => {
+      await addAction(item.id, { title, ownerId: owner, dueAt: due || undefined, link: link.trim() || undefined });
+      setTitle('');
+      setDue('');
+      setLink('');
+      setAdding(false);
+    });
+  };
+
+  return (
+    <div className="block" style={{ gap: 10 }}>
+      <span className="blockhead">Actions</span>
+      {item.actions.length === 0 && <span className="muted">No actions yet. A decision usually creates some: open a PR, add a test, rotate a key.</span>}
+      {item.actions.length > 0 && (
+        <ul className="actionlist" aria-label="Actions">
+          {item.actions.map((a) => (
+            <li key={a.id} className={a.status === 'done' ? 'done' : undefined}>
+              <span className="avatar" aria-hidden="true">
+                {a.owner.initials}
+              </span>
+              <div>
+                <b>{a.title}</b>
+                <span className="muted">
+                  {a.owner.name}
+                  {a.dueAt ? ` · due ${shortDate(a.dueAt)}` : ''}
+                  {a.status === 'done' ? ` · done${a.doneBy ? ` by ${a.doneBy}` : ''}` : ''}
+                  {a.link && (
+                    <>
+                      {' · '}
+                      {a.link.startsWith('/') ? <Link to={a.link}>link</Link> : <a href={a.link} target="_blank" rel="noreferrer">link</a>}
+                    </>
+                  )}
+                </span>
+                {a.overdue && <span className="pill crit">Overdue</span>}
+                {a.status === 'open' && (
+                  <button type="button" className="btn plain" style={{ marginTop: 6 }} disabled={busy === `done-${a.id}`} aria-busy={busy === `done-${a.id}`} onClick={() => void run(`done-${a.id}`, () => completeAction(item.id, a.id))}>
+                    Mark done<span className="sr">: {a.title}</span>
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!closed &&
+        (adding ? (
+          <form className="actionform" onSubmit={submit} aria-label="Add an action">
+            <label htmlFor={ids.title}>
+              What has to be done
+              <input id={ids.title} value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={200} />
+            </label>
+            <div className="row">
+              <label htmlFor={ids.owner}>
+                Owner
+                <select id={ids.owner} value={owner} onChange={(e) => setOwner(e.target.value)} required>
+                  {!people && <option value={owner}>Loading people…</option>}
+                  {people?.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label htmlFor={ids.due}>
+                Due
+                <input id={ids.due} type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+              </label>
+            </div>
+            <label htmlFor={ids.link}>
+              Link (optional)
+              <input id={ids.link} value={link} onChange={(e) => setLink(e.target.value)} placeholder="/tickets/ABCD-1001 or https://…" />
+            </label>
+            <div className="acts">
+              <button type="button" className="btn plain" onClick={() => setAdding(false)} disabled={busy === 'action'}>
+                Cancel
+              </button>
+              <button type="submit" className="btn ink" disabled={!title.trim() || !owner || busy === 'action'} aria-busy={busy === 'action'}>
+                {busy === 'action' ? 'Adding…' : 'Add action'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div>
+            <button type="button" className="btn plain" onClick={open}>
+              Add an action
+            </button>
+          </div>
+        ))}
+    </div>
   );
 }
