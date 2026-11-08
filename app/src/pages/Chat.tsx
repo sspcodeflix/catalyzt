@@ -6,6 +6,7 @@ import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
 import { createChat, isAnswering, loadChat, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
 import { useSession } from '../lib/session';
+import { questionFor } from '../lib/staleAnswer';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 
 /**
@@ -115,6 +116,22 @@ function ChatView({ chatId }: { chatId: string }) {
                     components: [],
                   });
                 }}
+                onAskAgain={(() => {
+                  // R04: the same question, with the same tags, as a new turn; only the chat's owner can send.
+                  const q = readOnly || isAnswering(chat) ? null : questionFor(chat.messages, m.id);
+                  return q
+                    ? () =>
+                        send({
+                          text: q.text,
+                          agent: chat.agent,
+                          scope: chat.scope,
+                          testType: q.testType ?? chat.testType,
+                          testTypeSource: q.testType ? 'rules' : null,
+                          tickets: q.tickets ?? [],
+                          components: q.components ?? [],
+                        })
+                    : undefined;
+                })()}
               />
             ),
           )}
