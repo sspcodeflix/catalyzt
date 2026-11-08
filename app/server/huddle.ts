@@ -178,7 +178,7 @@ export const titleWords = (t: string) =>
       .toLowerCase()
       .replace(/\([^)]*\)\s*$/, ' ')
       .match(/[a-z0-9]+/g)
-      ?.filter((w) => w.length > 2 && !['the', 'and', 'for', 'this', 'that', 'with'].includes(w)) ?? [],
+      ?.filter((w) => (w.length > 2 || /\d/.test(w)) && !['the', 'and', 'for', 'this', 'that', 'with'].includes(w)) ?? [],
   );
 
 /** Near-identical titles: at least 80% of the words shared (Jaccard), and at least two words. */

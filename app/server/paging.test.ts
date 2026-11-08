@@ -171,5 +171,8 @@ describe('R17: likely duplicates', () => {
     expect(getItem(db, 'ABCD', second.id)!.similar.map((s) => s.id)).toEqual([first.id]);
     expect(items.size).toBe(4);
     expect(similarTitles('Who owns refunds?', 'Who owns payouts?')).toBe(false);
+    // Titles that differ by a number (a ticket, a component) are different decisions.
+    expect(similarTitles('Mapping question number 54 about component 54', 'Mapping question number 0 about component 0')).toBe(false);
+    expect(similarTitles('Is IBGM-1001 ready?', 'Is IBGM-1002 ready?')).toBe(false);
   });
 });
