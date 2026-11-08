@@ -1,5 +1,5 @@
 import { flowsChanged } from '../../lib/flows';
-import { FlowChatCard, FlowReviewHandoff, FlowsWaitingCard, FlowStartCard } from './FlowCards';
+import { FlowChatCard, FlowReviewHandoff, FlowsWaitingCard, FlowStartCard, NextActionChips, nextActions, useRunAction, type StoryFlows } from './FlowCards';
 import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -25,10 +25,13 @@ interface AssistantTurnProps {
   onFollowUp: (text: string) => void;
   /** Sends the question this answer replied to again (R04); absent when it cannot be resent here. */
   onAskAgain?: () => void;
+  /** The flows holding this chat's stories: on the last answer, the next thing to do in them leads the cues. */
+  storyFlows?: StoryFlows;
+  last?: boolean;
 }
 
 /** Prose first, then the card, then the rating, approvals and follow-up suggestions. */
-export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: AssistantTurnProps) {
+export function AssistantTurn({ chat, message, onFollowUp, onAskAgain, storyFlows, last }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false);
   // A rating below 4 stars waits for the feedback form before it is sent.
   const [pendingStars, setPendingStars] = useState<number | null>(null);
@@ -38,6 +41,7 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideErrors, setDecideErrors] = useState<Record<string, string>>({});
   const session = useSession();
+  const runAction = useRunAction(chat, onFollowUp);
   const tickets = useTickets();
   // "Raise with the team": a Concern in Huddle with the question, the answer's opening and its sources.
   const [raising, setRaising] = useState(false);
@@ -187,9 +191,12 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
             <p>{b.text}</p>
           </section>
         );
-      case 'followups':
+      case 'followups': {
+        // In a test flow, the next thing for this person to do leads the cues, done right here in chat.
+        const acts = last && storyFlows ? nextActions(storyFlows.flows, storyFlows.stories) : [];
         return (
           <div key={i} className="chips">
+            <NextActionChips actions={acts} run={runAction} />
             {b.items.map((t) => (
               <button key={t} type="button" className="chip" onClick={() => onFollowUp(t)}>
                 {t}
@@ -197,6 +204,7 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
             ))}
           </div>
         );
+      }
     }
   };
 

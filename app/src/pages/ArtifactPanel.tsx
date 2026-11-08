@@ -277,13 +277,15 @@ function uatAsText(a: UatArtifact) {
  * Link adds the test to the criterion (the server refuses a test from another repository), and the next
  * analysis counts it if it passed in the target build. A suggestion never counts by itself.
  */
-function Suggestions({ storyKey, criterion, items }: { storyKey: string; criterion: string; items: TestSuggestion[] }) {
+export function Suggestions({ storyKey, criterion, items }: { storyKey: string; criterion: string; items: TestSuggestion[] }) {
   const [state, setState] = useState<Record<string, 'busy' | 'linked' | string>>({});
   const link = async (id: string) => {
     setState((x) => ({ ...x, [id]: 'busy' }));
     try {
       await api(`/api/hexa/tests/${id}/links`, { method: 'POST', body: JSON.stringify({ type: 'criterion', ref: `${storyKey}#${criterion}` }) });
       hexaChanged();
+      // A flow holding the story counts the link at once (its criteria and coverage reload).
+      window.dispatchEvent(new Event('flows:changed'));
       setState((x) => ({ ...x, [id]: 'linked' }));
     } catch (e) {
       setState((x) => ({ ...x, [id]: (e as Error).message }));

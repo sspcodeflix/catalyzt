@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { AssistantTurn } from '../components/chat/AssistantTurn';
-import { StoryFlowBar } from '../components/chat/FlowCards';
+import { StoryFlowBar, useStoryFlows } from '../components/chat/FlowCards';
 import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
 import { onTabListKey } from '../components/tabKeys';
@@ -52,6 +52,11 @@ function ChatView({ chatId }: { chatId: string }) {
   const panelOpen = location.pathname.includes('/artifact/');
   // A flow's team thread is open to every member of the application; other chats to the person who started them.
   const thread = chat?.flowId ?? null;
+  // The flows holding this chat's stories, loaded once here: the bar above the composer and the cues
+  // under the last answer offer the next thing to do in them.
+  const stories = chat && !thread ? chatStories(chat) : [];
+  const storyFlows = { flows: useStoryFlows(stories) ?? [], stories };
+  const lastAssistantId = chat ? [...chat.messages].reverse().find((x) => x.role === 'assistant')?.id : undefined;
   const readOnly = !!chat?.createdBy && chat.createdBy !== userId && !thread;
   const flow = useThreadFlow(thread, chatId, chat ? isAnswering(chat) : false);
   const starter = readOnly ? (me?.people.find((p) => p.id === chat?.createdBy)?.name ?? 'someone else') : null;
@@ -161,6 +166,20 @@ function ChatView({ chatId }: { chatId: string }) {
     return () => window.clearTimeout(t);
   }, [wanted, chat?.messages.length]);
 
+  // A follow-up (a cue under an answer, or a next action asking for the flow card) keeps the chat's test type unless its own words say otherwise.
+  const followUp = (text: string) => {
+    const d = detectTestType(text);
+    send({
+      text,
+      agent: chat!.agent,
+      scope: chat!.scope,
+      testType: d.type ?? chat!.testType,
+      testTypeSource: d.type ? 'rules' : null,
+      tickets: d.tickets,
+      components: [],
+    });
+  };
+
   const renderMessage = (m: Message) =>
             m.role === 'user' ? (
               <Fragment key={m.id}>
@@ -194,19 +213,9 @@ function ChatView({ chatId }: { chatId: string }) {
                 key={m.id}
                 chat={chat!}
                 message={m}
-                onFollowUp={(text) => {
-                  // A follow-up keeps the chat's test type unless its own words say otherwise.
-                  const d = detectTestType(text);
-                  send({
-                    text,
-                    agent: chat!.agent,
-                    scope: chat!.scope,
-                    testType: d.type ?? chat!.testType,
-                    testTypeSource: d.type ? 'rules' : null,
-                    tickets: d.tickets,
-                    components: [],
-                  });
-                }}
+                onFollowUp={followUp}
+                storyFlows={storyFlows}
+                last={m.id === lastAssistantId}
                 onAskAgain={(() => {
                   // R04: the same question, with the same tags, as a new turn; only the chat's owner can send.
                   const q = readOnly || isAnswering(chat!) ? null : questionFor(chat!.messages, m.id);
@@ -318,7 +327,7 @@ function ChatView({ chatId }: { chatId: string }) {
             </button>
           )}
         </div>
-        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} />}
+        {chat && !thread && <StoryFlowBar chat={chat} storyFlows={storyFlows} onAsk={followUp} />}
         {chat && !readOnly && (
           <div className="composerwrap">
             <Composer

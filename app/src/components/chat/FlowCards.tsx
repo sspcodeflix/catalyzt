@@ -4,22 +4,106 @@
  * answer: an old chat shows today's progress, and acting in the card acts on the flow itself.
  */
 import { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 import type { DecidedApproval } from '../../lib/chatStore';
 import { flowsChanged, useActiveFlows, type FlowSummary, type FlowView } from '../../lib/flows';
 import { api } from '../../lib/hexa';
 import { sessionEpoch, useSession } from '../../lib/session';
-import type { Block } from '../../lib/types';
-import { CaseReview, Coverage, FlowCard, Stepper, StoryRow } from '../../pages/Flows';
+import type { Block, Chat } from '../../lib/types';
+import { BulkReview, CaseReview, Coverage, FlowCard, Stepper, StoryRow } from '../../pages/Flows';
 
 const KIND = { uat: 'UAT', regression: 'Regression' } as const;
+
+/** The active flows holding the stories a chat is about, loaded once per chat (Chat.tsx) for the bar and the answers' cues. */
+export interface StoryFlows {
+  flows: FlowSummary[];
+  stories: string[];
+}
+
+/** What the person looking should do next in a flow, for a story this chat is about, and how chat does it. */
+export interface NextAction {
+  /** suggestions: open the report's criteria with their Link buttons; review: the drafted-case review in this chat; flowcard: ask for the flow card, which carries the story's controls; href: go there. */
+  kind: 'suggestions' | 'review' | 'flowcard' | 'href';
+  label: string;
+  key: string;
+  flowId: string;
+  flowKind: FlowSummary['kind'];
+  href?: string;
+}
+export function nextActions(flows: FlowSummary[], stories: string[]): NextAction[] {
+  const out: NextAction[] = [];
+  for (const f of flows) {
+    if (f.status !== 'active') continue;
+    for (const w of f.waiting) {
+      if (!w.you) continue;
+      for (const key of w.stories.filter((k) => stories.includes(k))) {
+        const base = { key, flowId: f.id, flowKind: f.kind };
+        const a: NextAction | null =
+          w.action === 'Review suggestions'
+            ? { ...base, kind: 'suggestions', label: `Link the suggested tests for ${key}` }
+            : w.action === 'Review cases'
+              ? { ...base, kind: 'review', label: `Review the drafted cases for ${key}` }
+              : w.action === 'Record results'
+                ? { ...base, kind: 'flowcard', label: `Record results for ${key}` }
+                : w.action === 'Sign off'
+                  ? { ...base, kind: 'flowcard', label: `Sign off ${key}` }
+                  : w.action === 'Analyse again'
+                    ? { ...base, kind: 'flowcard', label: `Analyse ${key} again` }
+                    : w.action === 'Draft automation'
+                      ? { ...base, kind: 'flowcard', label: `Draft automation for ${key}` }
+                      : w.action === 'See failures'
+                        ? { ...base, kind: 'href', label: `See the failing tests of ${key}`, href: `/tickets/${key}` }
+                        : null;
+        if (a && !out.some((x) => x.label === a.label)) out.push(a);
+      }
+    }
+  }
+  return out.slice(0, 4);
+}
+
+/**
+ * Does a next action here, in chat: the suggestions open in the story's report (its criteria carry the Link
+ * buttons), the drafted-case review is scrolled to when it is in this chat, and everything else asks for
+ * the flow card, which shows the story with its own controls (results, sign-off, analyse again).
+ */
+export function useRunAction(chat: Chat | null, ask: (text: string) => void) {
+  const navigate = useNavigate();
+  return (a: NextAction) => {
+    if (a.kind === 'href' && a.href) return navigate(a.href);
+    if (a.kind === 'suggestions') {
+      const report = chat ? Object.values(chat.artifacts).find((x) => x.kind === 'uat' && x.ticketKey === a.key) : undefined;
+      return navigate(report && chat ? `/chat/${chat.id}/artifact/${report.id}` : `/flows/${a.flowId}?review=${encodeURIComponent(a.key)}`);
+    }
+    if (a.kind === 'review') {
+      const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(a.key)}`);
+      if (here) return here.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return navigate(`/flows/${a.flowId}?review=${encodeURIComponent(a.key)}`);
+    }
+    ask(`Where is the ${KIND[a.flowKind]} for ${a.key}?`);
+  };
+}
+
+/** The next actions as chips, ahead of any generic follow-up questions. */
+export function NextActionChips({ actions, run }: { actions: NextAction[]; run: (a: NextAction) => void }) {
+  if (!actions.length) return null;
+  return (
+    <>
+      {actions.map((a) => (
+        <button key={a.label} type="button" className="chip act" onClick={() => run(a)}>
+          {a.label}
+        </button>
+      ))}
+    </>
+  );
+}
 
 /** One flow, live: its steps, what waits on whom, and the stories waiting on you, with their actions. */
 export function FlowChatCard({ flowId }: { flowId: string }) {
   const [flow, setFlow] = useState<FlowView | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string | null>(null);
+  const [note, setNote] = useState('');
   const { me, loaded } = useSession();
   const here = useLocation().pathname;
   useEffect(() => {
@@ -60,6 +144,8 @@ export function FlowChatCard({ flowId }: { flowId: string }) {
   const mineKeys = new Set(flow.waiting.filter((w) => w.you).flatMap((w) => w.stories));
   const mine = flow.items.filter((s) => mineKeys.has(s.key)).slice(0, 5);
   const others = flow.waiting.filter((w) => !w.you).slice(0, 3);
+  // Several stories waiting on this person's review are approved together, here as on the flow page.
+  const bulk = flow.waiting.find((w) => w.you && w.action === 'Review cases' && w.stories.length > 1);
   return (
     <section className="card flowchat" aria-label={`Test flow ${flow.title}`}>
       <div className="flowtitle">
@@ -79,6 +165,12 @@ export function FlowChatCard({ flowId }: { flowId: string }) {
       {mine.length > 0 && (
         <div className="flowchatmine">
           <b>Waiting on you</b>
+          {bulk && <BulkReview flow={flow} keys={bulk.stories} onFlow={setFlow} onOpen={(k) => setOpen(k)} onResult={setNote} />}
+          {note && (
+            <p className="muted small bulknote" role="status">
+              {note}
+            </p>
+          )}
           {mine.map((s) => (
             <StoryRow key={s.key} flow={flow} story={s} open={open === s.key} onToggle={() => setOpen(open === s.key ? null : s.key)} post={post} />
           ))}
@@ -226,16 +318,17 @@ export function useStoryFlows(stories: string[]): FlowSummary[] | null {
  * Above the reply box of a chat about stories that are in a test flow: where the flow stands and who it
  * waits on. Reviewing drafted cases is the flow's own step, so "Review cases" opens it there.
  */
-export function StoryFlowBar({ stories }: { stories: string[] }) {
-  const flows = useStoryFlows(stories) ?? [];
+export function StoryFlowBar({ chat, storyFlows, onAsk }: { chat: Chat; storyFlows: StoryFlows; onAsk: (text: string) => void }) {
+  const { flows, stories } = storyFlows;
+  const run = useRunAction(chat, onAsk);
   if (!flows.length) return null;
   return (
     <div className="storyflowbar" role="status" aria-label="Test flows this chat is part of">
       {flows.slice(0, 2).map((f) => {
         const mine = f.waiting.filter((w) => w.you);
         const other = f.waiting.find((w) => !w.you);
-        const review = mine.find((w) => w.action === 'Review cases');
-        const reviewKey = review ? (review.stories.find((k) => stories.includes(k)) ?? review.stories[0]) : null;
+        // The next things for the person looking, for the stories this chat is about, done right here.
+        const acts = nextActions([f], stories);
         return (
           <div key={f.id} className="sfrow">
             <span className="flowkind">{KIND[f.kind]}</span>
@@ -244,35 +337,18 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
             </Link>
             <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
             <span className="sfwait">
-              {reviewKey
-                ? `Waiting on you: review the drafted cases for ${reviewKey}${review && review.stories.length > 1 ? ` and ${review.stories.length - 1} more` : ''}`
+              {acts.length
+                ? 'Next for you:'
                 : mine.length
                   ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
                   : other
                     ? `Waiting on ${other.person?.name ?? (other.action.startsWith('The UAT analyst') ? 'the agent' : 'the pipeline')}: ${other.action.toLowerCase()}`
                     : 'Nothing waiting'}
             </span>
-            {reviewKey ? (
-              <>
-                <Link
-                  to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`}
-                  className="btn small ink"
-                  onClick={(e) => {
-                    // The review is in this chat: go to it rather than leave.
-                    const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(reviewKey)}`);
-                    if (!here) return;
-                    e.preventDefault();
-                    here.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                  }}
-                >
-                  Review cases
-                </Link>
-                {review && review.stories.length > 1 && (
-                  <Link to={`/flows/${f.id}?review=all`} className="btn small plain">
-                    Approve several at once
-                  </Link>
-                )}
-              </>
+            {acts.length ? (
+              <span className="chips">
+                <NextActionChips actions={acts} run={run} />
+              </span>
             ) : (
               <Link to={`/flows/${f.id}`} className="btn small plain">
                 Open flow

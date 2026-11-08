@@ -232,7 +232,8 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
   } else if (approval?.status === 'declined') {
     steps.push({ key: 'review', state: 'blocked', detail: `${approval.decidedBy ?? 'A reviewer'} asked for changes${approval.note ? `: "${/[.!?]$/.test(approval.note) ? approval.note : `${approval.note}.`}"` : '.'} Analyse again to draft new cases.`, waitingOn: [flow.owner], since: approval.decidedAt ?? undefined, action: { kind: 'analyse', label: 'Analyse again' } });
   } else if (toLink) {
-    steps.push({ key: 'review', state: 'waiting', detail: `${plural(toLink, 'criterion', 'criteria')} may already be covered by a passing CI test. Link the right test so it counts.`, waitingOn: managers, action: { kind: 'link', label: 'Review suggestions', href: chatHref(report?.chatId) } });
+    // The suggestions sit under the criteria on the story itself; the action opens the story, not a chat.
+    steps.push({ key: 'review', state: 'waiting', detail: `${plural(toLink, 'criterion', 'criteria')} may already be covered by a passing CI test. Link the right test so it counts.`, waitingOn: managers, action: { kind: 'link', label: 'Review suggestions' } });
   } else if (approval?.status === 'approved') {
     const by = votes.filter((v) => v.decision === 'approved');
     steps.push({ key: 'review', state: 'done', detail: `Cases approved by ${by.length ? names(by) : (approval.decidedBy ?? 'a manager')}.`, waitingOn: [], since: approval.decidedAt ?? undefined });
@@ -306,7 +307,8 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     summary: story.summary,
     status: story.status,
     components: story.components,
-    criteria: story.acceptanceCriteria.map((text, i) => ({ id: `AC${i + 1}`, text, status: cov[i]?.status ?? 'no-test', verified: !!verified[i] })),
+    // Suggested tests travel with the criterion, so a reviewer links them on the story itself (flow page or chat card).
+    criteria: story.acceptanceCriteria.map((text, i) => ({ id: `AC${i + 1}`, text, status: cov[i]?.status ?? 'no-test', verified: !!verified[i], ...(!verified[i] && cov[i]?.suggestions?.length ? { suggestions: cov[i].suggestions } : {}) })),
     steps,
     current,
     chatId: item.chatId ?? report?.chatId ?? null,

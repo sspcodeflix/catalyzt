@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { Suggestions } from './ArtifactPanel';
 import type { DecidedApproval } from '../lib/chatStore';
 import { api } from '../lib/hexa';
 import { flowsChanged, STEPS, type FlowKind, type FlowStory, type FlowSummary, type FlowView, type StepKey, type StoryStep } from '../lib/flows';
@@ -575,7 +576,7 @@ export function FlowDetail() {
                       <button
                         type="button"
                         className="btn small"
-                        onClick={() => openAt(w.stories[0], w.action === 'Review cases' ? 'review' : w.action === 'Record results' ? 'run' : w.action === 'Sign off' ? 'signoff' : 'story')}
+                        onClick={() => openAt(w.stories[0], w.action === 'Review cases' ? 'review' : w.action === 'Record results' || w.action === 'Review suggestions' ? 'run' : w.action === 'Sign off' ? 'signoff' : 'story')}
                       >
                         {w.action}
                       </button>
@@ -708,6 +709,8 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
               <span>
                 <b>{c.id}</b> {c.text}
               </span>
+              {/* A passing CI test that looks like it covers the criterion: link it here and it counts. */}
+              {c.suggestions?.length && flow.status === 'active' ? <Suggestions storyKey={story.key} criterion={c.id} items={c.suggestions} /> : null}
               {flow.kind === 'uat' && cases.map((m) => <ManualRow key={m.id} m={m} canExecute={runnable && story.can.execute && flow.status === 'active'} />)}
             </li>
           );
@@ -758,7 +761,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
  * approved on its own, so a story with other approvers still waits for them. Asking for changes stays on
  * the story, since it needs a note about that story.
  */
-function BulkReview({ flow, keys, onFlow, onOpen, onResult }: { flow: FlowView; keys: string[]; onFlow: (f: FlowView) => void; onOpen: (key: string) => void; onResult: (text: string) => void }) {
+export function BulkReview({ flow, keys, onFlow, onOpen, onResult }: { flow: FlowView; keys: string[]; onFlow: (f: FlowView) => void; onOpen: (key: string) => void; onResult: (text: string) => void }) {
   const me = useSession().userId;
   const [picked, setPicked] = useState<Set<string>>(() => new Set(keys));
   const [busy, setBusy] = useState(false);

@@ -287,6 +287,13 @@ legend { padding: 0; }
 .bulkreview .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .bulkreview .row .ink { margin-left: auto; }
 .bulknote { margin: 8px 0 0; }
+/* Suggested tests under a criterion of a flow story: the same block as in the report, a little tighter. */
+.flowcriteria .suggest { flex-basis: 100%; margin: 4px 0 2px; }
+/* A next action in a flow, offered in chat: it does something here rather than asking a question. */
+.chip.act { background: var(--hz-info-tint); border-color: transparent; color: var(--hz-info-text); font-weight: 500; }
+.chip.act:hover { border-color: var(--hz-info-text); }
+.storyflowbar .chips { gap: 6px; }
+.storyflowbar .chip { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
 .flowmanage { display: flex; gap: 8px; }
 
 .flowstories { display: flex; flex-direction: column; gap: 8px; }

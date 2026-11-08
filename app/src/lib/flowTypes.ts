@@ -50,7 +50,8 @@ export interface FlowStory {
   summary: string;
   status: string;
   components: string[];
-  criteria: { id: string; text: string; status: string; verified: boolean }[];
+  /** Each criterion with its coverage status and, when a passing CI test looks like it covers it, the suggestions a person can link right here. */
+  criteria: { id: string; text: string; status: string; verified: boolean; suggestions?: { id: string; title: string; result: string | null; why: string }[] }[];
   steps: StoryStep[];
   /** The first step that is not finished, or null when the story is through the flow. */
   current: StepKey | null;
