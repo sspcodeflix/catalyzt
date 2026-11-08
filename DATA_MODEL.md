@@ -67,6 +67,7 @@ erDiagram
   huddle_items ||--o{ huddle_comments : discusses
   huddle_items ||--o| huddle_decisions : "decided by"
   huddle_items ||--o{ huddle_links : affects
+  huddle_items ||--o{ huddle_actions : "follows up"
 ```
 
 ## Tables
@@ -77,7 +78,7 @@ erDiagram
 | `users` | `id`, `name`, `initials`, `email` | Seeded from the workspace. Behind a sign-in proxy the person is found by email; in development the browser's picker names them. |
 | `applications` | `id` (ABCD), `name`, `jira_project`, `description` | The unit of scope and permissions. |
 | `workspaces` | `id`, `application_id`, `name` | Repository names, in this workspace. |
-| `memberships` | `user_id`, `application_id`, `role` | `member`, `app_owner`, `component_manager`, `security_champion`. Owners decide Huddle items; owners and component managers approve. |
+| `memberships` | `user_id`, `application_id`, `role` | `member`, `app_owner`, `component_manager`, `security_champion`, `sre_lead`, `product_owner`, `uat_tester`, `automation_engineer` (the last four since migration 22; personas.json `roles` and team.json `roles` assign them). Huddle deciders by domain (below); owners and component managers approve. |
 | `components` | `id` (`<app>/<name>`), `application_id`, `name`, `manager_id`, `workspace_id`, `repo`, `path`, `language`, `tests` | Adding one to a request means regression. |
 | `requirements` | `uid` (`<application>/<external id>`), `application_id`, `external_id` (FR-0231), `title`, `source_id`; unique (`application_id`, `external_id`) | A requirement number is scoped to its application (F23): FR-0231 in two applications is two records. Stories link by `uid`; test links carry the external id and are scoped through the test's application. |
 
@@ -135,11 +136,12 @@ erDiagram
 | `source_chunks_fts` | FTS5 virtual table over `source_chunks` (`text`, `locator`; external content, porter stemming) | The lexical side of retrieval (F24): a question's candidates are the best bm25 matches, never the whole table. Triggers keep it in step; the server runs the strict integrity check at start and rebuilds when needed. |
 | `chunk_embeddings` | `chunk_id`, `model`, `dims`, `vector` (float32 BLOB, unit length), `text_sha`, `created_at`; key (`chunk_id`, `model`) | One vector per passage and embedding model, written by the background embedding job (`server/retrieval.ts`). Retrieval is hybrid: keyword overlap and cosine similarity fused by rank, then reranked by a local cross-encoder; a passage without a vector still matches by keyword. Removing a passage removes its vectors; a re-index keeps vectors whose text did not change (`text_sha`). |
 | `conflicts` | `id`, `source_id`, `other_source_id`, `title`, `detail`, `compare` (JSON), `huddle_item_id`, `status`, `resolution`, `created_at`, `resolved_at` | A source against a higher-trust one. Resolved by the Huddle decision (`keep_higher` or `use_upload`) in the same transaction. |
-| `huddle_items` | `id`, `application_id`, `kind`, `title`, `summary`, `scope`, `ai_summary`, `citations` (JSON), `source_id`, `status`, `needs_input`, `raised_by_type`, `raised_by` | `kind`: `conflict`, `mapping`, `risk`, `feedback`. Raised by a person or by Catalyzt (the feedback-pattern rule). |
-| `huddle_options` | `id`, `item_id`, `seq`, `label`, `detail`, `keeps_upload` | Ordered. For conflicts, the option that uses the upload. |
-| `huddle_votes`, `huddle_comments` | | One vote per person per item; comments with author and time. |
-| `huddle_decisions` | `item_id`, `option_id`, `reason`, `decided_by`, `decided_at` | Only an app owner decides; a reason is required. |
-| `huddle_links` | `item_id`, `entity_type`, `entity_ref`, `label`, `href` | What a decision affects, and dedupe keys (`feedback_pattern`). |
+| `huddle_items` | `id`, `application_id`, `kind`, `domain`, `title`, `summary`, `scope`, `ai_summary`, `citations` (JSON), `source_id`, `status`, `needs_input`, `raised_by_type`, `raised_by`, `severity`, `due_at`, `expires_at`, `answer`, `answered_by`, `answered_at`, `closed_at`, `reopened_at`, `reopen_note` | `kind`: `concern`, `decision`, `risk`, `change_review`, `vulnerability`, `incident_followup`, `capacity_warning`, `conflict`, `mapping`, `feedback`. `domain`: `testing`, `reliability`, `security`, `knowledge`, `process` (migration 22 gave existing items one from their kind: conflict → knowledge, feedback → process, others → testing). `status`: `open`, `decided`, `closed`; the stage shown adds needs input and follow-up (decided with open actions). Risks and vulnerabilities always have `expires_at` (vulnerability by `severity`: critical 7 days, high 30, medium 90, low 180; risk 30); an accepted one reopens on the next read after it, with `reopen_note`. A concern may have no options and is closed by its `answer`. |
+| `huddle_options` | `id`, `item_id`, `seq`, `label`, `detail`, `keeps_upload`, `accepts` | Ordered. For conflicts, the option that uses the upload; `accepts` marks the option whose choice accepts a risk (so it expires). |
+| `huddle_votes`, `huddle_comments` | | One vote per person per item (advisory); comments with author and time. |
+| `huddle_decisions` | `item_id`, `option_id`, `reason`, `decided_by`, `decided_at` | Decided by the domain's decider, checked on the server: testing, the manager of a linked component (directly or through a linked story) or an app owner; reliability, an `sre_lead` or an app owner; security, a `security_champion` or an app owner; knowledge and process, an app owner. A reason is required. An expired acceptance moves its decision into `reopen_note`. |
+| `huddle_actions` | `id`, `item_id`, `title`, `owner_id`, `due_at`, `status` (`open`/`done`), `link`, `created_by`, `created_at`, `done_by`, `done_at` | Follow-ups with an owner (a member) and a due date. Done by the owner, the person who added it or a decider; the decided item closes when none is open. |
+| `huddle_links` | `item_id`, `entity_type`, `entity_ref`, `label`, `href` | `affects` chips, typed links (`story`, `test`, `run`, `component`, `chat`, `cve`, `deployment`), and keys (`feedback_pattern`; `answer`, the revision a concern was raised from). |
 
 ## Growing lists are read a page at a time
 Recent chats page by (`updated_at`, `id`), a chat's messages by `seq` (latest page first, older on demand; a page never starts with an answer whose question is older), and Huddle items by (`created_at`, `id`) as summaries whose discussion and cited summary are read when the item opens. Cursors are positions in a stable order, so items added after the first page never repeat or skip an item on later pages, and revision and approval ids are the stored ones on every page (migration 19 adds the matching indexes).
@@ -151,4 +153,4 @@ Recent chats page by (`updated_at`, `id`), a chat's messages by `seq` (latest pa
 - **Why something was refused:** `guard_events` and the failed guard's `agent_runs.result`.
 
 ## What is stored today
-Everything above is read and written by the server now: people and scope; chats, messages, answer revisions, citations, artifacts, ratings and approvals; attachments; the agent and token ledgers; stories and refinements; Hexa tests, links, scans, runs and results; App Context sources, passages and conflicts; Huddle items, votes, comments and decisions. The browser keeps nothing authoritative; its stores are views of the server for the selected person and application and drop responses from an earlier selection. Only `uat_analyses` and `uat_criterion_results` are unused for now.
+Everything above is read and written by the server now: people and scope; chats, messages, answer revisions, citations, artifacts, ratings and approvals; attachments; the agent and token ledgers; stories and refinements; Hexa tests, links, scans, runs and results; App Context sources, passages and conflicts; Huddle items, votes, comments, decisions and actions. The browser keeps nothing authoritative; its stores are views of the server for the selected person and application and drop responses from an earlier selection. Only `uat_analyses` and `uat_criterion_results` are unused for now.

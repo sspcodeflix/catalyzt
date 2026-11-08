@@ -1,5 +1,15 @@
 # Huddle: the team's decisions, across testing, reliability and security
 
+**Built (slice 1, migration 22):** domains and the new kinds; deciders by domain enforced on the server
+(`sre_lead`, `product_owner`, `uat_tester` and `automation_engineer` join the roles; personas.json `roles`
+and team.json `roles` assign them); due dates and overdue flags; expiries (vulnerability by severity, risk
+30 days) that reopen an accepted risk on read; follow-up actions that close the item; concerns answered
+without options; `?domain=` and `?waiting=me`; "Raise with the team" on every finished answer; the Huddle
+page's domain chips, "Waiting on me", kind badges, actions and answer box. **Not yet:** Needs you,
+reminders and escalation, agents raising change reviews, vulnerabilities, incident follow-ups and capacity
+warnings by themselves, evidence per option, product-owner UAT sign-off exceptions, and drafting the
+approval cards of actions.
+
 Huddle today handles four testing-centred kinds of item: source conflicts, disputed mappings, risk
 acceptances and feedback patterns. It becomes the place for anything that needs more than one person,
 whatever the domain: a doubt someone wants a second opinion on, a choice between options, an exception

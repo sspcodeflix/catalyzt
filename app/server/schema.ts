@@ -898,4 +898,77 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE source_chunks ADD COLUMN kind TEXT;
   `,
+  // 22: Huddle across testing, reliability and security (docs/HUDDLE.md). Items carry a domain and grow
+  //     new kinds (concern, decision, change review, vulnerability, incident follow-up, capacity warning),
+  //     a 'closed' status, a severity, a due date and an expiry, and a concern's answer; the table is
+  //     rebuilt because its CHECK constraints change, keeping every row (options, votes, comments, links
+  //     and decisions refer to it by id and are untouched). Existing items get a domain from their kind.
+  //     Options record whether they accept a risk (so an acceptance can expire). Actions follow a
+  //     decision, with an owner and a due date. Memberships gain the sre_lead, product_owner, uat_tester and automation_engineer roles.
+  `
+  CREATE TABLE huddle_items_v22 (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    kind TEXT NOT NULL CHECK (kind IN ('conflict', 'mapping', 'risk', 'feedback', 'concern', 'decision', 'change_review', 'vulnerability', 'incident_followup', 'capacity_warning')),
+    domain TEXT NOT NULL DEFAULT 'testing' CHECK (domain IN ('testing', 'reliability', 'security', 'knowledge', 'process')),
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'decided', 'closed')),
+    needs_input INTEGER NOT NULL DEFAULT 0,
+    raised_by_type TEXT NOT NULL CHECK (raised_by_type IN ('user', 'agent')),
+    raised_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT '',
+    ai_summary TEXT NOT NULL DEFAULT '',
+    citations TEXT NOT NULL DEFAULT '[]',
+    source_id TEXT REFERENCES context_sources(id) ON DELETE SET NULL,
+    updated_at TEXT,
+    severity TEXT CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+    due_at TEXT,
+    expires_at TEXT,
+    answer TEXT,
+    answered_by TEXT REFERENCES users(id),
+    answered_at TEXT,
+    closed_at TEXT,
+    reopened_at TEXT,
+    reopen_note TEXT
+  );
+  INSERT INTO huddle_items_v22 (id, application_id, kind, domain, title, summary, status, needs_input, raised_by_type, raised_by, created_at, scope, ai_summary, citations, source_id, updated_at)
+    SELECT id, application_id, kind, CASE kind WHEN 'conflict' THEN 'knowledge' WHEN 'feedback' THEN 'process' ELSE 'testing' END,
+      title, summary, status, needs_input, raised_by_type, raised_by, created_at, scope, ai_summary, citations, source_id, updated_at FROM huddle_items;
+  DROP TABLE huddle_items;
+  ALTER TABLE huddle_items_v22 RENAME TO huddle_items;
+  CREATE INDEX huddle_items_app ON huddle_items (application_id, status, created_at);
+  CREATE INDEX huddle_items_page ON huddle_items (application_id, created_at, id);
+  CREATE INDEX huddle_items_domain ON huddle_items (application_id, domain, status);
+
+  ALTER TABLE huddle_options ADD COLUMN accepts INTEGER NOT NULL DEFAULT 0;
+  UPDATE huddle_options SET accepts = 1 WHERE lower(label) LIKE 'accept%' AND item_id IN (SELECT id FROM huddle_items WHERE kind = 'risk');
+
+  CREATE TABLE huddle_actions (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL REFERENCES huddle_items(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id),
+    due_at TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    link TEXT,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    done_by TEXT REFERENCES users(id),
+    done_at TEXT
+  );
+  CREATE INDEX huddle_actions_item ON huddle_actions (item_id, status);
+  CREATE INDEX huddle_actions_owner ON huddle_actions (owner_id, status);
+
+  CREATE TABLE memberships_v22 (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    role TEXT NOT NULL CHECK (role IN ('member', 'app_owner', 'component_manager', 'security_champion', 'sre_lead', 'product_owner', 'uat_tester', 'automation_engineer')),
+    PRIMARY KEY (user_id, application_id, role)
+  );
+  INSERT INTO memberships_v22 SELECT user_id, application_id, role FROM memberships;
+  DROP TABLE memberships;
+  ALTER TABLE memberships_v22 RENAME TO memberships;
+  `,
 ];

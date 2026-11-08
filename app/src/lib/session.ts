@@ -32,7 +32,7 @@ export interface AppInfo {
   name: string;
   description: string;
   jiraProject: string;
-  roles: ('member' | 'app_owner' | 'component_manager' | 'security_champion')[];
+  roles: ('member' | 'app_owner' | 'component_manager' | 'security_champion' | 'sre_lead' | 'product_owner' | 'uat_tester' | 'automation_engineer')[];
   workspaces: string[];
   components: ComponentInfo[];
 }
