@@ -17,6 +17,17 @@ took over on 8 November 2026 with the finding list F01–F17. The finding-by-fin
 Verification at the end of stage D: 185 unit and API tests (14 files), 5 browser scripts with 73
 checks, type-check, front-end and API bundles built, the bundle started without Vite and probed.
 
+## Follow-up reviews (8 November 2026)
+
+Two scheduled reviews appended to the brief after stage D: a workflow review (F18–F22 plus residual
+cases of F05–F17) and a data-model and scalability review (F23–F28 plus hardening directions). The
+follow-up table in [docs/FINDINGS.md](docs/FINDINGS.md) tracks them. Done so far: F18, F19, F21,
+F22, F23, F25, F26, F27, F28 and the residuals of F05, F06, F07, F08, F09, F10, F12, F15, F16, F17,
+each with a regression test (227 unit and API tests across 19 files; browser suite at 75 checks).
+Still open: F20 (immutable source versions behind citations), F24 (bounded retrieval with an indexed
+lexical candidate set) and the hardening table's performance items (story hydration, Huddle paging,
+usage summaries, ingestion lookup maps, indexes, retention, repository interfaces).
+
 ## Known limits (stated, not hidden)
 - Retrieval in App Context is hybrid: keyword overlap plus a local embedding model (all-MiniLM-L6-v2, 384 dimensions) fused by rank, then a local cross-encoder reranker (ms-marco-MiniLM-L-6-v2), both run on the CPU by transformers.js and cached under `app/data/models` (46 MB, downloaded once). Until a passage has a vector, or without the models (`HORIZON_RETRIEVAL=keyword`), it is keyword-only and the page, the API and the answer's step say so. There is no approximate-nearest-neighbour index: cosine runs over every vector of the application, which is fine at thousands of passages. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.
 - Not externally validated: a real GitHub Actions push to `/api/hexa/results` (the payload and semantics are tested against the API), a real sign-in proxy (the header mode is tested with synthetic requests), model-written answers (tests stub the model; the key in `app/.env` is only used when you run the app).
@@ -27,15 +38,15 @@ checks, type-check, front-end and API bundles built, the bundle started without 
 | Phase | Status | Notes |
 |---|---|---|
 | 0. Decisions, initial commit | done | `dc7f20f`, local only. |
-| 1. Workspace, assignments, clones, backlogs, manual tests | partial | IBGM backlog and manual tests committed (`f394ab5`). ABCD and WIMT backlog writers were stopped before they wrote anything; their backlogs are still to be written. |
+| 1. Workspace, assignments, clones, backlogs, manual tests | done | IBGM backlog and manual tests (`f394ab5`); ABCD and WIMT backlogs with manual tests and per-story notes (`c4ca48a`): 16 stories and 9 manual tests each, derived from the clones and their history; validator clean for all three teams. |
 | 2. Remove dummy data; multi-app; roles; Sign in as | done | `c6f6b2b`. |
 | 3. Persist chats, App Context, Huddle; feedback form | done | Through the brief's stages A–C. |
 | 4. Local CI runner; UAT readiness from real results; linking | done (runner), evidence delivered | `app/scripts/ci-runner.ts` with `.myworkspace/<APP>/ci.json` targets runs each clone's tests in Docker and posts JUnit to the live server. Delivered: ABCD 3 runs (ach 2,211 Go tests at PR #1922; microservices-demo 19), WIMT 1 run (petclinic 20, all modules), IBGM 1 run (piggymetrics 2: the Maven build stops at auth-service under Java 11, see `IBGM/log/ci-runs.md`). ghostfolio is a heavy target (`--heavy`). Tests are linked to criteria from the Hexa test panel (new link form) or by the simulation personas. |
-| 5. Simulation: three team agents in parallel | in progress | `app/e2e/sim/run_sim.py` plays a team (owner and managers in separate sessions) against the live server with the model on `deepseek-flash`. IBGM: dry run and model run done, 6 analyses, approvals, linked evidence, context upload, conflict decided, risk raised, guardrails, phone session. ABCD and WIMT follow once their backlogs land (agents writing them). |
-| 6. Fix, re-run, ISSUES.md, docs | in progress | [ISSUES.md](ISSUES.md): S01 (approval ids never reached a fresh answer; fixed), S02 (piggymetrics CI stopped by JaCoCo on Java 11; configuration), S03 (specialists had no Hexa facts; fixed with cited Hexa sources). |
+| 5. Simulation: three team agents in parallel | in progress | `app/e2e/sim/run_sim.py` plays a team (owner and managers in separate sessions) against the live server with the model on `deepseek-flash`. IBGM: dry run and model runs done. ABCD (07:58, 10 analyses, 8 approvals, 0 issues) and WIMT (07:59; its three logged "bugs" were the development server restarting under edits, repeated on a quiet server) done. An independent reviewer pass over IBGM produced R01–R24 (`.myworkspace/IBGM/log/review.md`). |
+| 6. Fix, re-run, ISSUES.md, docs | in progress | [ISSUES.md](ISSUES.md): S01–S03 and the review's R01–R03, R05, R06, R09, R10, R12, R15 fixed with regression tests (Hexa facts now find a component's tests by link, path and package and carry failure messages; stale workspaces removed; superseded approvals expire; UAT reports flag In Progress stories). Open from the review: R04 (old answers), R07 (proposed steps), R08 (link form defaults), R11, R13 (search analysis state), R14, R16 (conflict counts), R17–R24. |
 
 ## Notes
-- **DeepSeek:** the key is in `app/.env` with `DEEPSEEK_MODEL=deepseek-v4-pro`. Tests and browser checks run without a key (rules routing), so they cost nothing.
+- **DeepSeek:** the key is in `app/.env` with `DEEPSEEK_MODEL=deepseek-flash` (one model for routing and answers). Tests and browser checks run without a key (rules routing), so they cost nothing.
 - **Application names:** ABCD is Ram's Portfolio, IBGM is Nabih's Portfolio, WIMT is Jacques's Portfolio; workspaces are repository names.
 - **Identity:** the "Sign in as" picker is development-only (`HORIZON_DEV_IDENTITY=1`); a shared deployment names people through the sign-in proxy's header (`HORIZON_IDENTITY_HEADER`).
 - **Names kept:** environment variables (`HORIZON_*`), request headers (`x-horizon-*`), browser keys (`hz-*`), the database file and the repository folder keep their names for compatibility; the product is Catalyzt everywhere people read it.

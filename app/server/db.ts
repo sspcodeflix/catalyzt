@@ -188,7 +188,12 @@ export interface ScanRow {
 
 /** The run a criterion's evidence is read from: the latest merge-commit run of the test's repository. */
 export interface EvidenceBuild {
+  /** The run that identifies the build (the latest one for the commit). */
   runId: string;
+  /** The latest attempt of every workflow that reported for the same commit, this run first (F06). */
+  runIds: string[];
+  /** Names of those workflows, so a test whose workflow has not reported yet can be told apart from one dropped from its workflow. */
+  workflows: string[];
   repo: string | null;
   sha: string | null;
   branch: string | null;
@@ -1182,9 +1187,24 @@ export function openDb(path: string) {
       const attempt = Number(r.attempt ?? 1);
       const sha = (r.sha as string) ?? null;
       const branch = (r.branch as string) ?? null;
+      // F06: the build is the commit, not one run. Every workflow that reported for the same repository
+      // and commit contributes its latest attempt, so a unit workflow's pass cannot hide an integration
+      // workflow's failure on the same build.
+      const runs = sha
+        ? (db
+            .prepare(
+              `SELECT id, workflow, attempt, COALESCE(started_at, ingested_at) AS at FROM test_runs WHERE application_id = ? AND repo IS ? AND sha = ?
+               ORDER BY (started_at IS NOT NULL) DESC, at DESC, attempt DESC, rowid DESC`,
+            )
+            .all(app, repo, sha) as { id: string; workflow: string | null; attempt: number }[])
+        : [{ id: String(r.id), workflow: (r.workflow as string) ?? null, attempt }];
+      const latest = new Map<string, { id: string; workflow: string | null }>();
+      for (const run of runs) if (!latest.has(run.workflow ?? '')) latest.set(run.workflow ?? '', run);
+      const runIds = [String(r.id), ...[...latest.values()].map((x) => x.id).filter((id) => id !== String(r.id))];
+      const workflows = [...latest.keys()].filter(Boolean);
       const where = [sha ? sha.slice(0, 7) : null, branch, r.started_at ? null : 'timed by delivery'].filter(Boolean).join(', ');
-      const label = `${pr ? `PR #${pr}` : `run ${(r.external_run_id as string) ?? String(r.id).slice(0, 7)}`}${attempt > 1 ? ` attempt ${attempt}` : ''}${where ? ` (${where})` : ''}`;
-      return { runId: String(r.id), repo: (r.repo as string) ?? null, sha, branch, prNumber: pr, attempt, at: String(r.at), label };
+      const label = `${pr ? `PR #${pr}` : `run ${(r.external_run_id as string) ?? String(r.id).slice(0, 7)}`}${attempt > 1 ? ` attempt ${attempt}` : ''}${where ? ` (${where})` : ''}${runIds.length > 1 ? ` · ${runIds.length} workflows` : ''}`;
+      return { runId: String(r.id), runIds, workflows, repo: (r.repo as string) ?? null, sha, branch, prNumber: pr, attempt, at: String(r.at), label };
     },
 
     /**
@@ -1204,6 +1224,21 @@ export function openDb(path: string) {
          WHERE l.entity_type = 'criterion' AND l.entity_ref = ? AND t.status = 'active' AND t.kind != 'proposed' ORDER BY t.kind, t.title`,
       );
       const inRun = db.prepare('SELECT status FROM test_results WHERE run_id = ? AND test_case_id = ?');
+      // The workflow a test last reported from, to tell "not in this build yet" from "dropped from its workflow".
+      const lastWorkflow = db.prepare(
+        `SELECT run.workflow AS w FROM test_results res JOIN test_runs run ON run.id = res.run_id WHERE res.test_case_id = ?
+         ORDER BY COALESCE(run.started_at, run.ingested_at) DESC, run.rowid DESC LIMIT 1`,
+      );
+      const RANK: Record<string, number> = { failed: 3, passed: 2, skipped: 1 };
+      /** The test's result across every workflow of the build: a failure anywhere wins, then a pass, then skipped. */
+      const resultIn = (build: EvidenceBuild, testId: string): EvidenceResult => {
+        let best: EvidenceResult | null = null;
+        for (const runId of build.runIds) {
+          const res = inRun.get(runId, testId) as { status: EvidenceResult } | undefined;
+          if (res && (!best || (RANK[res.status] ?? 0) > (RANK[best] ?? 0))) best = res.status;
+        }
+        return best ?? 'missing';
+      };
       const builds = new Map<string, EvidenceBuild | null>();
       const buildFor = (repo: string | null) => {
         const key = repo ?? '';
@@ -1217,12 +1252,15 @@ export function openDb(path: string) {
           const kind = String(r.kind);
           if (kind !== 'automated') return { id: String(r.id), title: String(r.title), kind, result: 'manual' as EvidenceResult, build: null };
           const build = buildFor((r.repo as string) ?? null);
-          const res = build ? (inRun.get(build.runId, r.id) as { status: EvidenceResult } | undefined) : undefined;
-          const result: EvidenceResult = !build ? 'not_run' : (res?.status ?? 'missing');
-          return { id: String(r.id), title: String(r.title), kind, result, build };
+          const result: EvidenceResult = !build ? 'not_run' : resultIn(build, String(r.id));
+          // Missing from the build: did its workflow report at all for this commit?
+          const wf = build && result === 'missing' ? ((lastWorkflow.get(r.id) as { w: string | null } | undefined)?.w ?? null) : null;
+          // Only meaningful when the build's runs name their workflows; an unnamed run is taken as "the" workflow.
+          const awaiting = !!wf && !!build && build.workflows.length > 0 && !build.workflows.includes(wf);
+          return { id: String(r.id), title: String(r.title), kind, result, build, awaiting: awaiting ? wf : null };
         });
         const used = [...new Map(tests.flatMap((t) => (t.build ? [[t.build.runId, t.build] as const] : []))).values()];
-        const out = (status: CriterionStatus, evidence: string): CriterionCoverage => ({ status, evidence, tests: tests.map(({ build: _b, ...t }) => t), builds: used });
+        const out = (status: CriterionStatus, evidence: string): CriterionCoverage => ({ status, evidence, tests: tests.map(({ build: _b, awaiting: _a, ...t }) => t), builds: used });
         const by = (result: EvidenceResult) => tests.filter((t) => t.result === result);
         const label = (t: { build: EvidenceBuild | null }) => t.build?.label ?? 'the target build';
         const failed = by('failed');
@@ -1234,7 +1272,11 @@ export function openDb(path: string) {
           const rest = [missing.length && `${one(missing)} not in that run`, skipped.length && `${one(skipped)} skipped`].filter(Boolean).join('; ');
           return out('passing', `${one(passed)} passed in ${label(passed[0])}${rest ? ` (${rest})` : ''}`);
         }
-        if (missing.length) return out('not-run', `${one(missing)} not in ${label(missing[0])}; an earlier pass does not count`);
+        if (missing.length) {
+          const waiting = missing.filter((t) => t.awaiting);
+          if (waiting.length === missing.length) return out('not-run', `${one(waiting)} not in ${label(waiting[0])} yet: workflow "${waiting[0].awaiting}" has not reported for this build; an earlier pass does not count`);
+          return out('not-run', `${one(missing)} not in ${label(missing[0])}; an earlier pass does not count`);
+        }
         if (skipped.length) return out('not-run', `${one(skipped)} skipped in ${label(skipped[0])}`);
         const noRun = by('not_run');
         if (noRun.length) return out('not-run', `${one(noRun)} exist${noRun.length === 1 ? 's' : ''} but no run has been recorded for the repository`);

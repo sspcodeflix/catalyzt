@@ -17,6 +17,17 @@ export function AppShell() {
   // Close the drawer after navigating.
   useEffect(() => setDrawerOpen(false), [location.pathname]);
 
+  // F16: the drawer only exists below 900px. Crossing to the desktop layout while it is open would leave
+  // the page inert with the close control hidden, so the drawer closes on the way across.
+  useEffect(() => {
+    const desktop = window.matchMedia('(min-width: 900px)');
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) setDrawerOpen(false);
+    };
+    desktop.addEventListener('change', onChange);
+    return () => desktop.removeEventListener('change', onChange);
+  }, []);
+
   useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setDrawerOpen(false);

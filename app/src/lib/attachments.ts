@@ -3,7 +3,7 @@
  * person sees reflects what the server kept and whether Catalyzt can read it. Nothing is sent with
  * a message unless the server has it.
  */
-import { http } from './session';
+import { http, sessionEpoch, StaleScopeError } from './session';
 
 export interface UploadedAttachment {
   id: string;
@@ -26,13 +26,18 @@ const toBase64 = (f: File) =>
 
 /** Uploads one file. Resolves with the stored attachment, or rejects with the server's reason. */
 export async function uploadAttachment(file: File, chatId?: string): Promise<UploadedAttachment> {
+  // F15: the upload belongs to the person and application that chose the file. If either changes while
+  // the file is being read or sent, nothing is uploaded or applied for the new scope.
+  const epoch = sessionEpoch();
   const contentBase64 = await toBase64(file);
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
   const res = await http('/api/attachments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ files: [{ filename: file.name, contentBase64 }], chatId }),
   });
   const body = (await res.json().catch(() => ({}))) as { attachments?: UploadedAttachment[]; errors?: string[]; error?: string };
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
   if (!res.ok) throw new Error(body.error ?? `Upload failed (${res.status}).`);
   if (body.attachments?.[0]) return body.attachments[0];
   throw new Error(body.errors?.[0] ?? 'The file was not stored.');

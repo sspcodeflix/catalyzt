@@ -197,3 +197,40 @@ describe('migrations', () => {
     expect(db.rolesFor('u-old', 'App-old')).toEqual(['app_owner']);
   });
 });
+
+describe('F06: a build is the commit, read across every workflow that reported for it', () => {
+  const suite = (cases: { name: string; failed?: boolean }[]) =>
+    `<testsuite name="payments.PartialRefundsTest">${cases.map((c) => `<testcase classname="payments.PartialRefundsTest" name="${c.name}" time="0.1">${c.failed ? '<failure message="boom"/>' : ''}</testcase>`).join('')}</testsuite>`;
+  const A = 'aMerchantCanRefundPartOfASettledCardPayment';
+  const B = 'aRefundAboveTheOriginalAmountIsRejectedWithAClearMessage';
+
+  it('a unit workflow passing a minute later never hides an integration failure on the same commit', async () => {
+    const db = fixtureDb();
+    const [ac1, ac2] = seedRefundTests(db);
+    db.linkTest(ac2, 'criterion', 'ABCD-1001#AC1', 'u-sourav'); // AC1 now has tests A and B
+    await ingestJUnit(db, [{ filename: 'i.xml', xml: suite([{ name: A, failed: true }]) }], meta({ workflow: 'integration', sha: 'c0ffee1', prNumber: 1600, startedAt: at(-2), externalRunId: 'i1' }), 'u-sourav');
+    await ingestJUnit(db, [{ filename: 'u.xml', xml: suite([{ name: B }]) }], meta({ workflow: 'unit', sha: 'c0ffee1', prNumber: 1600, startedAt: at(-1), externalRunId: 'u1' }), 'u-sourav');
+    const build = db.targetBuild('ABCD', 'acme/shop')!;
+    expect(build.runIds).toHaveLength(2);
+    expect(build.workflows.sort()).toEqual(['integration', 'unit']);
+    expect(build.label).toContain('2 workflows');
+    const ac1cov = db.coverageFor('ABCD-1001')[0];
+    expect(ac1cov.status).toBe('failing');
+    expect(ac1cov.tests.find((t) => t.id === ac1)?.result).toBe('failed');
+    expect(ac1cov.tests.find((t) => t.id === ac2)?.result).toBe('passed');
+    // A rerun of the integration workflow that passes becomes that workflow's latest attempt; the build is then green.
+    await ingestJUnit(db, [{ filename: 'i2.xml', xml: suite([{ name: A }]) }], meta({ workflow: 'integration', sha: 'c0ffee1', prNumber: 1600, startedAt: at(-1), attempt: 2, externalRunId: 'i1' }), 'u-sourav');
+    expect(db.coverageFor('ABCD-1001')[0].status).toBe('passing');
+  });
+
+  it('a test whose workflow has not reported for the new commit is "not in the build yet", not passing from an older run', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db); // PR #41 on seed123: A and B passed in workflow "CI"
+    // A new commit where only a different workflow has reported so far, without A.
+    await ingestJUnit(db, [{ filename: 'u.xml', xml: suite([{ name: 'somethingElse' }]) }], meta({ workflow: 'unit', sha: 'c0ffee2', prNumber: 1601, startedAt: at(-1), externalRunId: 'u2' }), 'u-sourav');
+    const cov = db.coverageFor('ABCD-1001');
+    expect(cov[0].status).toBe('not-run');
+    expect(cov[0].evidence).toMatch(/workflow "CI" has not reported for this build/);
+    expect(cov[0].tests[0].result).toBe('missing');
+  });
+});

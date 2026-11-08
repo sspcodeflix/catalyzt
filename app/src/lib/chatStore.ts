@@ -8,7 +8,7 @@ import { useSyncExternalStore } from 'react';
 
 import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from './answerReducer';
 import { runWorkflow } from './llm';
-import { http, sessionEpoch } from './session';
+import { http, sessionEpoch, StaleScopeError } from './session';
 import { getTicket, recordUatAnalysis } from './ticketStore';
 import type { Agent, Approval, Artifact, AssistantMessage, AttachmentRef, Chat, Message, Scope, TestType, UserMessage } from './types';
 
@@ -50,8 +50,12 @@ export async function refreshRecents() {
   const epoch = sessionEpoch();
   try {
     const r = await http('/api/chats');
-    if (r.ok && epoch === sessionEpoch()) {
-      recent = ((await r.json()) as { chats: typeof recent }).chats;
+    if (!r.ok) return;
+    // F10: the body is read first; the scope is checked right before the list is replaced, so a slow
+    // old-scope body can never land after the new list.
+    const list = ((await r.json()) as { chats: typeof recent }).chats;
+    if (epoch === sessionEpoch()) {
+      recent = list;
       emit();
     }
   } catch {
@@ -286,6 +290,7 @@ async function runAnswer(chatId: string, answerId: string) {
   let answer = initialAnswer();
   let pending = false;
   let done = false;
+  let savedSeen = false;
   const render = () =>
     set((m) => ({
       ...m,
@@ -374,6 +379,7 @@ async function runAnswer(chatId: string, answerId: string) {
           void refreshRecents();
           continue;
         case 'saved':
+          savedSeen = true;
           set((m) => ({ ...m, blocks: answerBlocks(answer), revisionId: ev.revisionId, revision: ev.revision ?? m.revision }));
           continue;
         case 'error':
@@ -390,6 +396,9 @@ async function runAnswer(chatId: string, answerId: string) {
     set((m) => ({ ...m, blocks: answerBlocks(answer), citations: answer.citations, status: answer.status, error: answer.error }));
   } finally {
     if (running.get(chatId) === ctrl) running.delete(chatId);
+    // F07: the answer finished but the `saved` acknowledgement was lost with the connection. The server
+    // has the saved run; read it back so the revision and approval ids arrive without another model call.
+    if (done && !savedSeen && epoch === sessionEpoch()) void loadChat(chatId, true);
   }
 }
 
@@ -414,14 +423,21 @@ export async function rateAnswer(chatId: string, messageId: string, stars: numbe
   if (!m || m.role !== 'assistant') throw new Error('Unknown answer');
   if (m.status && m.status !== 'done') throw new Error('Wait for the answer to finish');
   if (!m.revisionId) throw new Error('This answer was not saved, so it cannot be rated.');
-  const r = await post<{ ok: true; patterns?: FeedbackPattern[] }>(`/api/answers/${encodeURIComponent(m.revisionId)}/rating`, { stars, ...feedback });
-  updateAnswer(chatId, messageId, (x) => ({ ...x, rating: stars }));
+  // F09: the response applies to the revision that was rated, in the scope that rated it. A retry
+  // meanwhile means a newer revision is on screen; its rating stays empty.
+  const revisionId = m.revisionId;
+  const epoch = sessionEpoch();
+  const r = await post<{ ok: true; patterns?: FeedbackPattern[] }>(`/api/answers/${encodeURIComponent(revisionId)}/rating`, { stars, ...feedback });
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
+  updateAnswer(chatId, messageId, (x) => (x.revisionId === revisionId ? { ...x, rating: stars } : x));
   return { patterns: r.patterns ?? [] };
 }
 
 /** Decides an approval on the server (rating gate and roles are checked there) and reflects the recorded state. */
 export async function decideApproval(chatId: string, messageId: string, approvalId: string, decision: 'approved' | 'declined'): Promise<Approval['status']> {
+  const epoch = sessionEpoch();
   const r = await post<{ approval: { status: Approval['status']; decidedAt?: string; decidedBy?: string; outcome?: Approval['outcome'] } }>(`/api/approvals/${encodeURIComponent(approvalId)}/decision`, { decision });
+  if (epoch !== sessionEpoch()) throw new StaleScopeError();
   updateAnswer(chatId, messageId, (m) => ({
     ...m,
     blocks: m.blocks.map((b) => (b.kind === 'approval' && b.approval.id === approvalId ? { ...b, approval: { ...b.approval, status: r.approval.status, decidedAt: r.approval.decidedAt, decidedBy: r.approval.decidedBy, outcome: r.approval.outcome } } : b)),

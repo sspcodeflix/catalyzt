@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (10 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (14 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -79,7 +79,7 @@ erDiagram
 | `workspaces` | `id`, `application_id`, `name` | Repository names, in this workspace. |
 | `memberships` | `user_id`, `application_id`, `role` | `member`, `app_owner`, `component_manager`, `security_champion`. Owners decide Huddle items; owners and component managers approve. |
 | `components` | `id` (`<app>/<name>`), `application_id`, `name`, `manager_id`, `workspace_id`, `repo`, `path`, `language`, `tests` | Adding one to a request means regression. |
-| `requirements` | `id` (FR-0231), `application_id`, `title`, `source_id` | |
+| `requirements` | `uid` (`<application>/<external id>`), `application_id`, `external_id` (FR-0231), `title`, `source_id`; unique (`application_id`, `external_id`) | A requirement number is scoped to its application (F23): FR-0231 in two applications is two records. Stories link by `uid`; test links carry the external id and are scoped through the test's application. |
 
 ### Conversations
 | Table | Key columns | Notes |
@@ -110,7 +110,7 @@ erDiagram
 |---|---|---|
 | `jira_sync` | `application_id`, `project`, `statuses` (JSON), `every_minutes`, `last_sync_at` | The filter that decides which stories are pulled. |
 | `stories` | `key`, `application_id`, `project`, `number`, `summary`, `description`, `type`, `status`, `fix_version`, `assignee`, `assignee_id`, `purpose`, `original` (JSON), `refinement_id`, `source`, `created_by` | `source`: `jira_sync` or `horizon` (created here, in the dummy Jira; the value is a stored identifier and stays). |
-| `story_criteria`, `story_components`, `story_requirements` | | Acceptance criteria (AC1, AC2…), components, requirements. |
+| `story_criteria`, `story_components`, `story_requirements` | | Acceptance criteria (AC1, AC2…), components, requirements (`requirement_uid`). Triggers refuse a link between a story and a component or requirement of another application; the same guard covers chat↔workspace, run↔test and test↔story/criterion/component links (migration 14). |
 | `refinements` | `id`, `story_key`, `input` (JSON), `output` (JSON), `source`, `model`, `agent_run_id`, `created_by` | Every refinement is kept, used or not. |
 | `uat_analyses`, `uat_criterion_results` | | Reserved for a per-analysis record; today the UAT report lives in the answer's artifact and is recomputed from Hexa on each analysis. |
 

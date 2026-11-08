@@ -36,10 +36,12 @@ function ChatView({ chatId }: { chatId: string }) {
 
   const chat = useChat(chatId);
   const load = useChatLoad(chatId);
-  // Anything else (a reload, a deep link, a recent) comes from the server.
+  // Anything else (a reload, a deep link, a recent) comes from the server. A sign-in or application
+  // change clears the load records, so a chat that was "missing" in one application is looked up again
+  // in the next (F08).
   useEffect(() => {
-    if (!chat && !first && loaded) void loadChat(chatId);
-  }, [chatId, chat, first, loaded]);
+    if (!chat && !first && loaded && !load) void loadChat(chatId);
+  }, [chatId, chat, first, loaded, load]);
 
   const panelOpen = location.pathname.includes('/artifact/');
   const readOnly = !!chat?.createdBy && chat.createdBy !== userId;

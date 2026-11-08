@@ -1,5 +1,5 @@
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
 import { uploadAttachment } from '../lib/attachments';
 import { agentLabel, capabilities, scopeLabel } from '../lib/data';
@@ -85,6 +85,13 @@ export function Composer({
   const testType = override ?? detection.type;
   const needsChoice = detection.ambiguous && !override;
   const showType = testType !== null || detection.ambiguous;
+
+  // F15: chips belong to the person and application that attached them; a new sign-in or application starts clean.
+  useEffect(() => {
+    const clear = () => setFiles([]);
+    window.addEventListener('hz:session', clear);
+    return () => window.removeEventListener('hz:session', clear);
+  }, []);
 
   const uploading = files.some((f) => f.state === 'uploading');
   const canSend = text.trim().length > 0 && !needsChoice && !busy && !!app && !uploading;

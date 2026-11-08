@@ -44,6 +44,13 @@ with sync_playwright() as p:
     page.click('.sidebar .nav a[href="/hexa"]')
     page.wait_for_function("() => !document.querySelector('.sidebar.open')")
     check('navigation closes the drawer', page.url.endswith('/hexa'))
+    # F16: crossing to the desktop layout while the drawer is open closes it, so the page is usable again.
+    page.click('button[aria-label="Open sidebar"]')
+    page.wait_for_selector('.sidebar.open')
+    page.set_viewport_size({'width': 1200, 'height': 800})
+    page.wait_for_function("() => !document.querySelector('.sidebar.open')", timeout=5000)
+    check('widening to desktop closes the drawer', True)
+    check('main is not inert after widening', not page.evaluate("() => document.querySelector('main').hasAttribute('inert')"))
     b.close()
 
 bad = [c for c in checks if not c[1]]
