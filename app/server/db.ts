@@ -457,8 +457,8 @@ export function openDb(path: string) {
   }
 
   function getChat(id: string) {
-    const r = db.prepare('SELECT id, application_id, title, agent, created_by FROM chats WHERE id = ?').get(id) as Row | undefined;
-    return r ? { id, applicationId: String(r.application_id), title: String(r.title), agent: String(r.agent), createdBy: String(r.created_by) } : undefined;
+    const r = db.prepare('SELECT id, application_id, title, agent, created_by, flow_id FROM chats WHERE id = ?').get(id) as Row | undefined;
+    return r ? { id, applicationId: String(r.application_id), title: String(r.title), agent: String(r.agent), createdBy: String(r.created_by), flowId: (r.flow_id as string) ?? null } : undefined;
   }
 
   function getApproval(id: string) {
@@ -594,7 +594,8 @@ export function openDb(path: string) {
       const t = now();
       const existing = getChat(c.id);
       if (existing && existing.applicationId !== app) throw new OwnershipError(`Chat ${c.id} belongs to another application.`);
-      if (existing && existing.createdBy !== c.userId) throw new OwnershipError(`Chat ${c.id} was started by someone else.`);
+      // A flow's team thread is shared: any member of the application adds to it (membership is checked by the API).
+      if (existing && existing.createdBy !== c.userId && !existing.flowId) throw new OwnershipError(`Chat ${c.id} was started by someone else.`);
       const ws = db.prepare('SELECT id FROM workspaces WHERE application_id = ? AND name = ?').get(app, c.workspace) as { id: string } | undefined;
       db.prepare(
         `INSERT INTO chats (id, application_id, workspace_id, title, agent, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -616,9 +617,9 @@ export function openDb(path: string) {
       const rows = (
         after
           ? db
-              .prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?')
+              .prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND flow_id IS NULL AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?')
               .all(app, userId, after[0], after[0], after[1], limit + 1)
-          : db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) ORDER BY updated_at DESC, id DESC LIMIT ?').all(app, userId, limit + 1)
+          : db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND flow_id IS NULL AND id NOT IN (SELECT chat_id FROM flow_items WHERE chat_id IS NOT NULL) ORDER BY updated_at DESC, id DESC LIMIT ?').all(app, userId, limit + 1)
       ) as Row[];
       const chats = rows.slice(0, limit).map((r) => ({ id: String(r.id), title: String(r.title), updatedAt: String(r.updated_at) }));
       const last = chats[chats.length - 1];
@@ -1677,6 +1678,8 @@ export function openDb(path: string) {
               tickets: its.filter((i) => i.type === 'story').map((i) => i.ref),
               components: its.filter((i) => i.type === 'component').map((i) => i.ref),
               attachments: files.all(m.id) as { id: string; filename: string; status: 'ready' | 'stored' | 'failed' }[],
+              author: m.created_by ? { id: String(m.created_by), name: getUser(String(m.created_by))?.name ?? String(m.created_by) } : undefined,
+              at: String(m.created_at),
             },
           ];
         }
@@ -1715,6 +1718,7 @@ export function openDb(path: string) {
             blocks,
             status: r.status as 'working' | 'streaming' | 'done' | 'error' | 'stopped',
             intent,
+            at: String(m.created_at),
           },
         ];
       });
@@ -1726,6 +1730,7 @@ export function openDb(path: string) {
         scope: { appName: String(c.app_name), appId: String(c.application_id), workspace: (c.workspace_name as string) ?? '' },
         testType: (c.test_type as 'uat' | 'regression' | null) ?? null,
         createdBy: String(c.created_by),
+        flowId: (c.flow_id as string) ?? null,
         messages,
         artifacts,
         /** Pass as `before` to read the next older page; null when this page reaches the first message. */

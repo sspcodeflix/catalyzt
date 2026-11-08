@@ -127,6 +127,7 @@ interface ServerChat {
   scope: Scope;
   testType: TestType | null;
   createdBy: string;
+  flowId?: string | null;
   messages: Message[];
   artifacts: Record<string, Artifact>;
   olderCursor?: number | null;
@@ -166,6 +167,7 @@ export async function loadChat(chatId: string, force = false): Promise<void> {
         messages: [...keep, ...chat.messages],
         artifacts: { ...(had && at > 0 ? had.artifacts : {}), ...chat.artifacts },
         createdBy: chat.createdBy,
+        flowId: chat.flowId ?? null,
         olderCursor: keep.length ? had!.olderCursor ?? null : chat.olderCursor ?? null,
       });
       loads.set(chatId, { state: 'ready' });

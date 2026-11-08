@@ -6,7 +6,10 @@ import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
 import { onTabListKey } from '../components/tabKeys';
 import { createChat, isAnswering, loadChat, loadOlderMessages, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
-import { useSession } from '../lib/session';
+import { api } from '../lib/hexa';
+import type { FlowView } from '../lib/flows';
+import type { Message } from '../lib/types';
+import { sessionEpoch, useSession } from '../lib/session';
 import { questionFor } from '../lib/staleAnswer';
 import { detectTestType, testTypeLabel } from '../lib/testType';
 
@@ -46,7 +49,10 @@ function ChatView({ chatId }: { chatId: string }) {
   }, [chatId, chat, first, loaded, load]);
 
   const panelOpen = location.pathname.includes('/artifact/');
-  const readOnly = !!chat?.createdBy && chat.createdBy !== userId;
+  // A flow's team thread is open to every member of the application; other chats to the person who started them.
+  const thread = chat?.flowId ?? null;
+  const readOnly = !!chat?.createdBy && chat.createdBy !== userId && !thread;
+  const flow = useThreadFlow(thread, chatId, chat ? isAnswering(chat) : false);
   const starter = readOnly ? (me?.people.find((p) => p.id === chat?.createdBy)?.name ?? 'someone else') : null;
 
   // On a phone the report and the chat are tabs, not a stack; both stay mounted so scroll positions survive the switch.
@@ -132,6 +138,71 @@ function ChatView({ chatId }: { chatId: string }) {
     return () => io.disconnect();
   });
 
+  const renderMessage = (m: Message) =>
+            m.role === 'user' ? (
+              <Fragment key={m.id}>
+                {Boolean(m.testType || m.tickets?.length || m.components?.length || m.attachments?.length) && (
+                  <div className="msgtags" aria-label="How Catalyzt read this request">
+                    {m.testType && <span className="pill info">{testTypeLabel(m.testType)}</span>}
+                    {m.tickets?.map((t) => (
+                      <Link key={t} to={`/tickets/${t}`} className="pill mono">
+                        {t}
+                      </Link>
+                    ))}
+                    {m.components?.map((c) => (
+                      <span key={c} className="pill mono">
+                        {c}
+                      </span>
+                    ))}
+                    {m.attachments?.map((a) => (
+                      <span key={a.id} className="pill" title={a.status === 'stored' ? 'Kept, but Catalyzt could not read this file' : undefined}>
+                        <Icon name="clip" small />
+                        {a.filename}
+                        {a.status === 'stored' ? ' · not readable' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {thread && m.author && <div className="author">{m.author.id === userId ? 'You' : m.author.name}</div>}
+                <div className="user">{m.text}</div>
+              </Fragment>
+            ) : (
+              <AssistantTurn
+                key={m.id}
+                chat={chat!}
+                message={m}
+                onFollowUp={(text) => {
+                  // A follow-up keeps the chat's test type unless its own words say otherwise.
+                  const d = detectTestType(text);
+                  send({
+                    text,
+                    agent: chat!.agent,
+                    scope: chat!.scope,
+                    testType: d.type ?? chat!.testType,
+                    testTypeSource: d.type ? 'rules' : null,
+                    tickets: d.tickets,
+                    components: [],
+                  });
+                }}
+                onAskAgain={(() => {
+                  // R04: the same question, with the same tags, as a new turn; only the chat's owner can send.
+                  const q = readOnly || isAnswering(chat!) ? null : questionFor(chat!.messages, m.id);
+                  return q
+                    ? () =>
+                        send({
+                          text: q.text,
+                          agent: chat!.agent,
+                          scope: chat!.scope,
+                          testType: q.testType ?? chat!.testType,
+                          testTypeSource: q.testType ? 'rules' : null,
+                          tickets: q.tickets ?? [],
+                          components: q.components ?? [],
+                        })
+                    : undefined;
+                })()}
+              />
+            );
+
   return (
     <div className={`body chatpage${panelOpen ? ` split view-${view}` : ''}`}>
       {/* The page heading for assistive technology; the top bar shows the same title visually. */}
@@ -162,68 +233,25 @@ function ChatView({ chatId }: { chatId: string }) {
               )}
             </div>
           )}
-          {chat?.messages.map((m) =>
-            m.role === 'user' ? (
-              <Fragment key={m.id}>
-                {Boolean(m.testType || m.tickets?.length || m.components?.length || m.attachments?.length) && (
-                  <div className="msgtags" aria-label="How Catalyzt read this request">
-                    {m.testType && <span className="pill info">{testTypeLabel(m.testType)}</span>}
-                    {m.tickets?.map((t) => (
-                      <Link key={t} to={`/tickets/${t}`} className="pill mono">
-                        {t}
-                      </Link>
-                    ))}
-                    {m.components?.map((c) => (
-                      <span key={c} className="pill mono">
-                        {c}
-                      </span>
-                    ))}
-                    {m.attachments?.map((a) => (
-                      <span key={a.id} className="pill" title={a.status === 'stored' ? 'Kept, but Catalyzt could not read this file' : undefined}>
-                        <Icon name="clip" small />
-                        {a.filename}
-                        {a.status === 'stored' ? ' · not readable' : ''}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="user">{m.text}</div>
-              </Fragment>
+          {thread && (
+            <div className="threadhead" role="note">
+              <Icon name="people" small />
+              <span>
+                Team thread for <Link to={`/flows/${thread}`}>{flow?.title ?? 'this test flow'}</Link>. Everyone on the team reads and writes here; the flow's steps show up as they happen, and the full history stays with the flow.
+              </span>
+            </div>
+          )}
+          {chat && interleave(chat.messages, thread && flow ? flow.events : [], chat.olderCursor != null).map((row) =>
+            row.kind === 'event' ? (
+              <div key={row.key} className="flowevent">
+                <Icon name="branch" small />
+                <span>
+                  <b>{row.e.who ?? 'Catalyzt'}</b> {row.e.text}
+                </span>
+                <time dateTime={row.e.at}>{new Date(row.e.at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</time>
+              </div>
             ) : (
-              <AssistantTurn
-                key={m.id}
-                chat={chat}
-                message={m}
-                onFollowUp={(text) => {
-                  // A follow-up keeps the chat's test type unless its own words say otherwise.
-                  const d = detectTestType(text);
-                  send({
-                    text,
-                    agent: chat.agent,
-                    scope: chat.scope,
-                    testType: d.type ?? chat.testType,
-                    testTypeSource: d.type ? 'rules' : null,
-                    tickets: d.tickets,
-                    components: [],
-                  });
-                }}
-                onAskAgain={(() => {
-                  // R04: the same question, with the same tags, as a new turn; only the chat's owner can send.
-                  const q = readOnly || isAnswering(chat) ? null : questionFor(chat.messages, m.id);
-                  return q
-                    ? () =>
-                        send({
-                          text: q.text,
-                          agent: chat.agent,
-                          scope: chat.scope,
-                          testType: q.testType ?? chat.testType,
-                          testTypeSource: q.testType ? 'rules' : null,
-                          tickets: q.tickets ?? [],
-                          components: q.components ?? [],
-                        })
-                    : undefined;
-                })()}
-              />
+              renderMessage(row.m)
             ),
           )}
         </div>
@@ -301,4 +329,54 @@ function ChatState({ load, onRetry }: { load: ChatLoad | undefined; onRetry: () 
         </p>
       );
   }
+}
+
+type Row = { kind: 'message'; m: Message } | { kind: 'event'; key: string; e: FlowView['events'][number] };
+
+/**
+ * Messages with the flow's events between them, by time. Events older than the first loaded message
+ * stay out while older messages are still to load.
+ */
+function interleave(messages: Message[], events: FlowView['events'], olderToLoad: boolean): Row[] {
+  const evs = [...events].sort((a, b) => a.at.localeCompare(b.at));
+  const first = messages.find((m) => m.at)?.at;
+  let i = olderToLoad && first ? evs.findIndex((e) => e.at >= first) : 0;
+  if (i < 0) i = evs.length;
+  const out: Row[] = [];
+  for (const m of messages) {
+    // A message sent just now has no server time yet: everything recorded so far comes before it.
+    const at = m.at ?? '\uffff';
+    while (i < evs.length && evs[i].at <= at) out.push({ kind: 'event', key: `e${i}`, e: evs[i++] });
+    out.push({ kind: 'message', m });
+  }
+  while (i < evs.length) out.push({ kind: 'event', key: `e${i}`, e: evs[i++] });
+  return out;
+}
+
+/** The flow behind a team thread, refreshed with the thread so teammates' messages and new events appear. */
+function useThreadFlow(flowId: string | null, chatId: string, answering: boolean) {
+  const [flow, setFlow] = useState<FlowView | null>(null);
+  useEffect(() => {
+    if (!flowId) return;
+    const epoch = sessionEpoch();
+    let live = true;
+    const load = () => {
+      api<{ flow: FlowView }>(`/api/flows/${flowId}`)
+        .then((d) => live && epoch === sessionEpoch() && setFlow(d.flow))
+        .catch(() => undefined);
+    };
+    load();
+    const timer = setInterval(() => {
+      load();
+      // Other people write here too: read the latest page again, unless an answer is streaming in.
+      if (!answering) void loadChat(chatId, true);
+    }, 10_000);
+    window.addEventListener('flows:changed', load);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener('flows:changed', load);
+    };
+  }, [flowId, chatId, answering]);
+  return flow;
 }

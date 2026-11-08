@@ -77,6 +77,8 @@ export interface FlowView extends FlowSummary {
   canManage: boolean;
   canSignOff: boolean;
   canExecute: boolean;
+  /** The flow's team thread: a chat every member of the application can add to. */
+  threadId: string;
 }
 
 

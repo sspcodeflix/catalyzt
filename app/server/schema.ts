@@ -1035,4 +1035,9 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE flows ADD COLUMN origin TEXT;
   CREATE INDEX flows_origin ON flows (origin);
   `,
+  // 25: a flow's team thread: a chat every member of the application can read and add to.
+  `
+  ALTER TABLE chats ADD COLUMN flow_id TEXT REFERENCES flows(id);
+  CREATE INDEX chats_flow ON chats (flow_id);
+  `,
 ];

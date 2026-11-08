@@ -47,6 +47,27 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 - **Automate:** people with the automation engineer role, or the component manager.
 - **Analyse, again:** the flow's owner, when an analysis failed or a reviewer declined the cases.
 
+## Chat and the flow: who keeps what
+
+Chat is the convenient way in, for the session you are in. The flow is the record: its steps, every
+approval, result and sign-off with names and times, and its timeline stay with the flow after it ends.
+Nothing in chat is a copy of the flow's state: every flow card loads the flow live, so an old chat
+shows today's progress, and acting in a card acts on the flow itself.
+
+- **Start from chat:** "start UAT for the Ready for UAT stories", "start UAT for 24.11", "start a
+  regression". The answer is a Start card listing the stories found, to untick. Nothing starts until a
+  person presses Start; pressing it twice gives the same flow. After that, the card is the live flow.
+- **Ask where it stands:** "where is the UAT for ABCD-1004?" answers with a sentence naming the step and
+  who it waits on, and the live flow card. A story in no flow gets the usual readiness report.
+- **What waits on me:** "what's waiting on me?" lists the flows with what each one needs from you.
+- **Act in the card:** the stories waiting on you open in the card, with their review link, Passed,
+  Failed and Blocked for testers, and the sign-off box.
+- **The team thread:** every flow has one shared chat that every member of the application can read and
+  write. The flow's events (started, analysed, results, sign-offs) appear in it by time, read from the
+  flow's timeline. A question there ("what is blocked?", "where are we?") is about that flow; any other
+  question gets the flow's state as a cited source. Team threads and the flow's analysis chats stay out
+  of personal Recents; they are reached from the flow and its cards.
+
 ## What people see
 
 - **Test flows** in the nav, under Testing, with a count of stories waiting on you.
@@ -81,9 +102,9 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
   declined together, on the approval card.
 - Asking the product owner for missing requirements from inside the flow. Today that is a concern raised
   in Huddle.
-- Starting or querying a flow from chat ("where is the UAT for 24.11?").
+- Notifications when something new waits on you; today the nav count and Home show it on the next visit.
 
 ## Data
 
-Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`. Step
+Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads). Step
 states are derived on each read from reports, approvals, test links and results.

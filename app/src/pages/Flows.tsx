@@ -446,6 +446,12 @@ export function FlowDetail() {
             </p>
           )}
 
+          <p className="flowthreadlink">
+            <Link to={`/chat/${flow.threadId}`} className="btn small">
+              <Icon name="people" small /> Team thread
+            </Link>
+            <span className="muted">Ask about this flow and discuss it with the team; its steps show up there as they happen.</span>
+          </p>
           <section className="card flowhead" aria-label="Where the flow stands">
             <Stepper flow={flow} />
             <Coverage c={flow.coverage} kind={flow.kind} />

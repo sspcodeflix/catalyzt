@@ -153,6 +153,37 @@ describe('test flows in chat', () => {
   });
 });
 
+describe('a flow\'s team thread', () => {
+  const say = (text: string, chatId: string, n: string) => ({ text, agent: 'auto', scope: {}, testType: null, testTypeSource: null, tickets: [], components: [], history: [], chatId, messageId: `tm${n}`, answerId: `ta${n}` });
+  it('is open to every member, answers about its flow, and stays out of personal recents', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const devi = api.as('u-devi', 'ABCD');
+    const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    const f = await until('u-sourav', id, (x) => step(x, 'analyse').state === 'done');
+    expect(f.threadId).toBe(`thread-${id}`);
+
+    // Devi, a plain member, writes in the thread and gets the flow's state without naming it.
+    const events = await devi.run(say('What is blocked and who are we waiting on?', f.threadId, '1'));
+    const answer = events.find((e) => e.type === 'answer') as { blocks: { kind: string; text?: string; flowId?: string }[] } | undefined;
+    expect(answer?.blocks).toContainEqual({ kind: 'flow', flowId: id });
+    expect(answer?.blocks.find((b) => b.kind === 'prose')?.text).toMatch(/is at Review cases/);
+    // Both people's messages are in the thread, each with its author.
+    await sourav.run(say('I will review the cases today.', f.threadId, '2'));
+    const chat = ((await (await devi.get(`/api/chats/${f.threadId}`)).json()) as { chat: { flowId: string; messages: { role: string; author?: { name: string } }[] } }).chat;
+    expect(chat.flowId).toBe(id);
+    expect(chat.messages.filter((m) => m.role === 'user').map((m) => m.author?.name)).toEqual(['Devi', 'Sourav']);
+    // A personal chat is still its owner's alone.
+    const own = await sourav.run(say('Is ABCD-1002 ready for UAT?', 'personal', '3'));
+    expect(own.some((e) => e.type === 'answer')).toBe(true);
+    expect((await devi.post('/api/run', say('hello', 'personal', '4'))).status).toBe(403);
+    // The thread lives with the flow, not in anyone's recents.
+    const recents = ((await (await sourav.get('/api/chats')).json()) as { chats: { id: string }[] }).chats.map((c) => c.id);
+    expect(recents).not.toContain(f.threadId);
+    // Another application cannot read or write it.
+    expect((await api.as('u-nabih', 'IBGM').get(`/api/chats/${f.threadId}`)).status).toBe(404);
+  });
+});
+
 describe('a regression flow', () => {
   it('asks for automation where a criterion has none, then waits for CI', async () => {
     const id = ((await (await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'regression', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;

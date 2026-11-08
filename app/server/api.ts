@@ -478,7 +478,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           if (body.messageId === body.answerId) throw new HttpError(400, 'messageId and answerId must differ.');
           const chat = db.getChat(body.chatId);
           if (chat && chat.applicationId !== appId) throw new HttpError(404, 'This chat does not exist in this application.');
-          if (chat && chat.createdBy !== user.id) throw new HttpError(403, 'Only the person who started this chat can add to it.');
+          // A flow's team thread is open to every member of the application; any other chat to the person who started it.
+          if (chat && chat.createdBy !== user.id && !chat.flowId) throw new HttpError(403, 'Only the person who started this chat can add to it.');
           const m = db.messageChat(body.messageId);
           if (m && (m.chatId !== body.chatId || m.role !== 'user')) throw new HttpError(409, 'messageId belongs to another chat or answer.');
           const a = db.messageChat(body.answerId);

@@ -114,6 +114,10 @@ export interface UserMessage {
   tickets?: string[];
   components?: string[];
   attachments?: AttachmentRef[];
+  /** Who wrote it: shown in a flow's team thread, where several people write. */
+  author?: { id: string; name: string };
+  /** When it was sent (from the server). */
+  at?: string;
 }
 
 export interface AssistantMessage {
@@ -132,6 +136,8 @@ export interface AssistantMessage {
   error?: string;
   /** What Catalyzt understood the user wants, and whether a model or the rules decided it. */
   intent?: Intent;
+  /** When it was answered (from the server). */
+  at?: string;
 }
 
 export type Message = UserMessage | AssistantMessage;
@@ -265,4 +271,6 @@ export interface Chat {
   createdBy?: string;
   /** Loaded from the server a page at a time: the cursor of the next older page, or null at the first message. */
   olderCursor?: number | null;
+  /** Set on a flow's team thread: every member of the application can add to it. */
+  flowId?: string | null;
 }

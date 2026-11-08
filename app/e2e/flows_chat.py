@@ -72,6 +72,10 @@ with sync_playwright() as p:
     check('status: answers with the flow card and its step', page.locator('.turn').last.locator('.flowchat').count() == 1 and re.search(r'is at (Analyse|Review cases|Run tests|Sign off)', page.locator('.turn').last.inner_text()) is not None)
     ask(page, "What's waiting on me?")
     last = page.locator('.turn').last
+    try:
+        last.locator('.flowchatlist .flowcard').first.wait_for(timeout=10000)
+    except Exception:
+        pass
     check('waiting: a sentence and the list of flows', last.locator('.flowchatlist .flowcard').count() >= 1)
     check('card: opens the full flow', page.locator('.flowchat a:has-text("Open the full flow")').count() >= 1)
 
@@ -81,7 +85,28 @@ with sync_playwright() as p:
     page.fill('.composer textarea', "What's waiting on me?")
     page.keyboard.press('Enter')
     page.wait_for_selector('.turn .msgactions', timeout=30000)
+    try:
+        page.wait_for_selector('.flowchatlist .flowcard', timeout=10000)
+    except Exception:
+        pass
     check('team: Sourav gets the same flow in his chat', page.locator('.flowchatlist .flowcard').count() >= 1)
+
+    # The team thread: Sourav writes there, Ram sees it with Sourav's name, and the flow's events are in it.
+    page.click('.flowchatlist .flowcard')
+    page.wait_for_selector('.flowthreadlink a', timeout=15000)
+    page.click('.flowthreadlink a')
+    page.wait_for_selector('.threadhead', timeout=15000)
+    check('thread: says it is the team thread of the flow', 'Team thread for' in page.inner_text('.threadhead'))
+    page.wait_for_selector('.flowevent', timeout=15000)
+    check('thread: the flow events are shown in it', page.locator('.flowevent').count() >= 2)
+    check('thread: a member can write (reply box shown)', page.locator('.composer textarea').count() == 1)
+    ask(page, 'Where are we?')
+    check('thread: a status question is about this flow', page.locator('.turn').last.locator('.flowchat').count() == 1)
+    thread_url = page.url
+    sign_in(page, 'Ram Kumar')
+    page.goto(thread_url)
+    page.wait_for_selector('.thread .author', timeout=15000)
+    check('thread: Ram sees Sourav\'s message with his name', 'Sourav' in page.locator('.thread .author').first.inner_text())
 
     page.set_viewport_size({'width': 390, 'height': 844})
     page.goto(chat_url)

@@ -327,6 +327,23 @@ export function appCoverage(db: HorizonDb, app: AppRecord) {
   return { criteria, covered, stories: stories.length, components, gaps, lastScan: scans[0] ? { at: scans[0].startedAt ?? null, repo: scans[0].repo } : null };
 }
 
+/* ---------- The team thread ---------- */
+
+/** The flow's team thread, created the first time it is needed: one chat, shared by the application's members. */
+export function ensureThread(db: HorizonDb, flowId: string): string {
+  const id = `thread-${flowId}`;
+  const flow = getFlowRow(db, flowId);
+  if (!flow) throw new FlowError(404, 'This flow does not exist.');
+  const t = now();
+  db.raw
+    .prepare(
+      `INSERT INTO chats (id, application_id, workspace_id, title, agent, test_type, created_by, created_at, updated_at, flow_id)
+       VALUES (?, ?, (SELECT id FROM workspaces WHERE application_id = ? ORDER BY rowid LIMIT 1), ?, 'auto', ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+    )
+    .run(id, flow.app, flow.app, `Team thread · ${flow.title}`.slice(0, 200), flow.kind, flow.owner.id, t, t, flowId);
+  return id;
+}
+
 /* ---------- Views ---------- */
 
 function summarise(flow: FlowRow, stories: FlowStory[], userId: string): FlowSummary {
@@ -414,6 +431,7 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
     canManage: flow.owner.id === userId || roles.includes('app_owner'),
     canSignOff: roles.includes('product_owner') || roles.includes('app_owner'),
     canExecute: roles.some((r) => ['uat_tester', 'app_owner', 'component_manager', 'product_owner'].includes(r)),
+    threadId: ensureThread(db, id),
   };
 }
 
@@ -634,6 +652,7 @@ export function flowByOrigin(db: HorizonDb, app: string, origin: string): string
 const WAITING_Q = /\b(what(?:'s| is)?\s+(?:waiting|pending)\s+(?:on|for)\s+me|waiting on me|my (?:pending|open) (?:items|reviews|tasks|work)|what do i (?:need|have) to do)\b/i;
 const STATUS_Q = /\b(where|status|progress|how far|stand(?:s|ing)?|blocked|stuck)\b[^?.!]{0,60}\b(uat|regression|test flows?|flows?)\b|\b(uat|regression|test flows?|flows?)\b[^?.!]{0,40}\b(status|progress|stand)\b/i;
 const START_Q = /^\s*(?:please\s+|can you\s+|could you\s+)?(?:start|begin|kick ?off|launch|set up|create|open)\b[^.?!]{0,40}\b(uat|regression)\b/i;
+const THREAD_Q = /\b(where|status|progress|how far|stand(?:s|ing)?|blocked|stuck|waiting|next|left|remaining|holding)\b/i;
 const KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
 
 export interface FlowAnswer {
@@ -645,7 +664,7 @@ export interface FlowAnswer {
  * A request about test flows, answered from the records by rules, without a model: start a flow (a
  * card listing the stories found, with Start), where a flow stands (its live card), or what waits on me.
  */
-export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, roles: string[], text: string, tickets: string[]): FlowAnswer | null {
+export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, roles: string[], text: string, tickets: string[], threadFlowId: string | null = null): FlowAnswer | null {
   const keys = [...new Set([...tickets, ...(text.match(KEY_RE) ?? [])])];
   const start = START_Q.exec(text);
   if (start) {
@@ -686,6 +705,12 @@ export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, ro
         : `Nothing in the ${plural(flows.length, 'active test flow')} waits on you right now.`;
     return { prose, blocks: flows.length ? [{ kind: 'flows_waiting' }] : [] };
   }
+  // In a flow's team thread, "where are we", "what is blocked", "what is left" are about that flow.
+  const inThread = threadFlowId ? getFlowRow(db, threadFlowId) : null;
+  if (inThread && inThread.app === app.id && THREAD_Q.test(text)) {
+    const view = flowView(db, app, inThread.id, userId, roles);
+    return { prose: describeFlow(view, keys, userId), blocks: [{ kind: 'flow', flowId: inThread.id }] };
+  }
   if (STATUS_Q.test(text) && flows.length) {
     const byKey = keys.length ? flows.filter((f) => itemsOf(db, f.id).some((i) => keys.includes(i.key))) : [];
     const words = text.toLowerCase();
@@ -696,16 +721,41 @@ export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, ro
     const chosen = byKey.length ? byKey : byTitle.length ? byTitle : byKind.length ? byKind : flows;
     const f = chosen[0];
     const view = flowView(db, app, f.id, userId, roles);
-    const named = keys.map((k) => view.items.find((s) => s.key === k)).filter((s): s is FlowStory => !!s);
-    const label = (k: string) => STEPS[f.kind].find((s) => s.key === k)?.label ?? k;
-    const storyLines = named.map((s) => {
-      const st = s.steps.find((x) => x.key === s.current);
-      return st ? `${s.key} is at ${label(st.key)}: ${st.detail}${st.waitingOn.length ? ` It waits on ${st.waitingOn.map((p) => (p.id === userId ? 'you' : p.name)).join(' or ')}.` : ''}` : `${s.key} is through the flow.`;
-    });
-    const where = f.current ? `at ${f.current.label}: ${f.steps.map((s) => `${s.label} ${s.done} of ${f.stories}`).join(', ')}` : 'finished';
-    const prose = [`"${f.title}" is ${where}.`, ...storyLines, chosen.length > 1 ? `${plural(chosen.length - 1, 'other flow')} also matched; ask by name to see ${chosen.length > 2 ? 'them' : 'it'}.` : ''].filter(Boolean).join(' ');
+    const prose = [describeFlow(view, keys, userId), chosen.length > 1 ? `${plural(chosen.length - 1, 'other flow')} also matched; ask by name to see ${chosen.length > 2 ? 'them' : 'it'}.` : ''].filter(Boolean).join(' ');
     return { prose, blocks: [{ kind: 'flow', flowId: f.id }] };
   }
   if (STATUS_Q.test(text) && /\b(test flows?|flows?)\b/i.test(text)) return { prose: 'No test flow is running in this application. Ask me to start one, for example "start UAT for the Ready for UAT stories".', blocks: [] };
   return null;
+}
+
+/** Where a flow stands in one or two sentences, plus a line per named story, and what is blocked. */
+function describeFlow(view: FlowView, keys: string[], userId: string): string {
+  const label = (k: string) => STEPS[view.kind].find((s) => s.key === k)?.label ?? k;
+  const who = (list: { id: string; name: string }[]) => list.map((p) => (p.id === userId ? 'you' : p.name)).join(' or ');
+  const line = (s: FlowStory) => {
+    const st = s.steps.find((x) => x.key === s.current);
+    return st ? `${s.key} is at ${label(st.key)}: ${st.detail}${st.waitingOn.length ? ` It waits on ${who(st.waitingOn)}.` : ''}` : `${s.key} is through the flow.`;
+  };
+  const named = keys.map((k) => view.items.find((s) => s.key === k)).filter((s): s is FlowStory => !!s);
+  const blocked = named.length ? [] : view.items.filter((s) => s.steps.some((x) => x.key === s.current && x.state === 'blocked'));
+  const where = view.current ? `at ${view.current.label}: ${view.steps.map((s) => `${s.label} ${s.done} of ${view.stories}`).join(', ')}` : view.status === 'done' ? 'finished' : view.status;
+  return [`"${view.title}" is ${where}.`, ...named.map(line), blocked.length ? `Blocked: ${blocked.map(line).join(' ')}` : ''].filter(Boolean).join(' ');
+}
+
+/** The flow as a source for an answer in its team thread: every story's step, who it waits on, and recent events. */
+export function flowFacts(db: HorizonDb, app: AppRecord, flowId: string, userId: string, roles: string[]) {
+  const view = flowView(db, app, flowId, userId, roles);
+  const label = (k: string) => STEPS[view.kind].find((s) => s.key === k)?.label ?? k;
+  const lines = view.items.map((s) => {
+    const st = s.steps.find((x) => x.key === s.current);
+    const crit = s.criteria.map((c) => `${c.id} ${c.verified ? 'verified' : c.status}`).join(', ');
+    return `- ${s.key} "${s.summary}": ${st ? `${label(st.key)} (${st.state}): ${st.detail}${st.waitingOn.length ? ` Waits on ${st.waitingOn.map((p) => p.name).join(' or ')}.` : ''}` : 'through the flow.'} Criteria: ${crit}.`;
+  });
+  const events = view.events.slice(0, 12).map((e) => `- ${e.at.slice(0, 16).replace('T', ' ')} ${e.who ?? 'Catalyzt'}: ${e.text}`);
+  return {
+    title: `Test flow · ${view.title}`,
+    text: `${describeFlow(view, [], userId)}\nStories:\n${lines.join('\n')}\nRecent events, newest first:\n${events.join('\n')}`,
+    detail: `${view.kind === 'uat' ? 'UAT' : 'Regression'} flow · steps and timeline`,
+    href: `/flows/${view.id}`,
+  };
 }

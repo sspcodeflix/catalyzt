@@ -4,7 +4,7 @@
  * answer: an old chat shows today's progress, and acting in the card acts on the flow itself.
  */
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { flowsChanged, useActiveFlows, type FlowView } from '../../lib/flows';
 import { api } from '../../lib/hexa';
@@ -20,6 +20,7 @@ export function FlowChatCard({ flowId }: { flowId: string }) {
   const [error, setError] = useState('');
   const [open, setOpen] = useState<string | null>(null);
   const { me, loaded } = useSession();
+  const here = useLocation().pathname;
   useEffect(() => {
     if (!loaded || !me?.app) return;
     const epoch = sessionEpoch();
@@ -93,9 +94,16 @@ export function FlowChatCard({ flowId }: { flowId: string }) {
           ))}
         </ul>
       )}
-      <Link to={`/flows/${flow.id}`} className="btn small">
-        Open the full flow · {flow.stories} {flow.stories === 1 ? 'story' : 'stories'}, timeline
-      </Link>
+      <div className="flowchatlinks">
+        <Link to={`/flows/${flow.id}`} className="btn small">
+          Open the full flow · {flow.stories} {flow.stories === 1 ? 'story' : 'stories'}, timeline
+        </Link>
+        {!here.startsWith(`/chat/${flow.threadId}`) && (
+          <Link to={`/chat/${flow.threadId}`} className="btn small plain">
+            Team thread
+          </Link>
+        )}
+      </div>
     </section>
   );
 }

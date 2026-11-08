@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (23 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (25 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -132,10 +132,11 @@ erDiagram
 
 | Table | Columns | Notes |
 |---|---|---|
-| `flows` | `id`, `application_id`, `kind`, `title`, `owner_id`, `status`, `baseline` (JSON), `created_at`, `updated_at`, `finished_at` | `kind`: `uat`, `regression` (one active regression flow per application). `status`: `active`, `paused`, `done` (set once every story is through), `cancelled`. |
+| `flows` | `id`, `application_id`, `kind`, `title`, `owner_id`, `status`, `baseline` (JSON), `created_at`, `updated_at`, `finished_at`, `origin` | `kind`: `uat`, `regression` (one active regression flow per application). `status`: `active`, `paused`, `done` (set once every story is through), `cancelled`. `origin` (migration 24): the chat answer whose Start card started it, so a second press returns the same flow. |
 | `flow_items` | `flow_id`, `story_key`, `position`, `chat_id`, `added_by`, `added_at`, `removed_at` | The stories in a flow; `chat_id` is the chat the background analysis created. Step states are not stored: they are derived from reports, approvals, links and results on each read. |
 | `flow_signoffs` | `id`, `flow_id`, `story_key`, `decision`, `note`, `evidence` (JSON), `decided_by`, `created_at` | `decision`: `signed_off`, `rejected` (needs a note). `evidence` freezes the criterion statuses at sign-off. |
 | `flow_events` | `id`, `flow_id`, `at`, `actor_id`, `story_key`, `kind`, `text` | The timeline: start, analyses, results, sign-offs, owner changes. |
+| `chats.flow_id` (migration 25) | | A flow's team thread (`thread-<flow id>`): every member of the application may add to it; kept out of personal recents. |
 | `manual_executions` | `id`, `test_case_id`, `status`, `note`, `executed_by`, `executed_at` | A tester's result for a manual case: `passed`, `failed`, `blocked` (the last two need a note). |
 
 ### Knowledge and decisions

@@ -24,7 +24,7 @@ import { describeRetrieval, retrieveContext, scanOnlyComponents, type ContextPas
 import type { RetrievalModels } from './retrieval';
 import type { HorizonDb } from './db';
 import { hexaEvidence } from './evidence';
-import { flowChatAnswer } from './flows';
+import { flowChatAnswer, flowFacts } from './flows';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
 
@@ -240,7 +240,8 @@ export async function runWorkflow(
     // Test flows (docs/FLOWS.md): start one, where one stands, what waits on me. Answered from the
     // records by rules; the cards in the answer load the flow live, so an old chat never shows stale progress.
     const member = db ? db.appsFor(userId).find((a) => a.id === app) : undefined;
-    const flowAnswer = db && member ? flowChatAnswer(db, member, userId, member.roles, req.text, req.tickets) : null;
+    const threadFlowId = db && req.chatId ? db.getChat(req.chatId)?.flowId ?? null : null;
+    const flowAnswer = db && member ? flowChatAnswer(db, member, userId, member.roles, req.text, req.tickets, threadFlowId) : null;
     if (flowAnswer) {
       const coord = root.spawn('Test flows', 'tool_agent', 'Answer from the test flows');
       const s = coord.step('tool', 'Reading the test flows', 'flows.read');
@@ -385,6 +386,8 @@ export async function runWorkflow(
       look({ detail: passages.length ? `${passages.length} passage${passages.length > 1 ? 's' : ''} from ${from} source${from > 1 ? 's' : ''} (${describeRetrieval(found)})` : `Nothing relevant in App Context (${describeRetrieval(found)})` });
       // Hexa facts for the components and stories the request names: the inventory is a source too.
       const facts = hexaEvidence(db, app, { components: intent.components, tickets: intent.tickets, text: req.text, known: db.getApp(app)?.components ?? [] });
+      // In a flow's team thread, the flow itself is the first source.
+      if (threadFlowId && member) facts.unshift(flowFacts(db, member, threadFlowId, userId, member.roles));
       if (facts.length) {
         const hexa = specialist.step('tool', 'Reading Hexa', 'hexa.evidence');
         for (const f of facts) {
