@@ -22,6 +22,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { addConfluence, addUploads, getSource, listChunks, listConflicts, listSources, MAX_UPLOAD_MB, raiseConflict, resolveConflictForItem, retrieveContext, syncSource, testQuestion, type ConflictInput } from './context';
 import type { AppRecord, HorizonDb, PersonRecord, Role } from './db';
 import { comment, createItem, decide, getItem, listItems, markNeedsInput, vote, type HuddleKind } from './huddle';
+import { NO_MODELS, type RetrievalService, type RetrievalStatus } from './retrieval';
 import type { BlobStore } from './storage';
 
 export interface RouteContext {
@@ -37,6 +38,8 @@ export interface RouteContext {
   app: AppRecord;
   roles: Role[];
   files: BlobStore;
+  /** Embedding and reranking models plus the background embedding job; absent means keyword-only. */
+  retrieval?: RetrievalService;
   readJson: (max?: number) => Promise<unknown>;
   send: (status: number, body: unknown) => void;
   /** Throw to answer with a status and message. */
@@ -50,11 +53,18 @@ const KINDS: HuddleKind[] = ['conflict', 'mapping', 'risk', 'feedback'];
 
 export { retrieveContext };
 
+/** Keyword-only, when no models are configured. */
+const KEYWORD_ONLY = (db: HorizonDb, app: string): RetrievalStatus => {
+  const n = (db.raw.prepare('SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ?').get(app) as { n: number }).n;
+  return { mode: 'keyword', embedder: null, reranker: null, state: 'off', embedded: 0, pending: n, error: null };
+};
+
 export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
-  const { url, method, db, user, app, roles, send, HttpError } = ctx;
+  const { url, method, db, user, app, roles, send, HttpError, retrieval } = ctx;
   const requireOwner = (what: string) => {
     if (!roles.includes('app_owner')) throw new HttpError(403, `Only an app owner can ${what}.`);
   };
+  const models = retrieval?.models ?? NO_MODELS;
 
   /* ---------- App Context ---------- */
   if (url === '/api/context' && method === 'GET') {
@@ -64,7 +74,8 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
       // Honest connector states: nothing here pretends to be connected.
       connectors: { confluence: 'not_connected', fabric: 'none', jira: 'dummy', github: 'scan' },
       limits: { maxUploadMb: MAX_UPLOAD_MB, readable: ['Markdown', 'text', 'CSV', 'JSON', 'YAML', 'XML', 'logs', 'source code'], storedOnly: ['PDF', 'Word', 'images', 'ZIP'] },
-      retrieval: 'keyword',
+      // How passages are found right now, for this application: keyword-only until vectors exist.
+      retrieval: retrieval ? retrieval.status(db, app.id) : KEYWORD_ONLY(db, app.id),
     });
     return true;
   }
@@ -80,14 +91,19 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
       return true;
     }
     if (sourceMatch[2] && method === 'POST') {
-      send(200, syncSource(db, app.id, id));
+      const r = syncSource(db, app.id, id);
+      // New passages get their vectors in the background; until then they match by keyword.
+      void retrieval?.schedule();
+      send(200, r);
       return true;
     }
   }
   if (url === '/api/context/uploads' && method === 'POST') {
     const b = (await ctx.readJson(MAX_UPLOAD)) as Record<string, unknown>;
     const files = (Array.isArray(b.files) ? b.files : []).slice(0, 10).map((f: Record<string, unknown>) => ({ filename: String(f.filename ?? 'file'), data: Buffer.from(String(f.contentBase64 ?? ''), 'base64') }));
-    send(200, await addUploads(db, ctx.files, app, user, files, b.scope ?? 'app', b.workspace));
+    const r = await addUploads(db, ctx.files, app, user, files, b.scope ?? 'app', b.workspace);
+    void retrieval?.schedule();
+    send(200, r);
     return true;
   }
   if (url === '/api/context/confluence' && method === 'POST') {
@@ -96,7 +112,7 @@ export async function extraRoutes(ctx: RouteContext): Promise<boolean> {
   }
   if (url === '/api/context/test' && method === 'POST') {
     const b = (await ctx.readJson()) as Record<string, unknown>;
-    send(200, testQuestion(db, app, isStr(b.question) ? b.question.slice(0, 500) : ''));
+    send(200, await testQuestion(db, app, isStr(b.question) ? b.question.slice(0, 500) : '', models));
     return true;
   }
   if (url === '/api/context/conflicts' && method === 'POST') {

@@ -87,11 +87,36 @@ export interface Limits {
   storedOnly: string[];
 }
 
+/** How passages are found for this application right now (GET /api/context). */
+export interface RetrievalInfo {
+  mode: 'keyword' | 'hybrid';
+  embedder: string | null;
+  reranker: string | null;
+  state: 'off' | 'loading' | 'indexing' | 'ready' | 'failed';
+  embedded: number;
+  pending: number;
+  error: string | null;
+}
+
+const modelName = (id: string) => id.split('/').pop() ?? id;
+
+/** One honest sentence about retrieval, for the page header. */
+export function retrievalLabel(r: RetrievalInfo | null): string {
+  if (!r) return 'found by keyword match.';
+  if (r.state === 'off') return 'found by keyword match; no embedding model is configured.';
+  if (r.state === 'failed') return `found by keyword match; the local models could not load${r.error ? ` (${r.error})` : ''}.`;
+  const models = `${modelName(r.embedder ?? '')}${r.reranker ? `, reranked by ${modelName(r.reranker)}` : ''}`;
+  if (r.state === 'loading') return `found by keyword match while the local models load (${models}).`;
+  if (r.mode === 'keyword') return `found by keyword match until the ${r.pending} passage${r.pending === 1 ? ' is' : 's are'} embedded (${models}).`;
+  return `found by keyword and meaning (${models})${r.pending > 0 ? `; ${r.pending} passage${r.pending === 1 ? '' : 's'} still being embedded` : ''}.`;
+}
+
 interface State {
   sources: Source[];
   conflicts: Conflict[];
   connectors: Connectors | null;
   limits: Limits | null;
+  retrieval: RetrievalInfo | null;
   loaded: boolean;
   error: string | null;
   /** Latest announcement for screen readers and the status line. */
@@ -112,7 +137,7 @@ export const statusLabel: Record<SourceStatus, { label: string; tone: string }> 
 
 export const acceptedFileTypes = '.md,.markdown,.txt,.csv,.tsv,.json,.log,.xml,.yaml,.yml,.toml,.ini,.properties,.sql,.html,.feature,.pdf,.doc,.docx,.png,.jpg,.jpeg,.zip';
 
-const empty = (): State => ({ sources: [], conflicts: [], connectors: null, limits: null, loaded: false, error: null, notice: '' });
+const empty = (): State => ({ sources: [], conflicts: [], connectors: null, limits: null, retrieval: null, loaded: false, error: null, notice: '' });
 let state: State = empty();
 const listeners = new Set<() => void>();
 const set = (next: Partial<State>) => {
@@ -140,8 +165,8 @@ let loading: Promise<void> | null = null;
 /** Loads the application's sources once; `force` reloads after a change. */
 export function loadContext(force = false): Promise<void> {
   if (loading && !force) return loading;
-  loading = api<{ sources: Source[]; conflicts: Conflict[]; connectors: Connectors; limits: Limits }>('/api/context')
-    .then((b) => set({ sources: b.sources, conflicts: b.conflicts, connectors: b.connectors, limits: b.limits, loaded: true, error: null }))
+  loading = api<{ sources: Source[]; conflicts: Conflict[]; connectors: Connectors; limits: Limits; retrieval: RetrievalInfo }>('/api/context')
+    .then((b) => set({ sources: b.sources, conflicts: b.conflicts, connectors: b.connectors, limits: b.limits, retrieval: b.retrieval ?? null, loaded: true, error: null }))
     .catch((e: Error) => {
       if (e instanceof StaleScopeError) return;
       loading = null;
@@ -216,7 +241,7 @@ export async function fetchSourceDetail(id: string): Promise<SourceDetail | null
   }
 }
 
-export async function testQuestion(question: string): Promise<{ results: RankedChunk[]; considered: { passages: number; stories: number; tests: number } }> {
+export async function testQuestion(question: string): Promise<{ results: RankedChunk[]; considered: { passages: number; stories: number; tests: number }; how?: string }> {
   return api('/api/context/test', { method: 'POST', body: JSON.stringify({ question }) });
 }
 

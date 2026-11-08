@@ -20,7 +20,8 @@ import { testTypeLabel } from '../src/lib/testType';
 import type { Capability, Citation } from '../src/lib/types';
 import { uatAnswer } from '../src/lib/uat';
 import type { AgentKind, AgentName, AgentState, RunRequest, WorkflowEvent } from '../src/lib/workflow';
-import { retrieveContext, type ContextPassage } from './context';
+import { describeRetrieval, retrieveContext, type ContextPassage } from './context';
+import type { RetrievalModels } from './retrieval';
 import type { HorizonDb } from './db';
 import { hexaEvidence } from './evidence';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
@@ -55,6 +56,8 @@ export interface WorkflowOptions {
   userId: string;
   /** The application the request is scoped to. */
   app: string;
+  /** Embedding and reranking models for App Context retrieval; none means keyword-only. */
+  models?: RetrievalModels;
 }
 
 class Recorder {
@@ -330,14 +333,15 @@ export async function runWorkflow(
     let passages: ContextPassage[] = [];
     if (db) {
       const look = specialist.step('tool', 'Reading App Context', 'context.retrieve');
-      passages = retrieveContext(db, app, req.text, { limit: 4, workspace: req.scope.workspace || null });
+      const found = await retrieveContext(db, app, req.text, { limit: 4, workspace: req.scope.workspace || null, models: opts.models });
+      passages = found.passages;
       for (const p of passages) {
         const n = sources.length + 1;
         sources.push({ n, title: `${p.sourceTitle} · ${p.locator}`, text: p.text });
         citations.push({ n, title: p.sourceTitle, detail: `App Context · ${p.locator} · v${p.version}`, href: p.href });
       }
       const from = new Set(passages.map((p) => p.sourceTitle)).size;
-      look({ detail: passages.length ? `${passages.length} passage${passages.length > 1 ? 's' : ''} from ${from} source${from > 1 ? 's' : ''} (keyword match)` : 'Nothing relevant in App Context' });
+      look({ detail: passages.length ? `${passages.length} passage${passages.length > 1 ? 's' : ''} from ${from} source${from > 1 ? 's' : ''} (${describeRetrieval(found)})` : `Nothing relevant in App Context (${describeRetrieval(found)})` });
       // Hexa facts for the components and stories the request names: the inventory is a source too.
       const facts = hexaEvidence(db, app, { components: intent.components, tickets: intent.tickets, text: req.text, known: db.getApp(app)?.components ?? [] });
       if (facts.length) {

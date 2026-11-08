@@ -705,4 +705,19 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE source_chunks ADD COLUMN chars INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE huddle_items ADD COLUMN updated_at TEXT;
   `,
+  // 11: hybrid retrieval. One vector per passage and embedding model (float32 little-endian BLOB,
+  //     unit length), with the hash of the text it was computed from so a re-index can keep it.
+  //     Removing a passage removes its vector; a model change leaves the old rows unused.
+  `
+  CREATE TABLE chunk_embeddings (
+    chunk_id TEXT NOT NULL REFERENCES source_chunks(id) ON DELETE CASCADE,
+    model TEXT NOT NULL,
+    dims INTEGER NOT NULL,
+    vector BLOB NOT NULL,
+    text_sha TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (chunk_id, model)
+  );
+  CREATE INDEX chunk_embeddings_model ON chunk_embeddings (model, text_sha);
+  `,
 ];

@@ -3,8 +3,9 @@
  *
  * Sources are real: repositories from the workspace (their documentation is read from the local
  * clone and split into passages), the Jira feed, and what the team uploads (text formats are
- * read and split; other formats are kept and marked "stored, not readable"). Retrieval ranks
- * passages by keyword overlap; there are no embeddings in this build, and nothing says there are.
+ * read and split; other formats are kept and marked "stored, not readable"). Retrieval is hybrid
+ * (server/retrieval.ts): keyword overlap and vector similarity fused by rank, then a reranker;
+ * without models, or before passages have vectors, it is keyword-only and says so.
  * Confluence and an Enterprise Knowledge Fabric are not connected, and the API says so.
  *
  * A source that disagrees with a higher-trust source goes to review: its passages are excluded
@@ -17,6 +18,7 @@ import { join, relative } from 'node:path';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import { createItem } from './huddle';
+import { fromBlob, NO_MODELS, rank, textSha, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
 import type { BlobStore } from './storage';
 import type { Workspace } from './workspace';
 
@@ -287,18 +289,35 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
 
 /**
  * Replaces a source's passages, keeping exclusions by locator so a decided conflict survives a
- * re-index. The version bumps only when the text actually changed. Returns the chunk count.
+ * re-index. The version bumps only when the text actually changed; an unchanged source is left
+ * alone (its passages, exclusions and vectors stay). Vectors of passages whose text is unchanged
+ * are carried over, so only new text waits for the embedding job. Returns the chunk count.
  */
 function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string; text: string }[], at: number): { chunks: number; version: number; changed: boolean } {
   const digest = sha(chunks.map((c) => `${c.locator}\n${c.text}`).join('\n\u0000'));
-  const cur = db.raw.prepare('SELECT version, sha256 FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null };
+  const cur = db.raw.prepare('SELECT version, sha256, (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = context_sources.id) AS n FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null; n: number };
   const changed = cur.sha256 !== digest;
+  if (!changed && cur.n >= chunks.length) return { chunks: cur.n, version: cur.version, changed: false };
   const version = cur.sha256 && changed ? cur.version + 1 : cur.version;
   db.raw.transaction(() => {
     const kept = new Map((db.raw.prepare('SELECT locator, excluded_reason FROM source_chunks WHERE source_id = ? AND excluded_reason IS NOT NULL').all(sourceId) as Row[]).map((r) => [str(r.locator), str(r.excluded_reason)]));
+    // Vectors by text hash and model, to carry over for passages whose text did not change.
+    const vectors = db.raw.prepare('SELECT e.model, e.dims, e.vector, e.text_sha FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id WHERE c.source_id = ?').all(sourceId) as { model: string; dims: number; vector: Buffer; text_sha: string }[];
+    const byText = new Map<string, typeof vectors>();
+    for (const v of vectors) {
+      const list = byText.get(v.text_sha) ?? [];
+      list.push(v);
+      byText.set(v.text_sha, list);
+    }
     db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ?').run(sourceId);
     const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-    chunks.forEach((c, i) => ins.run(`${sourceId}#${i + 1}`, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length));
+    const insVec = db.raw.prepare('INSERT OR IGNORE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+    chunks.forEach((c, i) => {
+      const id = `${sourceId}#${i + 1}`;
+      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length);
+      const h = textSha(c.text);
+      for (const v of byText.get(h) ?? []) insVec.run(id, v.model, v.dims, v.vector, h, iso(at));
+    });
     db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
   })();
   return { chunks: chunks.length, version, changed };
@@ -487,9 +506,6 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
 
 /* ---------- Retrieval ---------- */
 
-/** Words that carry no meaning for matching; without them "the" alone would make any passage relevant. */
-const STOP = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'why', 'did', 'does', 'get', 'got', 'let', 'say', 'she', 'too', 'use', 'with', 'this', 'that', 'what', 'when', 'where', 'which', 'while', 'from', 'into', 'than', 'then', 'them', 'they', 'their', 'there', 'these', 'those', 'will', 'would', 'should', 'could', 'about', 'after', 'before', 'being', 'been', 'were', 'your', 'ours', 'also', 'just', 'like', 'over', 'such', 'only', 'other', 'some', 'very', 'each', 'make', 'made', 'most', 'much', 'many', 'more', 'here', 'please', 'show', 'tell', 'give', 'need', 'want', 'know', 'does', 'is', 'it', 'in', 'on', 'of', 'to', 'be', 'as', 'at', 'by', 'or', 'an', 'if', 'do', 'so', 'we', 'he', 'me', 'my', 'no', 'up', 'us']);
-const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g)?.filter((w) => w.length > 2 && !STOP.has(w)) ?? [];
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 function exclusionReason(r: Row): string | null {
@@ -502,29 +518,32 @@ function exclusionReason(r: Row): string | null {
   return null;
 }
 
-interface Cand {
+interface Cand extends Candidate {
   chunkId: string | null;
   sourceId: string | null;
   sourceTitle: string;
   sourceType: SourceType;
   version: number;
   locator: string;
-  where: string;
-  text: string;
   reason: string | null;
   href: string | null;
   scope: string;
 }
 
-function candidates(db: HorizonDb, app: string): Cand[] {
+/** Every passage of the application, with its vector for the given embedding model when it has one. */
+function candidates(db: HorizonDb, app: string, model: string | null): Cand[] {
   const rows = db.raw
     .prepare(
       `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
-         (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted
-       FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ?`,
+         (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted,
+         e.vector AS vector
+       FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
+       LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ?
+       WHERE s.application_id = ?`,
     )
-    .all(app) as Row[];
+    .all(model ?? '', app) as Row[];
   return rows.map((r) => ({
+    key: str(r.id),
     chunkId: str(r.id),
     sourceId: str(r.sid),
     sourceTitle: str(r.title),
@@ -533,59 +552,78 @@ function candidates(db: HorizonDb, app: string): Cand[] {
     locator: str(r.locator),
     where: `${str(r.title)} · ${str(r.locator)}`,
     text: str(r.text),
+    vector: Buffer.isBuffer(r.vector) ? fromBlob(r.vector) : null,
     reason: exclusionReason(r),
     href: chunkHref(str(r.sid), Number(r.seq)),
     scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
   }));
 }
 
-function score(qw: Set<string>, c: { where: string; text: string }) {
-  const cw = words(`${c.where} ${c.text}`);
-  if (cw.length === 0) return 0;
-  const hits = cw.filter((w) => qw.has(w));
-  const matched = new Set(hits).size;
-  return matched ? 0.7 * (matched / qw.size) + 0.3 * Math.min(1, hits.length / Math.sqrt(cw.length)) : 0;
+export interface RetrievalOptions {
+  limit?: number;
+  workspace?: string | null;
+  minRelevance?: number;
+  /** The embedder and reranker to use; none means keyword-only. */
+  models?: RetrievalModels;
 }
+
+export interface Retrieval {
+  passages: ContextPassage[];
+  mode: RetrievalMode;
+  reranked: boolean;
+  /** Passages with a vector, out of the usable ones; below total while the embedding job runs. */
+  embedded: number;
+  total: number;
+}
+
+/** Relevance (0 to 1) a passage needs before an answer may use it. */
+const MIN_RELEVANCE = 0.2;
+
+/** What the step line and the API say about how passages were found. */
+export const describeRetrieval = (r: { mode: RetrievalMode; reranked: boolean; embedded: number; total: number }) => {
+  if (r.mode === 'keyword') return 'keyword match';
+  const left = r.total - r.embedded;
+  return `hybrid: keyword and meaning${r.reranked ? ', reranked' : ''}${left > 0 ? `; ${left} passage${left === 1 ? '' : 's'} not embedded yet` : ''}`;
+};
 
 /**
  * "Test a question": the top passages for a question, including the ones Catalyzt would not use
  * and why, plus Jira stories and Hexa test titles so the person sees everything considered.
  */
-export function testQuestion(db: HorizonDb, app: AppRecord, question: string) {
-  const qw = new Set(words(question));
-  const cands: Cand[] = candidates(db, app.id);
+export async function testQuestion(db: HorizonDb, app: AppRecord, question: string, models: RetrievalModels = NO_MODELS) {
+  const cands: Cand[] = candidates(db, app.id, models.embedder?.id ?? null);
   const stories = db.listStories(app.id);
-  for (const s of stories) cands.push({ chunkId: null, sourceId: jiraSourceId(app.id), sourceTitle: 'Jira', sourceType: 'Jira', version: 1, locator: s.key, where: `Jira · ${s.key}`, text: [s.summary, ...s.acceptanceCriteria].join(' '), reason: null, href: `/tickets/${s.key}`, scope: 'App' });
+  for (const s of stories) cands.push({ key: `jira:${s.key}`, chunkId: null, sourceId: jiraSourceId(app.id), sourceTitle: 'Jira', sourceType: 'Jira', version: 1, locator: s.key, where: `Jira · ${s.key}`, text: [s.summary, ...s.acceptanceCriteria].join(' '), reason: null, href: `/tickets/${s.key}`, scope: 'App' });
   const tests = db.listTests(app.id, { limit: 200 }).rows;
-  for (const t of tests) cands.push({ chunkId: null, sourceId: null, sourceTitle: 'Hexa', sourceType: 'File', version: 1, locator: t.id, where: `Hexa · ${t.id}`, text: t.suite ? `${t.title} (${t.suite})` : t.title, reason: null, href: `/hexa/test/${t.id}`, scope: 'App' });
+  for (const t of tests) cands.push({ key: `hexa:${t.id}`, chunkId: null, sourceId: null, sourceTitle: 'Hexa', sourceType: 'File', version: 1, locator: t.id, where: `Hexa · ${t.id}`, text: t.suite ? `${t.title} (${t.suite})` : t.title, reason: null, href: `/hexa/test/${t.id}`, scope: 'App' });
   const considered = { passages: cands.filter((c) => c.chunkId).length, stories: stories.length, tests: tests.length };
-  if (qw.size === 0) return { results: [] as RankedChunk[], considered };
-  const results: RankedChunk[] = cands
-    .map((c) => ({ c, score: score(qw, c) }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.c.where.localeCompare(b.c.where))
-    .slice(0, 5)
-    .map(({ c, score: sc }) => ({ chunkId: c.chunkId, sourceId: c.sourceId, sourceTitle: c.sourceTitle, where: c.where, text: c.text, relevance: Math.round(Math.min(1, sc) * 100) / 100, used: !c.reason, reason: c.reason, href: c.href }));
-  return { results, considered };
+  if (words(question).length === 0 && !models.embedder) return { results: [] as RankedChunk[], considered, mode: 'keyword' as RetrievalMode, reranked: false, how: describeRetrieval({ mode: 'keyword', reranked: false, embedded: 0, total: 0 }) };
+  const r = await rank(models, question, cands, { limit: 5, minRelevance: 0.01 });
+  // "Used" means an answer would take it: usable source and above the same relevance bar retrieveContext applies.
+  const results: RankedChunk[] = r.ranked.map(({ item: c, relevance }) => {
+    const reason = c.reason ?? (relevance < MIN_RELEVANCE ? 'Below the relevance bar' : null);
+    return { chunkId: c.chunkId, sourceId: c.sourceId, sourceTitle: c.sourceTitle, where: c.where, text: c.text, relevance: Math.round(relevance * 100) / 100, used: !reason, reason, href: c.href };
+  });
+  return { results, considered, mode: r.mode, reranked: r.reranked, how: describeRetrieval(r) };
 }
 
 /**
  * The passages an answer may use for a request: usable ones only (no excluded, review, stored or
  * failed sources), scoped to the whole application or the given workspace, best first. Empty when
- * nothing clears the relevance bar, so the specialist is not fed noise.
+ * nothing clears the relevance bar, so the specialist is not fed noise. Hybrid when the models are
+ * given and passages have vectors; keyword-only otherwise, and the result says which.
  */
-export function retrieveContext(db: HorizonDb, app: string, query: string, opts: { limit?: number; workspace?: string | null; minRelevance?: number } = {}): ContextPassage[] {
-  const qw = new Set(words(query));
-  if (qw.size === 0) return [];
-  const limit = opts.limit ?? 4;
-  const min = opts.minRelevance ?? 0.2;
-  return candidates(db, app)
-    .filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace))
-    .map((c) => ({ c, score: score(qw, c) }))
-    .filter((x) => x.score >= min)
-    .sort((a, b) => b.score - a.score || a.c.where.localeCompare(b.c.where))
-    .slice(0, limit)
-    .map(({ c }) => ({ chunkId: c.chunkId!, sourceId: c.sourceId!, sourceTitle: c.sourceTitle, sourceType: c.sourceType, version: c.version, locator: c.locator, text: c.text, href: c.href! }));
+export async function retrieveContext(db: HorizonDb, app: string, query: string, opts: RetrievalOptions = {}): Promise<Retrieval> {
+  const models = opts.models ?? NO_MODELS;
+  const usable = candidates(db, app, models.embedder?.id ?? null).filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace));
+  const r = await rank(models, query, usable, { limit: opts.limit ?? 4, minRelevance: opts.minRelevance ?? MIN_RELEVANCE });
+  return {
+    passages: r.ranked.map(({ item: c }) => ({ chunkId: c.chunkId!, sourceId: c.sourceId!, sourceTitle: c.sourceTitle, sourceType: c.sourceType, version: c.version, locator: c.locator, text: c.text, href: c.href! })),
+    mode: r.mode,
+    reranked: r.reranked,
+    embedded: r.embedded,
+    total: r.total,
+  };
 }
 
 /* ---------- Conflicts ---------- */

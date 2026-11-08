@@ -59,6 +59,7 @@ erDiagram
 
   applications ||--o{ context_sources : knows
   context_sources ||--o{ source_chunks : "split into"
+  source_chunks ||--o{ chunk_embeddings : "embedded as"
   context_sources ||--o{ conflicts : raises
   applications ||--o{ huddle_items : raises
   huddle_items ||--o{ huddle_options : offers
@@ -128,7 +129,8 @@ erDiagram
 | Table | Key columns | Notes |
 |---|---|---|
 | `context_sources` | `id`, `application_id`, `scope_type`, `scope_ref`, `type`, `title`, `subtitle`, `trust`, `status`, `content`, `note`, `href`, `location`, `size_bytes`, `mime`, `version`, `storage_key`, `sha256`, `synced_at`, `created_by` | `type`: `Repository` (documentation read from the clone), `Jira`, `Text` (readable upload), `PDF`, `Word`, `Image`, `ZIP`, `File`. `trust`: `High`, `Tickets`, `Code`, `Team upload`. `status`: `ready`, `indexed`, `review` (open conflict), `stored` (kept, not readable in this build), `failed`. `version` bumps when the text changes; citations carry it. No Confluence or Fabric is connected. |
-| `source_chunks` | `id` (`<source>#<seq>`), `source_id`, `seq`, `locator`, `text`, `excluded_reason`, `source_version`, `chars` | Passages. `locator` ("docs/refunds.md ¶1") is what a citation opens. Excluded passages stay excluded until a decision. Retrieval is keyword overlap; there are no embeddings in this build. |
+| `source_chunks` | `id` (`<source>#<seq>`), `source_id`, `seq`, `locator`, `text`, `excluded_reason`, `source_version`, `chars` | Passages. `locator` ("docs/refunds.md ¶1") is what a citation opens. Excluded passages stay excluded until a decision. |
+| `chunk_embeddings` | `chunk_id`, `model`, `dims`, `vector` (float32 BLOB, unit length), `text_sha`, `created_at`; key (`chunk_id`, `model`) | One vector per passage and embedding model, written by the background embedding job (`server/retrieval.ts`). Retrieval is hybrid: keyword overlap and cosine similarity fused by rank, then reranked by a local cross-encoder; a passage without a vector still matches by keyword. Removing a passage removes its vectors; a re-index keeps vectors whose text did not change (`text_sha`). |
 | `conflicts` | `id`, `source_id`, `other_source_id`, `title`, `detail`, `compare` (JSON), `huddle_item_id`, `status`, `resolution`, `created_at`, `resolved_at` | A source against a higher-trust one. Resolved by the Huddle decision (`keep_higher` or `use_upload`) in the same transaction. |
 | `huddle_items` | `id`, `application_id`, `kind`, `title`, `summary`, `scope`, `ai_summary`, `citations` (JSON), `source_id`, `status`, `needs_input`, `raised_by_type`, `raised_by` | `kind`: `conflict`, `mapping`, `risk`, `feedback`. Raised by a person or by Catalyzt (the feedback-pattern rule). |
 | `huddle_options` | `id`, `item_id`, `seq`, `label`, `detail`, `keeps_upload` | Ordered. For conflicts, the option that uses the upload. |

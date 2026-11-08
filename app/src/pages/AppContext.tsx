@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type DragEvent } from 'rea
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { acceptedFileTypes, addConfluence, iconFor, loadContext, statusLabel, uploadFiles, useContextStore, type Conflict, type ScopeKind, type Source, type SourceStatus } from '../lib/contextData';
+import { acceptedFileTypes, addConfluence, iconFor, loadContext, retrievalLabel, statusLabel, uploadFiles, useContextStore, type Conflict, type ScopeKind, type Source, type SourceStatus } from '../lib/contextData';
 import { useSession } from '../lib/session';
 import { useJiraSync, useTickets } from '../lib/ticketStore';
 import { relTime } from './Tickets';
@@ -12,7 +12,7 @@ const PAGE_SIZE = 8;
 
 /** App Context: what Catalyzt knows about the selected application, where it came from, and what the team adds. */
 export function AppContext() {
-  const { sources, conflicts, connectors, limits, loaded, error, notice } = useContextStore();
+  const { sources, conflicts, connectors, limits, retrieval, loaded, error, notice } = useContextStore();
   const { me, loaded: sessionLoaded } = useSession();
   const app = me?.app;
   const location = useLocation();
@@ -44,7 +44,7 @@ export function AppContext() {
                 <p>
                   Everything Catalyzt knows about this application: the documentation of its repositories, the Jira
                   feed, and what your team uploads. Readable sources are split into passages; answers cite the
-                  passages they use, found by keyword match.
+                  passages they use, {retrievalLabel(retrieval)}
                 </p>
               )}
             </div>

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { addConfluence, addUploads, chunkDocs, collectDocs, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, seedContext, syncSource, testQuestion } from './context';
 import { fixtureWithDocs, REFUNDS_DOC, SHOP_README } from './fixture';
 import { decide, getItem, listItems } from './huddle';
+import { embedPending, embeddingCounts, fakeModels, RetrievalService, type RetrievalModels } from './retrieval';
 import { MemoryBlobStore } from './storage';
 
 const app = (db: ReturnType<typeof fixtureWithDocs>['db'], id: string) => db.getApp(id)!;
@@ -98,24 +99,24 @@ describe('uploads and connectors', () => {
 describe('retrieval', () => {
   it('returns relevant, usable passages for the application and workspace, with a place to open them', async () => {
     const { db } = fixtureWithDocs();
-    const hits = retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?');
+    const hits = (await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?')).passages;
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]).toMatchObject({ sourceTitle: 'shop', locator: 'docs/refunds.md ¶1', version: 1 });
     expect(hits[0].href).toMatch(/^\/context\/source\/ABCD-repo-shop#chunk-\d+$/);
     expect(hits[0].text).toContain('45 days');
     // Another application sees nothing of it; an unrelated question clears nothing.
-    expect(retrieveContext(db, 'IBGM', 'refund window')).toEqual([]);
-    expect(retrieveContext(db, 'ABCD', 'kubernetes ingress certificate')).toEqual([]);
+    expect((await retrieveContext(db, 'IBGM', 'refund window')).passages).toEqual([]);
+    expect((await retrieveContext(db, 'ABCD', 'kubernetes ingress certificate')).passages).toEqual([]);
     // A workspace upload is used for its workspace and for the whole-app question, not for another workspace.
     await addUploads(db, new MemoryBlobStore(), app(db, 'ABCD'), user(db, 'u-sourav'), [{ filename: 'runbook.md', data: Buffer.from('Restart the checkout service with kubectl rollout restart when it crashloops in payments.') }], 'workspace', 'payments');
-    expect(retrieveContext(db, 'ABCD', 'checkout crashloops restart', { workspace: 'payments' }).map((p) => p.sourceTitle)).toEqual(['runbook.md']);
-    expect(retrieveContext(db, 'ABCD', 'checkout crashloops restart', { workspace: 'storefront' })).toEqual([]);
-    expect(retrieveContext(db, 'ABCD', 'checkout crashloops restart').map((p) => p.sourceTitle)).toEqual(['runbook.md']);
+    expect((await retrieveContext(db, 'ABCD', 'checkout crashloops restart', { workspace: 'payments' })).passages.map((p) => p.sourceTitle)).toEqual(['runbook.md']);
+    expect((await retrieveContext(db, 'ABCD', 'checkout crashloops restart', { workspace: 'storefront' })).passages).toEqual([]);
+    expect((await retrieveContext(db, 'ABCD', 'checkout crashloops restart')).passages.map((p) => p.sourceTitle)).toEqual(['runbook.md']);
   });
 
-  it('"test a question" shows what would and would not be used, and why', () => {
+  it('"test a question" shows what would and would not be used, and why', async () => {
     const { db } = fixtureWithDocs();
-    const { results, considered } = testQuestion(db, app(db, 'ABCD'), 'partial refunds 45 days');
+    const { results, considered } = await testQuestion(db, app(db, 'ABCD'), 'partial refunds 45 days');
     expect(considered).toMatchObject({ passages: 2, stories: 3 });
     expect(results[0]).toMatchObject({ used: true, reason: null });
     expect(results.some((r) => r.where.startsWith('Jira · ABCD-1001'))).toBe(true);
@@ -134,7 +135,7 @@ describe('conflicts and decisions', () => {
 
   it('a conflict excludes the upload until an owner decides; keeping the higher-trust source keeps it excluded', async () => {
     const { db, upload, repo } = await setup();
-    expect(retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement').map((p) => p.sourceTitle)).toContain('team-notes.md');
+    expect((await retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement')).passages.map((p) => p.sourceTitle)).toContain('team-notes.md');
     const { conflict, huddleItemId } = raiseConflict(db, app(db, 'ABCD'), user(db, 'u-sourav'), {
       sourceId: upload.id,
       otherSourceId: repo.id,
@@ -148,7 +149,7 @@ describe('conflicts and decisions', () => {
     expect(conflict.status).toBe('open');
     // The upload's passage plus the disputed claim added for it, both excluded while the conflict is open.
     expect(getSource(db, 'ABCD', upload.id)).toMatchObject({ status: 'review', excludedChunks: 2, conflictId: conflict.id });
-    expect(retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement').map((p) => p.sourceTitle)).not.toContain('team-notes.md');
+    expect((await retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement')).passages.map((p) => p.sourceTitle)).not.toContain('team-notes.md');
     const item = getItem(db, 'ABCD', huddleItemId)!;
     expect(item).toMatchObject({ kind: 'conflict', sourceId: upload.id, raisedBy: 'Sourav' });
     expect(item.options.map((o) => o.keepsUpload)).toEqual([false, true]);
@@ -164,7 +165,7 @@ describe('conflicts and decisions', () => {
     const resolved = resolveConflictForItem(db, huddleItemId, d.keepsUpload)!;
     expect(resolved).toMatchObject({ status: 'resolved', resolution: 'keep_higher' });
     expect(getSource(db, 'ABCD', upload.id)).toMatchObject({ status: 'ready', excludedChunks: 2, conflictId: null });
-    expect(retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement').map((p) => p.sourceTitle)).not.toContain('team-notes.md');
+    expect((await retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement')).passages.map((p) => p.sourceTitle)).not.toContain('team-notes.md');
     expect(getItem(db, 'ABCD', huddleItemId)?.decision).toMatchObject({ by: 'Ram Kumar', reason: expect.stringContaining('README') });
   });
 
@@ -175,6 +176,106 @@ describe('conflicts and decisions', () => {
     const d = decide(db, 'ABCD', huddleItemId, 'u-ram', item.options[1].id, 'Product confirmed the window moved to 60 days.');
     resolveConflictForItem(db, huddleItemId, d.keepsUpload);
     expect(getSource(db, 'ABCD', upload.id)).toMatchObject({ status: 'ready', excludedChunks: 0 });
-    expect(retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement').map((p) => p.sourceTitle)).toContain('team-notes.md');
+    expect((await retrieveContext(db, 'ABCD', 'partial refunds allowed days settlement')).passages.map((p) => p.sourceTitle)).toContain('team-notes.md');
+  });
+});
+
+describe('hybrid retrieval (embeddings and reranking)', () => {
+  // "money back" and "period" are not in the documents; the fake embedder maps them to "refund" and "window".
+  const models = () => fakeModels({ money: 'refund', back: 'refund', period: 'window', returned: 'refund' });
+
+  it('embeds every passage once, reports what is embedded, and retrieves by meaning without keyword overlap', async () => {
+    const { db } = fixtureWithDocs();
+    const m = models();
+    const before = embeddingCounts(db, m.embedder!.id);
+    expect(before).toMatchObject({ embedded: 0 });
+    expect(before.pending).toBeGreaterThan(0);
+    // Before the job runs, retrieval is honest about being keyword-only, even with models configured.
+    const kw = await retrieveContext(db, 'ABCD', 'money back period', { models: m });
+    expect(kw).toMatchObject({ mode: 'keyword', passages: [] });
+
+    expect(await embedPending(db, m.embedder!)).toEqual({ embedded: before.pending, failed: 0 });
+    expect(embeddingCounts(db, m.embedder!.id)).toEqual({ embedded: before.pending, pending: 0 });
+    expect(await embedPending(db, m.embedder!)).toEqual({ embedded: 0, failed: 0 });
+
+    const hits = await retrieveContext(db, 'ABCD', 'money back period', { models: m });
+    expect(hits.mode).toBe('hybrid');
+    expect(hits.reranked).toBe(true);
+    expect(hits.passages.map((p) => p.locator)).toContain('docs/refunds.md ¶1');
+    expect(hits.embedded).toBe(hits.total);
+    // Another application still sees nothing; vectors are joined per application.
+    expect((await retrieveContext(db, 'IBGM', 'money back period', { models: m })).passages).toEqual([]);
+  });
+
+  it('keeps excluded and foreign-workspace passages out of hybrid results too', async () => {
+    const { db } = fixtureWithDocs();
+    const m = models();
+    const store = new MemoryBlobStore();
+    const up = await addUploads(db, store, app(db, 'ABCD'), user(db, 'u-sourav'), [{ filename: 'team-notes.md', data: Buffer.from('The team says the refund window is 60 days from settlement, not 45.') }], 'workspace', 'payments');
+    await embedPending(db, m.embedder!);
+    const inPayments = await retrieveContext(db, 'ABCD', 'money back period', { models: m, workspace: 'payments' });
+    expect(inPayments.passages.map((p) => p.sourceTitle)).toContain('team-notes.md');
+    const inStorefront = await retrieveContext(db, 'ABCD', 'money back period', { models: m, workspace: 'storefront' });
+    expect(inStorefront.passages.map((p) => p.sourceTitle)).not.toContain('team-notes.md');
+    const repo = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!;
+    raiseConflict(db, app(db, 'ABCD'), user(db, 'u-ram'), { sourceId: up.sources[0].id, otherSourceId: repo.id, title: 'Refund window', detail: '', compare: [{ value: '60 days' }, { value: '45 days' }] });
+    const afterConflict = await retrieveContext(db, 'ABCD', 'money back period', { models: m, workspace: 'payments' });
+    expect(afterConflict.mode).toBe('hybrid');
+    expect(afterConflict.passages.map((p) => p.sourceTitle)).not.toContain('team-notes.md');
+  });
+
+  it('a re-index keeps the vectors of unchanged passages and leaves only new text pending', async () => {
+    const { db, ws, cloneDir } = fixtureWithDocs();
+    const m = models();
+    await embedPending(db, m.embedder!);
+    const repo = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!;
+    // Seeding again with unchanged documents touches nothing.
+    seedContext(db, ws);
+    expect(embeddingCounts(db, m.embedder!.id, 'ABCD').pending).toBe(0);
+    // One document changes: its passages are re-created, the other document's vectors are carried over.
+    writeFileSync(join(cloneDir, 'docs', 'refunds.md'), `${REFUNDS_DOC}\n\nRefund reports are produced nightly for finance.`);
+    syncSource(db, 'ABCD', repo.id);
+    const counts = embeddingCounts(db, m.embedder!.id, 'ABCD');
+    expect(counts.pending).toBeGreaterThanOrEqual(1);
+    expect(counts.embedded).toBeGreaterThanOrEqual(1);
+    const calls = m.calls.embed;
+    await embedPending(db, m.embedder!);
+    expect(m.calls.embed).toBe(calls + 1);
+    expect(embeddingCounts(db, m.embedder!.id, 'ABCD').pending).toBe(0);
+  });
+
+  it('the service runs one job at a time, reports its state, and falls back to keyword when a model fails', async () => {
+    const { db } = fixtureWithDocs();
+    const m = models();
+    const service = new RetrievalService(m, () => db);
+    expect(service.status(db, 'ABCD')).toMatchObject({ mode: 'keyword', embedder: 'fake-embedder', reranker: 'fake-reranker' });
+    const a = service.schedule();
+    const b = service.schedule();
+    expect(b).toBe(a);
+    await a;
+    await service.whenIdle();
+    expect(service.status(db, 'ABCD')).toMatchObject({ mode: 'hybrid', state: 'ready', pending: 0 });
+    expect(m.calls.embed).toBeLessThanOrEqual(2);
+
+    const broken: RetrievalModels = {
+      embedder: { id: 'broken', dims: 4, embed: async () => { throw new Error('no model'); } },
+      reranker: null,
+    };
+    const r = await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?', { models: broken });
+    expect(r.mode).toBe('keyword');
+    expect(r.passages[0]?.locator).toBe('docs/refunds.md ¶1');
+  });
+
+  it('"test a question" ranks Jira stories and Hexa tests with the passages and says how', async () => {
+    const { db } = fixtureWithDocs();
+    const m = models();
+    await embedPending(db, m.embedder!);
+    const r = await testQuestion(db, app(db, 'ABCD'), 'money back period', m);
+    expect(r.mode).toBe('hybrid');
+    expect(r.how).toMatch(/^hybrid: keyword and meaning, reranked/);
+    expect(r.results.some((x) => x.where.startsWith('shop · docs/refunds.md'))).toBe(true);
+    const plain = await testQuestion(db, app(db, 'ABCD'), 'partial refunds 45 days');
+    expect(plain.how).toBe('keyword match');
+    expect(plain.results.some((x) => x.where.startsWith('Jira · ABCD-1001'))).toBe(true);
   });
 });

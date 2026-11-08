@@ -44,6 +44,10 @@ without breaking existing deployments.
 | `GITHUB_TOKEN` | none | Raises the GitHub rate limit for Hexa scans; needed to download CI artifacts |
 | `HEXA_INGEST_TOKEN` | none | Bearer token CI uses to push results to `/api/hexa/results` |
 | `HEXA_INGEST_TOKEN_<APP>` | none | A token valid for one application only; that application then accepts only its own |
+| `HORIZON_RETRIEVAL` | `hybrid` | App Context retrieval: `hybrid` runs a local embedding model and reranker on the CPU in this process; `keyword` uses no models |
+| `HORIZON_MODELS_DIR` | `data/models` | Where the two ONNX models are cached (about 46 MB, downloaded once from huggingface.co on first use) |
+| `HORIZON_MODELS_OFFLINE` | none | `1` forbids downloads: copy `data/models` from a host that has them, or the server stays keyword-only and says so |
+| `HORIZON_RERANK`, `HORIZON_EMBED_MODEL`, `HORIZON_RERANK_MODEL` | `on`, MiniLM models | Turn the reranker off, or name other transformers.js models (a change of embedding model re-embeds every passage) |
 
 The server refuses to start with neither `HORIZON_IDENTITY_HEADER` nor `HORIZON_DEV_IDENTITY=1`,
 so a production process cannot accidentally trust the browser.
@@ -62,6 +66,7 @@ server for every request: a chat, approval, test or attachment of another applic
 |---|---|---|
 | `data/horizon.db` (+ `-wal`, `-shm`) | Everything structured: people, chats, answer revisions, ratings, approvals, stories, tests, runs, results, attachments metadata and text, audit log | WAL journal, `synchronous=NORMAL` |
 | `data/attachments/<APP>/<id>` | Uploaded bytes | Plain files, written beside and renamed into place |
+| `data/models/` | The embedding and reranking models (ONNX, quantised) | A cache: deleting it costs one download (or set `HORIZON_MODELS_OFFLINE=1` and copy it in). Passage vectors live in the database (`chunk_embeddings`) and are rebuilt in the background if missing |
 | `.myworkspace/` | Configuration and seed data, in Git | Re-seeded at every start; existing rows are never removed |
 
 SQLite settings on every connection: `journal_mode=WAL` (readers never block the writer),
@@ -115,7 +120,12 @@ start applies migrations if the backup predates the current schema.
   the backup on a new host". The migration note says when that stops being enough.
 - The server does not terminate TLS or sign people in. Both belong to the proxy in front.
 - Long work (repository scans, result ingestion) runs inside the process with recorded state in
-  SQLite; a restart marks it stopped and the person runs it again.
+  SQLite; a restart marks it stopped and the person runs it again. Embedding passages for App
+  Context also runs inside the process (a few milliseconds per passage on one CPU core); a restart
+  simply continues with the passages that have no vector yet.
+- Vector search is a scan over every vector of the application (cosine over float32 BLOBs); it is
+  fast at thousands of passages per application and would want an index (for example sqlite-vec)
+  at tens of thousands. The first request after a start pays the model load (one to two seconds).
 - Not externally validated here: the GitHub Actions push against a real GitHub workflow (the
   payload and its handling are tested against the API), and a real sign-in proxy (the header mode
   is tested with synthetic requests).

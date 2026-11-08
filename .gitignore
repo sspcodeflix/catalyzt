@@ -12,3 +12,6 @@ app/data/
 .myworkspace/*/results/
 server-dist/
 .myworkspace/.ci-cache/
+# Review screenshots are evidence on disk, not history.
+.myworkspace/*/log/review-shots/
+app/tsconfig.tsbuildinfo

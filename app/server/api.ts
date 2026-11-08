@@ -51,6 +51,7 @@ import { importManual, IngestError, ingestJUnit, syncGitHubActions } from './ing
 import { octaneTemplate, toOctaneCsv } from './octane';
 import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
+import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
 
 const MAX_BODY = 64 * 1024;
@@ -155,6 +156,8 @@ export interface ApiOptions {
   getWorkspace?: () => Workspace | null;
   /** Re-reads the workspace into the running database (development only; an app owner asks for it). */
   reload?: () => { summary: string };
+  /** Hybrid retrieval: the embedding and reranking models and the background embedding job. Absent: keyword-only. */
+  retrieval?: RetrievalService;
 }
 
 /** Reads HEXA_INGEST_TOKEN_<APP> variables into { APP: token }. */
@@ -311,6 +314,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           app: member,
           roles,
           files,
+          retrieval: opts.retrieval,
           readJson: (max) => readJson(req, max),
           send: (status, body) => send(res, status, body),
           HttpError,
@@ -383,7 +387,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         let workflowRunId: string | null = null;
         let failure: string | undefined;
         try {
-          workflowRunId = (await runWorkflow(run, cfg, emit, abort.signal, { db, userId: user.id, app: appId })).workflowRunId;
+          workflowRunId = (await runWorkflow(run, cfg, emit, abort.signal, { db, userId: user.id, app: appId, models: opts.retrieval?.models })).workflowRunId;
         } catch (e) {
           if (!abort.signal.aborted) {
             failure = e instanceof DeepSeekError ? e.userMessage : 'The answer failed. Try again.';

@@ -18,7 +18,7 @@ Verification at the end of stage D: 185 unit and API tests (14 files), 5 browser
 checks, type-check, front-end and API bundles built, the bundle started without Vite and probed.
 
 ## Known limits (stated, not hidden)
-- Retrieval in App Context is keyword overlap; there are no embeddings. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.
+- Retrieval in App Context is hybrid: keyword overlap plus a local embedding model (all-MiniLM-L6-v2, 384 dimensions) fused by rank, then a local cross-encoder reranker (ms-marco-MiniLM-L-6-v2), both run on the CPU by transformers.js and cached under `app/data/models` (46 MB, downloaded once). Until a passage has a vector, or without the models (`HORIZON_RETRIEVAL=keyword`), it is keyword-only and the page, the API and the answer's step say so. There is no approximate-nearest-neighbour index: cosine runs over every vector of the application, which is fine at thousands of passages. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.
 - Not externally validated: a real GitHub Actions push to `/api/hexa/results` (the payload and semantics are tested against the API), a real sign-in proxy (the header mode is tested with synthetic requests), model-written answers (tests stub the model; the key in `app/.env` is only used when you run the app).
 - The wordmark uses Montserrat (OFL), the closest licensed face available offline; the reference sheet's exact typeface is unknown. No trademark clearance is claimed.
 

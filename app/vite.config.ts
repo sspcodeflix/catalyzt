@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 import { createApi, ingestTokensFromEnv } from './server/api';
 import { bootstrap, reseed, type Boot } from './server/bootstrap';
 import { configFromEnv } from './server/deepseek';
+import { modelsFromEnv, RetrievalService } from './server/retrieval';
 import { LocalBlobStore } from './server/storage';
 
 /**
@@ -14,10 +15,13 @@ function horizonApi(env: Record<string, string>): Plugin {
   const cfg = configFromEnv(env);
   // Booted lazily, so `vite build` never touches the database or the workspace.
   let boot: Boot | null = null;
+  // Embedding and reranking models (local, lazy); the embedding job runs after each seed.
+  const retrieval = new RetrievalService(modelsFromEnv(env, (l) => console.log(`  ${l}`)), () => getBoot().db, (l) => console.log(`  ${l}`));
   const getBoot = () => {
     if (!boot) {
       boot = bootstrap(env);
-      console.log(`  Horizon: ${boot.summary}`);
+      console.log(`  Catalyzt: ${boot.summary}`);
+      void retrieval.schedule();
     }
     return boot;
   };
@@ -27,12 +31,14 @@ function horizonApi(env: Record<string, string>): Plugin {
     ingestTokens: ingestTokensFromEnv(env),
     files: new LocalBlobStore(env.HORIZON_FILES_DIR?.trim() || 'data/attachments'),
     getWorkspace: () => getBoot().workspace,
+    retrieval,
     reload: () => {
       const b = getBoot();
       const r = reseed(b.db, env);
       b.workspace = r.workspace;
       b.summary = r.summary;
       console.log(`  Catalyzt: reloaded. ${r.summary}`);
+      void retrieval.schedule();
       return r;
     },
   });

@@ -220,7 +220,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
 function TestQuestion() {
   const { sources } = useContextStore();
   const [question, setQuestion] = useState('');
-  const [results, setResults] = useState<{ results: RankedChunk[]; considered: { passages: number; stories: number; tests: number } } | null>(null);
+  const [results, setResults] = useState<{ results: RankedChunk[]; considered: { passages: number; stories: number; tests: number }; how?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const qId = useId();
@@ -262,7 +262,7 @@ function TestQuestion() {
           <div className="sechead" style={{ margin: 0 }}>
             <h3>What Catalyzt would use</h3>
             <span>
-              Top {results.results.length} of {results.considered.passages} passages, {results.considered.stories} stories and {results.considered.tests} tests across {sources.length} sources · keyword relevance, not correctness
+              Top {results.results.length} of {results.considered.passages} passages, {results.considered.stories} stories and {results.considered.tests} tests across {sources.length} sources · {results.how ?? 'keyword match'} · relevance, not correctness
             </span>
           </div>
           {results.results.length === 0 && <p className="muted">Nothing in this application's context matches that question.</p>}

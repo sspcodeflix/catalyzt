@@ -457,13 +457,13 @@ describe('F15: attachments are stored, scoped, and readable only when they reall
 describe('F11: App Context and Huddle through the API', () => {
   it('lists only the application’s sources, says what is not connected, and refuses a foreign source', async () => {
     const sourav = api.as('u-sourav', 'ABCD');
-    const ctx = (await (await sourav.get('/api/context')).json()) as { sources: { id: string; type: string; status: string }[]; connectors: Record<string, string>; retrieval: string };
+    const ctx = (await (await sourav.get('/api/context')).json()) as { sources: { id: string; type: string; status: string }[]; connectors: Record<string, string>; retrieval: { mode: string; state: string } };
     expect(ctx.sources.map((s) => [s.type, s.status])).toEqual([
       ['Jira', 'ready'],
       ['Repository', 'ready'],
     ]);
     expect(ctx.connectors).toMatchObject({ confluence: 'not_connected', fabric: 'none' });
-    expect(ctx.retrieval).toBe('keyword');
+    expect(ctx.retrieval).toMatchObject({ mode: 'keyword', state: 'off' });
     expect((await sourav.post('/api/context/confluence', { url: 'https://wiki.example.com/x' })).status).toBe(501);
     const nabih = api.as('u-nabih', 'IBGM');
     expect((await nabih.get(`/api/context/sources/${encodeURIComponent(ctx.sources[1].id)}`)).status).toBe(404);

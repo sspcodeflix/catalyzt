@@ -230,7 +230,7 @@ describe('App Context in answers (F11)', () => {
     stubDeepSeek({ ...ok, capability: 'cloudops' }, ['No idea. ']);
     const other = await run(req(db, 'Why is the ingress certificate expiring?'), cfg, db, true);
     expect(other.events.find((e) => e.type === 'citations')).toBeUndefined();
-    expect(other.agents.find((a) => a.agent === 'CloudOps agent')?.steps[0]).toMatchObject({ detail: 'Nothing relevant in App Context' });
+    expect(other.agents.find((a) => a.agent === 'CloudOps agent')?.steps[0]).toMatchObject({ detail: 'Nothing relevant in App Context (keyword match)' });
   });
 
   it('attached files are numbered before App Context passages', async () => {

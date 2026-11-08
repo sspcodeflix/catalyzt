@@ -13,6 +13,8 @@
  *   HORIZON_STATIC           default dist                   the built front end; set to "" to serve the API only
  *   HORIZON_IDENTITY_HEADER  the header the sign-in proxy sets with the signed-in email (e.g. x-forwarded-email)
  *   HORIZON_DEV_IDENTITY=1   instead of a header: trust the browser's "Sign in as" picker (development only)
+ *   HORIZON_RETRIEVAL        hybrid (default: local embedding + reranking models) or keyword
+ *   HORIZON_MODELS_DIR       default data/models            where the models are cached (downloaded once)
  *   DEEPSEEK_API_KEY, DEEPSEEK_MODEL, GITHUB_TOKEN, HEXA_INGEST_TOKEN, HEXA_INGEST_TOKEN_<APP>
  *
  * One process, one SQLite file: this is a single-host deployment. Run one instance per database.
@@ -24,6 +26,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { createApi, ingestTokensFromEnv, type Identity } from './api';
 import { bootstrap, reseed } from './bootstrap';
 import { configFromEnv } from './deepseek';
+import { modelsFromEnv, RetrievalService } from './retrieval';
 import { LocalBlobStore } from './storage';
 
 /** KEY=VALUE lines from ./.env, for values not already in the environment. */
@@ -72,6 +75,9 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
   const boot = bootstrap(env as Record<string, string | undefined>);
   console.log(`Catalyzt: ${boot.summary}`);
   const cfg = configFromEnv(env as Record<string, string>);
+  // Local embedding and reranking models; passages without a vector are embedded in the background.
+  const retrieval = new RetrievalService(modelsFromEnv(env as Record<string, string | undefined>, console.log), () => boot.db, console.log);
+  void retrieval.schedule();
   const api = createApi(() => cfg, () => boot.db, {
     identity,
     githubToken: env.GITHUB_TOKEN?.trim() || undefined,
@@ -79,10 +85,12 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
     ingestTokens: ingestTokensFromEnv(env as Record<string, string | undefined>),
     files: new LocalBlobStore(env.HORIZON_FILES_DIR?.trim() || 'data/attachments'),
     getWorkspace: () => boot.workspace,
+    retrieval,
     reload: () => {
       const r = reseed(boot.db, env as Record<string, string | undefined>);
       boot.workspace = r.workspace;
       boot.summary = r.summary;
+      void retrieval.schedule();
       return r;
     },
   });
