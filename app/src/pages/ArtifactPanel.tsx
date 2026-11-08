@@ -4,7 +4,8 @@ import { Link, useParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { useChat } from '../lib/chatStore';
-import type { Citation, CodeArtifact, CriterionStatus, UatArtifact } from '../lib/types';
+import { api, hexaChanged } from '../lib/hexa';
+import type { Citation, CodeArtifact, CriterionStatus, TestSuggestion, UatArtifact } from '../lib/types';
 
 /** Side panel for a work product. Rendered by the nested route /chat/:chatId/artifact/:artifactId. */
 export function ArtifactPanel() {
@@ -215,6 +216,7 @@ function UatView({ a, sources }: { a: UatArtifact; sources: Citation[] }) {
                         <td>
                           {c.text}
                           <small className="evidence">{c.evidence}</small>
+                          {c.suggestions?.length ? <Suggestions storyKey={a.ticketKey} criterion={c.id} items={c.suggestions} /> : null}
                         </td>
                         <td>
                           <span className={`pill ${criterionPill[c.status].cls}`}>{criterionPill[c.status].label}</span>
@@ -268,4 +270,56 @@ function uatAsText(a: UatArtifact) {
     lines.push('', 'Proposed UAT cases', ...a.proposedCases.map((c) => `${c.id}  ${c.title} (${c.criterion})`));
   }
   return lines.join('\n');
+}
+
+/**
+ * Automated tests of the story's components that look like they cover a criterion. A person decides:
+ * Link adds the test to the criterion (the server refuses a test from another repository), and the next
+ * analysis counts it if it passed in the target build. A suggestion never counts by itself.
+ */
+function Suggestions({ storyKey, criterion, items }: { storyKey: string; criterion: string; items: TestSuggestion[] }) {
+  const [state, setState] = useState<Record<string, 'busy' | 'linked' | string>>({});
+  const link = async (id: string) => {
+    setState((x) => ({ ...x, [id]: 'busy' }));
+    try {
+      await api(`/api/hexa/tests/${id}/links`, { method: 'POST', body: JSON.stringify({ type: 'criterion', ref: `${storyKey}#${criterion}` }) });
+      hexaChanged();
+      setState((x) => ({ ...x, [id]: 'linked' }));
+    } catch (e) {
+      setState((x) => ({ ...x, [id]: (e as Error).message }));
+    }
+  };
+  return (
+    <div className="suggest" role="group" aria-label={`Tests that may cover ${criterion}`}>
+      <span className="suggest-h">Possibly covered by (not counted until linked):</span>
+      <ul>
+        {items.map((t) => {
+          const st = state[t.id];
+          return (
+            <li key={t.id}>
+              <Link to={`/hexa/test/${t.id}?tab=automated`} className="mono">
+                {t.title}
+              </Link>
+              <span className={`pill ${t.result === 'passed' ? 'pass' : t.result === 'failed' ? 'crit' : ''}`}>{t.result ?? 'no result'}</span>
+              <small>{t.why}</small>
+              {st === 'linked' ? (
+                <span role="status" className="muted">
+                  Linked · analyse again to count it
+                </span>
+              ) : (
+                <button type="button" className="btn small" onClick={() => void link(t.id)} disabled={st === 'busy'} aria-label={`Link ${t.title} to ${storyKey} ${criterion}`}>
+                  {st === 'busy' ? 'Linking…' : 'Link'}
+                </button>
+              )}
+              {st && st !== 'busy' && st !== 'linked' && (
+                <span className="errtext" role="alert">
+                  {st}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }

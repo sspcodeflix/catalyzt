@@ -3,13 +3,15 @@
  * analyst agent. Coverage comes from Hexa (tests linked to each acceptance criterion and their
  * latest pipeline results); the server computes it and passes it in.
  */
-import type { AssistantMessage, CriterionStatus, Ticket, UatArtifact } from './types';
+import type { AssistantMessage, CriterionStatus, TestSuggestion, Ticket, UatArtifact } from './types';
 
 export interface CriterionInput {
   status: CriterionStatus;
   evidence: string;
   /** The builds the evidence was read from, when the server supplied them. */
   builds?: { label: string; at: string }[];
+  /** Automated tests that look like they cover the criterion, for a person to link. */
+  suggestions?: TestSuggestion[];
 }
 
 /** "2 h ago", "3 d ago": how fresh the evidence is. */
@@ -72,18 +74,22 @@ export function scanOnlyCaveat(scanOnly: UatContext['scanOnly']): string {
 }
 
 /** What a UAT analysis of a ticket produces, given what Hexa knows about each criterion. */
-export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[], ctx: UatContext = {}): { artifact: UatArtifact; covered: number; gaps: number; notRun: number; failing: number } {
+export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[], ctx: UatContext = {}): { artifact: UatArtifact; covered: number; gaps: number; notRun: number; failing: number; suggested: number } {
   const caveat = scanOnlyCaveat(ctx.scanOnly);
   const criteria = t.acceptanceCriteria.map((text, i) => ({
     id: `AC${i + 1}`,
     text,
     status: coverage[i]?.status ?? 'no-test',
     evidence: coverage[i]?.evidence ?? 'No test linked to this criterion',
+    ...(coverage[i]?.suggestions?.length ? { suggestions: coverage[i].suggestions } : {}),
   }));
-  const missing = criteria.filter((c) => c.status === 'no-test');
+  // A criterion with a passing CI test suggested for it needs a person to link that test, not a new manual case.
+  const hasPassingSuggestion = (c: (typeof criteria)[number]) => !!c.suggestions?.some((s) => s.result === 'passed');
+  const missing = criteria.filter((c) => c.status === 'no-test' && !hasPassingSuggestion(c));
   return {
     covered: criteria.filter((c) => c.status === 'passing').length,
     gaps: missing.length,
+    suggested: criteria.filter((c) => c.status !== 'passing' && hasPassingSuggestion(c)).length,
     notRun: criteria.filter((c) => c.status === 'not-run').length,
     failing: criteria.filter((c) => c.status === 'failing').length,
     artifact: {
@@ -116,21 +122,22 @@ const joinParts = (xs: string[]) => {
 
 /** The UAT analyst's answer for a ticket: run summary, prose, report, approval for the gaps, follow-ups. */
 export function uatAnswer(t: Ticket, coverage: CriterionInput[], ctx: UatContext = {}): { answer: AssistantMessage; artifact: UatArtifact } {
-  const { artifact, covered, gaps, notRun, failing } = buildUatAnalysis(t, coverage, ctx);
+  const { artifact, covered, gaps, notRun, failing, suggested } = buildUatAnalysis(t, coverage, ctx);
   const caveat = scanOnlyCaveat(ctx.scanOnly);
   const n = artifact.criteria.length;
   const parts: string[] = [];
   if (covered) parts.push(`${plural(covered, 'is', 'are')} covered by tests that passed in the latest pipeline run [2]`);
   if (failing) parts.push(`${plural(failing, 'has a test that is', 'have tests that are')} failing`);
   if (notRun) parts.push(`${plural(notRun, 'has a test with', 'have tests with')} no result yet`);
-  if (gaps) parts.push(`${plural(gaps, 'has', 'have')} no test`);
+  const untested = artifact.criteria.filter((c) => c.status === 'no-test').length;
+  if (untested) parts.push(`${plural(untested, 'has', 'have')} no test`);
   const ready = n > 0 && covered === n;
   const candidate = isUatCandidate(t.status);
   const core = ready
     ? `All ${n} acceptance criteria of \`${t.key}\` [1] are covered by tests that passed in the latest pipeline run [2]. ${candidate ? 'It is ready for UAT sign-off.' : 'The evidence is in place for when it reaches UAT.'}`
     : `\`${t.key}\` has ${plural(n, 'acceptance criterion', 'acceptance criteria')} [1]. ${joinParts(parts)}. ${
-        gaps ? `I drafted ${plural(gaps, 'UAT test case', 'UAT test cases')} for the gaps.` : failing ? 'Fix the failing tests before sign-off.' : 'Run the remaining tests before sign-off.'
-      }`;
+        gaps ? `I drafted ${plural(gaps, 'UAT test case', 'UAT test cases')} for the gaps.` : failing ? 'Fix the failing tests before sign-off.' : suggested ? '' : 'Run the remaining tests before sign-off.'
+      }${suggested ? `${gaps || failing ? ' ' : ''}For ${plural(suggested, 'criterion', 'criteria')} a CI test that passed looks like it covers ${suggested === 1 ? 'it' : 'them'}: review the suggestions in the report and link the right test to count it.` : ''}`.replace(/\. +$/, '.');
   // R06: a story that Jira still has in progress is not a UAT candidate, whatever the coverage says.
   const flagged = candidate ? core : `\`${t.key}\` is still ${t.status} in Jira [1], so it is not a UAT candidate yet. ${core}`;
   const summary = caveat ? `${flagged}\n\n${caveat}` : flagged;

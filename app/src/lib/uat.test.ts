@@ -75,3 +75,40 @@ describe('proposed UAT cases', () => {
     expect(isUatCandidate('To Do')).toBe(false);
   });
 });
+
+describe('link suggestions in the UAT answer', () => {
+  const t: Ticket = {
+    key: 'ABCD-1001',
+    summary: 'Partial refunds',
+    type: 'Story',
+    status: 'Ready for UAT',
+    fixVersion: '',
+    components: ['checkoutservice'],
+    assignee: '',
+    updated: '2026-11-08T00:00:00Z',
+    description: '',
+    acceptanceCriteria: ['A card refund needs a reason', 'Partial refunds are allowed for 45 days from settlement'],
+    requirements: [],
+    uat: { state: 'not-analysed', covered: 0, total: 2 },
+  };
+  it('drafts no case for a criterion with a passing suggestion and asks a person to link it', () => {
+    const coverage = [
+      { status: 'no-test' as const, evidence: 'No test linked to this criterion' },
+      { status: 'no-test' as const, evidence: 'No test linked to this criterion', suggestions: [{ id: 't1', title: 'Partial refunds allowed within 45 days', result: 'passed', why: 'shares partial, refunds, days, settlement' }] },
+    ];
+    const { answer, artifact } = uatAnswer(t, coverage);
+    const prose = answer.blocks.find((b) => b.kind === 'prose');
+    const text = prose?.kind === 'prose' ? prose.text : '';
+    expect(text).toMatch(/I drafted 1 UAT test case for the gaps/);
+    expect(text).toMatch(/For 1 criterion a CI test that passed looks like it covers it/);
+    expect(artifact.criteria[1].suggestions?.[0].id).toBe('t1');
+    expect(artifact.criteria[1].status).toBe('no-test');
+  });
+  it('still drafts a case when the suggested test did not pass', () => {
+    const coverage = [{ status: 'no-test' as const, evidence: 'none', suggestions: [{ id: 't1', title: 'x', result: 'failed', why: 'y' }] }];
+    const { answer } = uatAnswer({ ...t, acceptanceCriteria: ['A card refund needs a reason'] }, coverage);
+    const prose = answer.blocks.find((b) => b.kind === 'prose');
+    expect(prose?.kind === 'prose' && prose.text).toMatch(/I drafted 1 UAT test case/);
+    expect(prose?.kind === 'prose' && prose.text).not.toMatch(/looks like it covers/);
+  });
+});

@@ -153,6 +153,16 @@ export interface CodeArtifact {
 /** How well one acceptance criterion is covered by tests. Status always has a text label. */
 export type CriterionStatus = 'passing' | 'failing' | 'not-run' | 'no-test';
 
+/** An automated test of the story's components that looks like it covers a criterion: offered for a person to link, never counted by itself. */
+export interface TestSuggestion {
+  id: string;
+  title: string;
+  /** Its result in the target build of its repository, if it ran. */
+  result: string | null;
+  /** Why it was suggested: the criterion names it, or the words they share. */
+  why: string;
+}
+
 export interface UatArtifact {
   id: string;
   kind: 'uat';
@@ -160,7 +170,7 @@ export interface UatArtifact {
   subtitle: string;
   cardLabel: string;
   ticketKey: string;
-  criteria: { id: string; text: string; status: CriterionStatus; evidence: string }[];
+  criteria: { id: string; text: string; status: CriterionStatus; evidence: string; suggestions?: TestSuggestion[] }[];
   proposedCases: { id: string; title: string; criterion: string; steps: string[] }[];
   note: string;
 }

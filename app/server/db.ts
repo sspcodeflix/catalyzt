@@ -114,6 +114,8 @@ export interface AppRecord {
 export interface TestCaseRow {
   id: string;
   title: string;
+  /** The test's function or method name as the code has it (CI imports and scans). */
+  codeName?: string | null;
   suite: string | null;
   kind: 'automated' | 'manual' | 'proposed';
   framework: string | null;
@@ -224,6 +226,8 @@ export interface CriterionCoverage {
   tests: { id: string; title: string; kind: string; result: EvidenceResult }[];
   /** The builds the evidence comes from, one per repository with a recorded run. */
   builds: EvidenceBuild[];
+  /** Automated tests of the story's components that look like they cover this criterion (not counted). */
+  suggestions?: { id: string; title: string; result: string | null; why: string }[];
 }
 
 type Row = Record<string, unknown>;
@@ -864,6 +868,7 @@ export function openDb(path: string) {
         id: String(r.id),
         title: String(r.title),
         suite: (r.suite as string) ?? null,
+        codeName: (r.code_name as string) ?? null,
         kind: r.kind as TestCaseRow['kind'],
         framework: (r.framework as string) ?? null,
         origin: r.origin as TestCaseRow['origin'],
@@ -1399,6 +1404,53 @@ export function openDb(path: string) {
         const manual = by('manual');
         if (manual.length) return out('not-run', `${one(manual)} manual, no automated result`);
         return out('no-test', 'No test linked to this criterion');
+      });
+    },
+
+    /**
+     * Automated tests of the story's own components that look like they cover each criterion not yet
+     * covered: the criterion names the test (TestFile__AscendingBatchSequenceADV, PetResourceTest), or they
+     * share several distinctive words. A person links them; a suggestion never counts as evidence.
+     */
+    suggestTests(storyKey: string, coverage: CriterionCoverage[]): CriterionCoverage[] {
+      const story = getStory(storyKey);
+      if (!story) return coverage;
+      const pool = new Map<string, TestCaseRow>();
+      for (const comp of story.components) for (const r of this.listTests(story.applicationId, { component: comp, kind: 'automated', limit: 200 }).rows) pool.set(r.id, r);
+      if (!pool.size) return coverage;
+      const STOP = new Set(['the', 'and', 'with', 'that', 'this', 'from', 'when', 'then', 'into', 'returns', 'return', 'shows', 'still', 'test', 'tests', 'should', 'http', 'only', 'have', 'does', 'their', 'there', 'which', 'after', 'before']);
+      const words = (s: string) => new Set((s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((x) => x.length > 3 && !STOP.has(x)));
+      const names = (s: string) => new Set(s.match(/\b[A-Za-z_][A-Za-z0-9_]*(?:Test|Tests|IT|Spec)\b|\bTest[A-Z][A-Za-z0-9_]*\b/g) ?? []);
+      const buildResult = new Map<string, string | null>();
+      const resultOf = (t: TestCaseRow) => {
+        if (!buildResult.has(t.id)) {
+          const b = this.targetBuild(story.applicationId, t.repo);
+          const r = b ? (b.runIds.map((id) => db.prepare('SELECT status FROM test_results WHERE run_id = ? AND test_case_id = ?').get(id, t.id) as { status: string } | undefined).find(Boolean)?.status ?? null) : null;
+          buildResult.set(t.id, r);
+        }
+        return buildResult.get(t.id) ?? null;
+      };
+      return coverage.map((c, i) => {
+        if (c.status === 'passing') return c;
+        const text = story.acceptanceCriteria[i] ?? '';
+        const linked = new Set(c.tests.map((t) => t.id));
+        const named = names(text);
+        const cw = words(text);
+        const scored = [...pool.values()]
+          .filter((t) => !linked.has(t.id))
+          .map((t) => {
+            const short = (t.suite ?? '').split(/[./]/).pop() ?? '';
+            const code = t.codeName ?? '';
+            const byName = [...named].find((n) => n === short || n === code || code.startsWith(`${n}/`) || t.title.replace(/\s+/g, '') === n);
+            const shared = [...words(`${t.title} ${short}`)].filter((x) => cw.has(x));
+            const score = (byName ? 10 : 0) + shared.length;
+            return { t, score, why: byName ? `the criterion names ${byName}` : `shares ${shared.slice(0, 4).join(', ')}` };
+          })
+          .filter((x) => x.score >= 3)
+          .sort((a, b) => b.score - a.score || a.t.title.localeCompare(b.t.title))
+          .slice(0, 3);
+        if (!scored.length) return c;
+        return { ...c, suggestions: scored.map((x) => ({ id: x.t.id, title: x.t.title, result: resultOf(x.t), why: x.why })) };
       });
     },
 

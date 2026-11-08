@@ -317,7 +317,7 @@ export async function runWorkflow(
       router.finish('done', { result: `Assigned to the UAT analyst: ${ticket.key}`, ...routerUsage });
       const uat = root.spawn('UAT analyst', 'tool_agent', `Check whether ${ticket.key} is ready for UAT`);
       // Coverage comes from Hexa: tests linked to each criterion and their latest pipeline results.
-      const coverage = db?.coverageFor(ticket.key) ?? ticket.acceptanceCriteria.map(() => ({ status: 'no-test' as const, evidence: 'No test linked to this criterion' }));
+      const coverage = db ? db.suggestTests(ticket.key, db.coverageFor(ticket.key)) : ticket.acceptanceCriteria.map(() => ({ status: 'no-test' as const, evidence: 'No test linked to this criterion' }));
       // R24: a component whose repository is scan-only can never deliver an automated result; the report says so.
       const scanOnly = db ? scanOnlyComponents(db, app, ticket.components) : [];
       const { answer, artifact } = uatAnswer(ticket, coverage, { scanOnly });
