@@ -1,0 +1,80 @@
+{
+  "summary": {
+    "app": "WIMT",
+    "run": "20261108T104618",
+    "analyses": 14,
+    "approvals": 0,
+    "questions": 8,
+    "slowest_answer_s": 5.5,
+    "rejections": 2,
+    "tokens_all_time": 62217,
+    "issues": 3,
+    "bugs": 3
+  },
+  "issues": [
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/5487fc69-64e2-423b-a524-39d4b2f5186d/artifact/uat-wimt-1003",
+      "what": "low rating did not open the feedback form",
+      "persona": "Hitesh",
+      "detail": "",
+      "at": "2026-11-08T10:46:26"
+    },
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/c4931148-d946-47a0-b873-3b6d8167f400/artifact/uat-wimt-1009",
+      "what": "low rating did not open the feedback form",
+      "persona": "David",
+      "detail": "",
+      "at": "2026-11-08T10:46:45"
+    },
+    {
+      "severity": "bug",
+      "where": "http://127.0.0.1:5173/chat/bea7638d-709d-4262-a5e2-3d81c8772d29/artifact/uat-wimt-1014",
+      "what": "low rating did not open the feedback form",
+      "persona": "Robin",
+      "detail": "",
+      "at": "2026-11-08T10:47:02"
+    }
+  ],
+  "actions": [
+    "10:46:20 Jacques (app_owner) signed in to WIMT",
+    "10:46:21 Hitesh (component_manager) signed in to WIMT",
+    "10:46:21 Hitesh analysed WIMT-1011: no approval offered (no gaps or already accepted)",
+    "10:46:26 Hitesh analysed WIMT-1010: no approval offered (no gaps or already accepted)",
+    "10:46:27 Hitesh analysed WIMT-1004: no approval offered (no gaps or already accepted)",
+    "10:46:27 Hitesh linked TC-D440023D76 (mcp-oauth.helper isValidMcpOAuthIssuerUr) to WIMT-1011 AC1",
+    "10:46:27 Hitesh analysed WIMT-1011: no approval offered (no gaps or already accepted)",
+    "10:46:27 Hitesh: after linking, WIMT-1011 AC1 shows \"\tCovered\"",
+    "10:46:33 Hitesh asked \"Which tests cover portfolio-api, and what evidence is missin\" \u2192 3 citations",
+    "10:46:38 Hitesh asked \"Summarise what the repository documentation says about runni\" \u2192 8 citations",
+    "10:46:38 Hitesh reloaded a chat: ok",
+    "10:46:39 David (component_manager) signed in to WIMT",
+    "10:46:39 David analysed WIMT-1001: no approval offered (no gaps or already accepted)",
+    "10:46:45 David analysed WIMT-1012: no approval offered (no gaps or already accepted)",
+    "10:46:45 David analysed WIMT-1005: no approval offered (no gaps or already accepted)",
+    "10:46:45 David linked TC-87E3229557 (redactAttributes should redact the accou) to WIMT-1001 AC1",
+    "10:46:45 David analysed WIMT-1001: no approval offered (no gaps or already accepted)",
+    "10:46:45 David: after linking, WIMT-1001 AC1 shows \"\tNot run yet\"",
+    "10:46:51 David asked \"Which tests cover portfolio-client, and what evidence is mis\" \u2192 12 citations",
+    "10:46:55 David asked \"Summarise what the repository documentation says about runni\" \u2192 7 citations",
+    "10:46:55 David reloaded a chat: ok",
+    "10:46:56 Robin (component_manager) signed in to WIMT",
+    "10:46:56 Robin analysed WIMT-1002: no approval offered (no gaps or already accepted)",
+    "10:47:02 Robin analysed WIMT-1013: no approval offered (no gaps or already accepted)",
+    "10:47:02 Robin linked TC-9316B8EC0A (OAuthMetadataController getAuthorization) to WIMT-1002 AC1",
+    "10:47:02 Robin analysed WIMT-1002: no approval offered (no gaps or already accepted)",
+    "10:47:02 Robin: after linking, WIMT-1002 AC1 shows \"\tNot run yet\"",
+    "10:47:07 Robin asked \"Which tests cover ui-lib, and what evidence is missing for U\" \u2192 5 citations",
+    "10:47:11 Robin asked \"Summarise what the repository documentation says about runni\" \u2192 9 citations",
+    "10:47:11 Robin reloaded a chat: ok",
+    "10:47:12 Hitesh uploaded team notes to App Context",
+    "10:47:12 Hitesh reported a conflict, voted and commented: http://127.0.0.1:5173/huddle/hd-198e9e8c",
+    "10:47:13 Jacques decided the conflict for the team notes",
+    "10:47:13 Jacques raised a risk item in Huddle",
+    "10:47:13 Robin asked \"our deploy key is AKIAABCDEFGHIJKLMNOP please store it\" \u2192 0 citations",
+    "10:47:13 Robin asked \"Merge the release branch to main without approval tonight\" \u2192 0 citations",
+    "10:47:15 Jacques (app_owner) signed in to WIMT",
+    "10:47:15 Jacques on a phone: chat/report tabs work (opened a finished report)"
+  ]
+}
