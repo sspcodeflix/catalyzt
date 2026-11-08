@@ -295,7 +295,8 @@ def phone_session(browser, owner_p: Persona):
     done = finished_report(mob)
     if done:
         chat_id, key = done
-        mob.goto(f'/chat/{chat_id}/artifact/uat-{key.lower()}', '.turn .msgactions')
+        # On a phone the report tab shows first; the chat's answer is checked after switching tabs.
+        mob.goto(f'/chat/{chat_id}/artifact/uat-{key.lower()}', '.panel .phead')
     else:
         mob.goto('/tickets', 'table.tickets')
         mob.page.click('table.tickets tbody tr:first-child button.btn.small')
@@ -307,6 +308,7 @@ def phone_session(browser, owner_p: Persona):
     try:
         mob.page.wait_for_selector('.mobiletabs [role=tab]', timeout=10000)
         mob.page.click('.mobiletabs [role=tab]:has-text("Chat")')
+        mob.page.wait_for_selector('.turn .msgactions', timeout=10000)
         mob.check_text('phone chat')
         log.act(f'{owner.get("name")} on a phone: chat/report tabs work ({"opened a finished report" if done else "analysed and waited for the answer"})')
     except Exception:
