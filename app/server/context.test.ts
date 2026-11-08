@@ -3,7 +3,7 @@
  * for what cannot be read or is not connected, retrieval that respects scope and exclusions, and
  * conflicts that stay excluded until an owner decides in Huddle.
  */
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -29,6 +29,32 @@ describe('passages', () => {
     writeFileSync(join(cloneDir, 'main.go'), 'package main');
     writeFileSync(join(cloneDir, 'docs', 'logo.md'), Buffer.from([0x23, 0x00, 0x01, 0x02]));
     expect(collectDocs(cloneDir).map((d) => d.path).sort()).toEqual(['README.md', 'docs/refunds.md']);
+  });
+
+  it('R19: indexes build, container and CI files as line passages, within limits, and says so', () => {
+    const { db, cloneDir } = fixtureWithDocs();
+    const pom = `<project>\n  <modelVersion>4.0.0</modelVersion>\n  <artifactId>shop</artifactId>\n  <build>\n    <plugins>\n      <plugin><artifactId>maven-surefire-plugin</artifactId></plugin>\n    </plugins>\n  </build>\n</project>\n`;
+    writeFileSync(join(cloneDir, 'pom.xml'), pom);
+    writeFileSync(join(cloneDir, '.travis.yml'), 'language: java\njdk: oraclejdk8\nscript: mvn -B test --settings settings.xml\n');
+    writeFileSync(join(cloneDir, 'docker-compose.dev.yml'), 'services:\n  mongo:\n    image: mongo:3\n    ports: ["27017:27017"]\n');
+    writeFileSync(join(cloneDir, 'package-lock.json'), '{"lockfileVersion": 3, "packages": {"": {"name": "shop"}}}');
+    writeFileSync(join(cloneDir, '.env'), 'PASSWORD=not-indexed-at-all-ever');
+    mkdirSync(join(cloneDir, 'api'), { recursive: true });
+    writeFileSync(join(cloneDir, 'api', 'Dockerfile'), 'FROM java:8-jre\nADD ./target/api.jar /app/\nCMD ["java", "-jar", "/app/api.jar"]\n');
+    writeFileSync(join(cloneDir, 'api', 'build.gradle'), `plugins { id 'java' }\n${'// padding\n'.repeat(8000)}`); // over 64 KB: skipped
+    mkdirSync(join(cloneDir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(cloneDir, '.github', 'workflows', 'ci.yml'), 'on: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: mvn -B test\n');
+    writeFileSync(join(cloneDir, '.github', 'CODEOWNERS.md'), '* @someone who owns everything in this repository');
+    const docs = collectDocs(cloneDir);
+    expect(docs.filter((d) => !d.build).map((d) => d.path).sort()).toEqual(['README.md', 'docs/refunds.md']);
+    expect(docs.filter((d) => d.build).map((d) => d.path).sort()).toEqual(['.github/workflows/ci.yml', '.travis.yml', 'api/Dockerfile', 'docker-compose.dev.yml', 'pom.xml']);
+    const chunks = chunkDocs(docs);
+    const pomChunk = chunks.find((c) => c.locator === 'pom.xml ¶1')!;
+    expect(pomChunk.text).toContain('\n    <plugins>'); // layout kept
+    const id = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!.id;
+    const r = syncSource(db, 'ABCD', id);
+    expect(r.source.content).toBe(`${r.source.chunks} passages from 2 documentation files and 5 build files`);
+    expect(listChunks(db, 'ABCD', id).some((c) => c.locator === '.travis.yml ¶1' && c.text.includes('mvn -B test'))).toBe(true);
   });
 });
 
