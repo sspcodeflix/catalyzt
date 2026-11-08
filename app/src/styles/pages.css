@@ -327,3 +327,9 @@ legend { padding: 0; }
 .flowthreadlink { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; font-size: 13px; }
 .flowchatlinks { display: flex; gap: 8px; flex-wrap: wrap; }
 .callout.noanswer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+/* A chat about a story in a test flow: the flow's step above the reply box. */
+.storyflowbar { width: 100%; max-width: 760px; margin: 0 auto 6px; padding: 0 16px; display: flex; flex-direction: column; gap: 4px; }
+.storyflowbar .sfrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border: 1px solid var(--hz-border); border-radius: var(--hz-radius-md); background: var(--hz-surface); font-size: 13px; }
+.storyflowbar .sftitle { font-weight: 600; color: inherit; }
+.storyflowbar .sfwait { flex: 1; min-width: 160px; color: var(--hz-text-secondary); }

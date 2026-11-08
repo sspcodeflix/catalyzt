@@ -1,3 +1,4 @@
+import { flowsChanged } from '../../lib/flows';
 import { FlowChatCard, FlowsWaitingCard, FlowStartCard } from './FlowCards';
 import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -116,6 +117,8 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
     try {
       await decideApproval(chat.id, message.id, approvalId, decision);
       setDecideErrors(({ [approvalId]: _gone, ...rest }) => rest);
+      // A test flow holding the story moves on: let its bar and cards reload now.
+      flowsChanged();
     } catch (e) {
       setDecideErrors((x) => ({ ...x, [approvalId]: (e as Error).message }));
     } finally {

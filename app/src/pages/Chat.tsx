@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { AssistantTurn } from '../components/chat/AssistantTurn';
+import { StoryFlowBar } from '../components/chat/FlowCards';
 import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
 import { onTabListKey } from '../components/tabKeys';
@@ -292,6 +293,7 @@ function ChatView({ chatId }: { chatId: string }) {
             Jump to latest
           </button>
         )}
+        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} />}
         {chat && !readOnly && (
           <div className="composerwrap">
             <Composer
@@ -409,4 +411,11 @@ function useThreadFlow(flowId: string | null, chatId: string, answering: boolean
     };
   }, [flowId, chatId, answering]);
   return flow;
+}
+
+/** The stories a chat is about: the ones its questions name and the ones its UAT reports cover. */
+function chatStories(chat: NonNullable<ReturnType<typeof useChat>>): string[] {
+  const keys = chat.messages.flatMap((m) => (m.role === 'user' ? (m.tickets ?? []) : []));
+  for (const a of Object.values(chat.artifacts)) if (a.kind === 'uat') keys.push(a.ticketKey);
+  return [...new Set(keys)].slice(0, 10);
 }

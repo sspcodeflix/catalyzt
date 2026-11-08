@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-import { flowsChanged, useActiveFlows, type FlowView } from '../../lib/flows';
+import { flowsChanged, useActiveFlows, type FlowSummary, type FlowView } from '../../lib/flows';
 import { api } from '../../lib/hexa';
 import { sessionEpoch, useSession } from '../../lib/session';
 import type { Block } from '../../lib/types';
@@ -192,6 +192,61 @@ export function FlowsWaitingCard() {
       {flows.map((f) => (
         <FlowCard key={f.id} flow={f} compact />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Above the reply box of a chat about stories that are in a test flow: where the flow stands and who it
+ * waits on, so approving a case or recording a result here visibly moves the flow on.
+ */
+export function StoryFlowBar({ stories }: { stories: string[] }) {
+  const [flows, setFlows] = useState<FlowSummary[]>([]);
+  const { me, loaded } = useSession();
+  const key = [...new Set(stories)].sort().join(',');
+  useEffect(() => {
+    if (!loaded || !me?.app || !key) return;
+    const epoch = sessionEpoch();
+    let live = true;
+    const load = () =>
+      api<{ flows: FlowSummary[] }>(`/api/flows?stories=${encodeURIComponent(key)}`)
+        .then((d) => live && epoch === sessionEpoch() && setFlows(d.flows))
+        .catch(() => undefined);
+    void load();
+    const timer = setInterval(load, 15_000);
+    window.addEventListener('flows:changed', load);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener('flows:changed', load);
+    };
+  }, [loaded, me?.app?.id, me?.user.id, key]);
+  if (!flows.length) return null;
+  return (
+    <div className="storyflowbar" role="status" aria-label="Test flows this chat is part of">
+      {flows.slice(0, 2).map((f) => {
+        const mine = f.waiting.filter((w) => w.you);
+        const other = f.waiting.find((w) => !w.you);
+        return (
+          <div key={f.id} className="sfrow">
+            <span className="flowkind">{KIND[f.kind]}</span>
+            <Link to={`/flows/${f.id}`} className="sftitle">
+              {f.title}
+            </Link>
+            <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
+            <span className="sfwait">
+              {mine.length
+                ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
+                : other
+                  ? `Waiting on ${other.person?.name ?? (other.action.startsWith('The UAT analyst') ? 'the agent' : 'the pipeline')}: ${other.action.toLowerCase()}`
+                  : 'Nothing waiting'}
+            </span>
+            <Link to={`/flows/${f.id}`} className="btn small plain">
+              Open flow
+            </Link>
+          </div>
+        );
+      })}
     </div>
   );
 }

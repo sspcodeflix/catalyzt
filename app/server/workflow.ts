@@ -24,7 +24,7 @@ import { describeRetrieval, retrieveContext, scanOnlyComponents, type ContextPas
 import type { RetrievalModels } from './retrieval';
 import type { HorizonDb } from './db';
 import { hexaEvidence } from './evidence';
-import { flowChatAnswer, flowFacts } from './flows';
+import { flowChatAnswer, flowFacts, noteStory } from './flows';
 import { completeJson, DeepSeekError, streamChat, type DeepSeekConfig, type Usage } from './deepseek';
 import { chatMessages, intentMessages } from './prompts';
 
@@ -353,6 +353,11 @@ export async function runWorkflow(
         hexa({ detail: `${artifact.proposedCases.length} proposed` });
       }
       uat.finish('done', { result: `${artifact.criteria.filter((c) => c.status === 'passing').length} of ${artifact.criteria.length} criteria covered` });
+      // A story in a flow: the analysis shows in the flow's timeline (a flow's own background analysis notes itself).
+      if (db && !req.chatId?.startsWith('fa-')) {
+        const who = db.getUser(userId)?.name ?? 'Someone';
+        noteStory(db, app, ticket.key, userId, 'analysed', `${who} analysed ${ticket.key} in chat: ${artifact.criteria.filter((c) => c.status === 'passing').length} of ${artifact.criteria.length} criteria covered${artifact.proposedCases.length ? `, ${artifact.proposedCases.length} case${artifact.proposedCases.length === 1 ? '' : 's'} drafted for review` : ''}.`);
+      }
       emit({ type: 'answer', blocks: answer.blocks.slice(1), citations: answer.citations, artifact, uatTicket: ticket.key });
       return end('done', `UAT analyst checked ${ticket.key} · ${total()}`);
     }

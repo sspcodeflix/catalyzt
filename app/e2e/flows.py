@@ -73,6 +73,12 @@ with sync_playwright() as p:
     check('story: criteria are listed with a status', page.locator('.flowcriteria > li .pill').count() >= 1)
     check('story: links to the analysis chat', page.locator('.flowdetail a:has-text("Open the analysis chat")').count() == 1)
     check('timeline: start and analyses are recorded', page.locator('.flowtimeline li').count() >= 3)
+    # The story's chat shows the flow above the reply box.
+    page.click('.flowdetail a:has-text("Open the analysis chat")')
+    page.wait_for_selector('.storyflowbar .sfrow', timeout=15000)
+    check('chat: a story chat shows its flow and step above the reply box', 'UAT · e2e release' in page.inner_text('.storyflowbar') and 'Step:' in page.inner_text('.storyflowbar'))
+    page.go_back()
+    page.wait_for_selector('.flowsteps li', timeout=15000)
 
     # Sourav sees the same flow, at the same step.
     sign_in(page, 'Sourav')

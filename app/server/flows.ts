@@ -772,3 +772,17 @@ export function flowFacts(db: HorizonDb, app: AppRecord, flowId: string, userId:
     href: `/flows/${view.id}`,
   };
 }
+
+/* ---------- A story's flows ---------- */
+
+/** The active flows that hold a story. */
+export function flowsForStory(db: HorizonDb, app: string, key: string): string[] {
+  return (
+    db.raw.prepare("SELECT f.id FROM flows f JOIN flow_items i ON i.flow_id = f.id WHERE f.application_id = ? AND i.story_key = ? AND i.removed_at IS NULL AND f.status IN ('active', 'paused') ORDER BY f.created_at DESC").all(app, key) as { id: string }[]
+  ).map((r) => r.id);
+}
+
+/** Something that happened to a story outside the flow (an analysis or an approval in chat), into each flow's timeline. */
+export function noteStory(db: HorizonDb, app: string, key: string, actorId: string | null, kind: string, text: string) {
+  for (const id of flowsForStory(db, app, key)) event(db, id, actorId, kind, text, key);
+}

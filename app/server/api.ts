@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowView, flowWorker, listFlows, recordExecution, setStatus, signOff } from './flows';
+import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, listFlows, noteStory, recordExecution, setStatus, signOff } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -398,6 +398,12 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           const keys = (v: unknown) => (Array.isArray(v) ? v.filter(isStr).map((k) => k.trim()).filter((k) => /^[A-Z][A-Z0-9]+-\d+$/.test(k)).slice(0, 101) : []);
           if (url === '/api/flows' && req.method === 'GET') {
             // ?origin=<answer revision>: the flow a chat answer's Start card started, if any.
+            // ?stories=K1,K2: the active flows holding any of these stories, for the bar in a chat about them.
+            const wanted = (full.searchParams.get('stories') ?? '').split(',').filter((k) => /^[A-Z][A-Z0-9]+-\d+$/.test(k)).slice(0, 10);
+            if (wanted.length) {
+              const ids = new Set(wanted.flatMap((k) => flowsForStory(db, appId, k)));
+              return send(res, 200, { flows: listFlows(db, member, user.id).filter((f) => ids.has(f.id)) });
+            }
             const origin = full.searchParams.get('origin');
             if (origin) return send(res, 200, { flowId: /^[A-Za-z0-9_-]{1,80}$/.test(origin) ? flowByOrigin(db, appId, origin) : null });
             return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
@@ -635,6 +641,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const result = db.decideApproval(found.id, decision, user.id, execute);
         if (result.kind === 'missing') return send(res, 404, { error: 'This approval does not exist in this application.' });
         if (result.kind === 'already') return settled(result.approval);
+        // The decision moves a test flow holding the story: say so in its timeline.
+        if (found.action === 'add_uat_cases' && found.payload.storyKey)
+          noteStory(db, appId, found.payload.storyKey, user.id, decision, decision === 'approved' ? `Approved the drafted cases for ${found.payload.storyKey}: ${result.approval.outcome?.text ?? 'added to Hexa'}.` : `Declined the drafted cases for ${found.payload.storyKey}.`);
         return send(res, 200, { approval: view(result.approval) });
       }
 

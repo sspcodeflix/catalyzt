@@ -211,6 +211,28 @@ describe('a failed background analysis', () => {
   });
 });
 
+describe('work done in chat moves the flow', () => {
+  it('records an analysis and an approval made in chat in the timeline, and finds the flow by story', async () => {
+    const brian = api.as('u-sourav', 'ABCD');
+    const id = ((await (await brian.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    await until('u-sourav', id, (x) => step(x, 'analyse').state === 'done');
+    // Asked again in an ordinary chat, as Brijesh did.
+    const events = await brian.run({ text: 'Is ABCD-1001 ready for UAT?', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'own', messageId: 'om1', answerId: 'oa1' });
+    const approvalId = (events.find((e) => e.type === 'saved') as { approvals: { id: string }[] }).approvals[0].id;
+    expect((await brian.post('/api/answers/oa1-r1/rating', { stars: 5 })).status).toBe(200);
+    expect((await brian.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
+    const f = await view('u-sourav', id);
+    const texts = f.events.map((e) => e.text).join('\n');
+    expect(texts).toMatch(/Sourav analysed ABCD-1001 in chat: 2 of 4 criteria covered, 1 case drafted for review\./);
+    expect(texts).toMatch(/Approved the drafted cases for ABCD-1001: Added 1 manual test/);
+    expect(step(f, 'review').state).toBe('done');
+    // The chat's bar finds the flow by its story; a story in no flow finds none.
+    const by = (k: string) => brian.get(`/api/flows?stories=${k}`).then((r) => r.json() as Promise<{ flows: { id: string }[] }>);
+    expect((await by('ABCD-1001')).flows.map((x) => x.id)).toEqual([id]);
+    expect((await by('ABCD-1002')).flows).toEqual([]);
+  });
+});
+
 describe('a regression flow', () => {
   it('asks for automation where a criterion has none, then waits for CI', async () => {
     const id = ((await (await api.as('u-sourav', 'ABCD').post('/api/flows', { kind: 'regression', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
