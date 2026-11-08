@@ -66,7 +66,12 @@ def analyse_story(persona: Persona, key: str, low_rating: bool):
     if 'does not exist' in p.inner_text('.panel'):
         log.add('bug', f'/tickets/{key}', 'story panel says it does not exist', persona.name)
         return None
-    p.click('.panel button:has-text("UAT")')
+    # A story with a saved analysis offers "Analyse again"; the managers want fresh evidence, not the old chat.
+    again = p.locator('.panel button:has-text("Analyse again")')
+    if again.count():
+        again.first.click()
+    else:
+        p.click('.panel button:has-text("UAT")')
     p.wait_for_url(re.compile(r'/chat/[0-9a-f-]+'), timeout=20000)
     chat_url = p.url
     last = wait_answer(persona)
@@ -96,8 +101,12 @@ def analyse_story(persona: Persona, key: str, low_rating: bool):
     # Approve the proposed cases when offered.
     approve = p.locator('.approve .actions .btn.ink')
     if approve.count():
-        if approve.first.is_disabled():
-            log.add('bug', chat_url, 'approve button still locked after rating', persona.name, p.inner_text('.approve .foot'))
+        foot = p.inner_text('.approve .foot') if p.locator('.approve .foot').count() else ''
+        if approve.first.is_disabled() and 'Only ' in foot:
+            # F19: another manager's component; the card says who can decide. Expected, not a bug.
+            log.act(f'{persona.name}: {key} touches a component they do not manage; the card says: {foot.strip()[:90]}')
+        elif approve.first.is_disabled():
+            log.add('bug', chat_url, 'approve button still locked after rating', persona.name, foot)
         else:
             approve.first.click()
             try:

@@ -1,6 +1,9 @@
 import { useState } from 'react';
 
+import { approvalBlockReason } from '../../lib/approvalRights';
 import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
+import { useSession } from '../../lib/session';
+import { useTickets } from '../../lib/ticketStore';
 import { STALE_TEXT, staleTestFacts } from '../../lib/staleAnswer';
 import type { AssistantMessage, Chat } from '../../lib/types';
 import { BrandMark } from '../BrandMark';
@@ -30,6 +33,8 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
   const [patterns, setPatterns] = useState<FeedbackPattern[]>([]);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [decideErrors, setDecideErrors] = useState<Record<string, string>>({});
+  const session = useSession();
+  const tickets = useTickets();
 
   const status = message.status ?? 'done';
   const live = status === 'working' || status === 'streaming';
@@ -96,7 +101,11 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
       }
       case 'approval': {
         const a = b.approval;
-        const lockReason = !a.id ? 'Waiting for the answer to be saved' : message.rating === null ? 'Rate the answer to approve' : null;
+        // The components the change touches, from the story of the report it came from (null when not loaded).
+        const report = a.artifactId ? chat.artifacts[a.artifactId] : undefined;
+        const story = report?.kind === 'uat' ? tickets.find((t) => t.key === report.ticketKey) : undefined;
+        const rights = approvalBlockReason(session.me?.app, session.userId, story ? story.components : null);
+        const lockReason = !a.id ? 'Waiting for the answer to be saved' : rights ?? (message.rating === null ? 'Rate the answer to approve' : null);
         return (
           <ApprovalCard
             key={i}

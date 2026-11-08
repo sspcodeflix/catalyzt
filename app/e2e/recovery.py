@@ -47,7 +47,8 @@ with sync_playwright() as p:
 
     page.goto(BASE + '/')
     page.wait_for_selector('.mebtn')
-    sign_in(page, 'Mohd Sayeer')
+    # Karim manages statistics-service, the component of IBGM-1008, so he may approve its cases (F19).
+    sign_in(page, 'Karim')
 
     def start_uat():
         """A new UAT analysis from the home composer (a new chat and a new run every time)."""
@@ -162,7 +163,7 @@ with sync_playwright() as p:
     page.wait_for_selector('.emptystate', timeout=15000)
     check("F08: another application gets \"doesn't exist\"", "doesn't exist in this application" in page.inner_text('.thread'))
     chat_reads.clear()
-    sign_in(page, 'Mohd Sayeer')  # no navigation: the same URL stays open
+    sign_in(page, 'Karim')  # no navigation: the same URL stays open
     page.wait_for_selector('.turn .msgactions', timeout=15000)
     check('F08: the chat loads after switching back, same URL', page.url == chat_url and 'ready for UAT' in page.inner_text('.thread'))
     check('F08: it was requested again in the new scope', any(u.endswith(f'/api/chats/{chat_id}') for u in chat_reads))

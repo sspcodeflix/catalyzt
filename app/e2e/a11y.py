@@ -214,6 +214,11 @@ with sync_playwright() as p:
     # Theme toggle.
     pg.focus('header button[aria-label^="Switch to dark"]')
     pg.keyboard.press('Enter')
+    # The theme applies on the next render; wait for it instead of reading it in the same tick (was flaky under load).
+    try:
+        pg.wait_for_function("() => document.documentElement.dataset.theme === 'dark'", timeout=3000)
+    except Exception:
+        pass
     check('keyboard: theme toggles with Enter', pg.evaluate("() => document.documentElement.dataset.theme") == 'dark')
 
     # Hexa tabs: arrow keys move between tabs.

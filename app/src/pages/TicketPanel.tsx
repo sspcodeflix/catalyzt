@@ -62,10 +62,11 @@ export function TicketPanel() {
     );
   }
 
-  const analyse = () => {
+  // Open the latest saved analysis, or start a new one: re-reading the evidence is always possible.
+  const analyse = (fresh = false) => {
     const scope = currentScope();
     if (!scope) return;
-    const id = t.uat.chatId ?? startUatChat(t.key, scope);
+    const id = (!fresh && t.uat.chatId) || startUatChat(t.key, scope);
     navigate(`/chat/${id}/artifact/uat-${t.key.toLowerCase()}`);
   };
 
@@ -101,7 +102,13 @@ export function TicketPanel() {
         <div className="ticketact">
           <span className={`pill ${uatPill[t.uat.state].cls}`}>UAT: {uatText(t)}</span>
           <span className="grow" />
-          <button type="button" className="btn ink" onClick={analyse}>
+          {t.uat.chatId && (
+            <button type="button" className="btn" onClick={() => analyse(true)}>
+              <Icon name="retry" small />
+              Analyse again
+            </button>
+          )}
+          <button type="button" className="btn ink" onClick={() => analyse()}>
             <Icon name="target" small />
             {t.uat.chatId ? 'Open UAT analysis' : 'Analyse for UAT'}
           </button>
