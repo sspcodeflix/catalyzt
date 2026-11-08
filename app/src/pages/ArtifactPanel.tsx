@@ -291,30 +291,34 @@ function Suggestions({ storyKey, criterion, items }: { storyKey: string; criteri
   };
   return (
     <div className="suggest" role="group" aria-label={`Tests that may cover ${criterion}`}>
-      <span className="suggest-h">Possibly covered by (not counted until linked):</span>
+      <span className="suggest-h">
+        Possibly covered by <span className="muted">· not counted until a person links it</span>
+      </span>
       <ul>
         {items.map((t) => {
           const st = state[t.id];
           return (
             <li key={t.id}>
-              <Link to={`/hexa/test/${t.id}?tab=automated`} className="mono">
-                {t.title}
-              </Link>
+              <span className="suggest-main">
+                <Link to={`/hexa/test/${t.id}?tab=automated`} className="suggest-title">
+                  {t.title}
+                </Link>
+                <small>{t.why}</small>
+                {st && st !== 'busy' && st !== 'linked' && (
+                  <span className="errtext" role="alert">
+                    {st}
+                  </span>
+                )}
+              </span>
               <span className={`pill ${t.result === 'passed' ? 'pass' : t.result === 'failed' ? 'crit' : ''}`}>{t.result ?? 'no result'}</span>
-              <small>{t.why}</small>
               {st === 'linked' ? (
-                <span role="status" className="muted">
+                <span role="status" className="suggest-linked">
                   Linked · analyse again to count it
                 </span>
               ) : (
                 <button type="button" className="btn small" onClick={() => void link(t.id)} disabled={st === 'busy'} aria-label={`Link ${t.title} to ${storyKey} ${criterion}`}>
                   {st === 'busy' ? 'Linking…' : 'Link'}
                 </button>
-              )}
-              {st && st !== 'busy' && st !== 'linked' && (
-                <span className="errtext" role="alert">
-                  {st}
-                </span>
               )}
             </li>
           );

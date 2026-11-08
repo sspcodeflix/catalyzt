@@ -219,11 +219,26 @@ legend { padding: 0; }
 .decideform input.text { width: 100%; box-sizing: border-box; }
 
 /* Suggested tests under a UAT criterion: offered for a person to link, never counted by themselves. */
-.suggest { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--hz-border-strong); border-radius: var(--hz-radius-md); background: var(--hz-surface-muted); display: flex; flex-direction: column; gap: 6px; }
-.suggest-h { font-size: 12px; color: var(--hz-text-secondary); }
-.suggest ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.suggest li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
-.suggest li small { color: var(--hz-text-muted); }
+/* Tests that may cover a criterion: one calm row each, the title in the UI face, result and Link at the end. */
+.suggest { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--hz-border); border-left: 3px solid var(--hz-info-text, var(--hz-border-strong)); border-radius: var(--hz-radius-md); background: var(--hz-surface-muted); display: flex; flex-direction: column; gap: 4px; }
+.suggest-h { font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--hz-text-secondary); }
+.suggest-h .muted { font-weight: 400; }
+.suggest ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.suggest li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 7px 0; border-top: 1px solid var(--hz-border); }
+.suggest li:first-child { border-top: 0; }
+.suggest-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.suggest-title { font-family: var(--hz-font-ui); font-size: 13.5px; font-weight: 500; line-height: 1.35; color: var(--hz-text); text-decoration: none; overflow-wrap: anywhere; }
+.suggest-title:hover, .suggest-title:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.suggest li small { font-size: 12px; line-height: 1.3; color: var(--hz-text-muted); }
+.suggest li small::first-letter { text-transform: uppercase; }
+.suggest li .pill { height: 20px; font-size: 11.5px; }
+.suggest li .btn.small { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.suggest-linked { font-size: 12.5px; color: var(--hz-pass-text); white-space: nowrap; }
+@media (max-width: 560px) {
+  .suggest li { grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
+  .suggest li .pill { grid-column: 2; }
+  .suggest li .btn.small, .suggest-linked { grid-column: 1 / -1; justify-self: start; }
+}
 
 /* Test flows: steps, who the work waits on, and the stories. */
 .lead { margin: 0; max-width: 760px; }
