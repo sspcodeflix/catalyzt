@@ -1,17 +1,15 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { Fragment, useEffect, useId, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { kindInfo, loadHuddle, me, useHuddleState, type HuddleItem } from '../lib/huddleData';
+import { kindInfo, loadHuddle, loadMoreHuddle, useHuddleState, type HuddleFilter, type HuddleItem, type HuddleSummary } from '../lib/huddleData';
 import { useSession } from '../lib/session';
 import { relTime } from './Tickets';
 import '../styles/pages.css';
 
-type Filter = 'open' | 'decided' | 'mine';
+type Filter = HuddleFilter;
 
-const isMine = (i: HuddleItem) => i.people.includes(me.initials);
-
-export const itemStatus = (i: HuddleItem) =>
+export const itemStatus = (i: HuddleItem | HuddleSummary) =>
   i.decision
     ? { label: 'Decided', tone: 'pass' }
     : i.needsInput
@@ -20,33 +18,33 @@ export const itemStatus = (i: HuddleItem) =>
 
 /** Huddle: the team's shared place for decisions that the model or one person should not make alone. */
 export function Huddle() {
-  const { items, loaded, error } = useHuddleState();
+  const { items, loaded, error, counts, query, nextCursor, loadingMore } = useHuddleState();
   const location = useLocation();
   const panelOpen = /^\/huddle\/[^/]+/.test(location.pathname);
   const selectedId = panelOpen ? decodeURIComponent(location.pathname.split('/')[2]) : undefined;
-  const [filter, setFilter] = useState<Filter>('open');
-  const [q, setQ] = useState('');
+  // The filter and the search run on the server, a page at a time (the list can be long).
+  const filter = query.filter;
+  const [q, setQ] = useState(query.q);
+  const [moreError, setMoreError] = useState<string | null>(null);
   const searchId = useId();
   const { loaded: sessionLoaded } = useSession();
+  const setFilter = (f: Filter) => void loadHuddle(false, { filter: f });
 
   useEffect(() => {
     if (sessionLoaded) void loadHuddle();
   }, [sessionLoaded]);
+  // Search after a short pause in typing.
+  useEffect(() => {
+    if (!sessionLoaded || q === query.q) return;
+    const t = setTimeout(() => void loadHuddle(false, { q }), 250);
+    return () => clearTimeout(t);
+  }, [q, query.q, sessionLoaded]);
 
-  const counts = {
-    open: items.filter((i) => !i.decision).length,
-    decided: items.filter((i) => i.decision).length,
-    mine: items.filter((i) => !i.decision && isMine(i)).length,
+  const shown = items;
+  const more = () => {
+    setMoreError(null);
+    loadMoreHuddle().catch((e: Error) => setMoreError(e.message));
   };
-
-  const shown = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return items.filter((i) => {
-      const inFilter = filter === 'open' ? !i.decision : filter === 'decided' ? !!i.decision : !i.decision && isMine(i);
-      const text = `${i.title} ${i.summary} ${kindInfo[i.kind].label} ${i.raisedBy}`.toLowerCase();
-      return inFilter && (!needle || text.includes(needle));
-    });
-  }, [items, filter, q]);
 
   const filters: { id: Filter; label: string }[] = [
     { id: 'open', label: 'Open' },
@@ -111,7 +109,8 @@ export function Huddle() {
               const st = itemStatus(i);
               const sel = i.id === selectedId;
               return (
-                <Link key={i.id} to={`/huddle/${i.id}`} className={`hitem${sel ? ' sel' : ''}`} aria-current={sel ? 'page' : undefined}>
+                <Fragment key={i.id}>
+                <Link to={`/huddle/${i.id}`} className={`hitem${sel ? ' sel' : ''}`} aria-current={sel ? 'page' : undefined}>
                   <span className="tile">
                     <Icon name={kindInfo[i.kind].icon} small />
                   </span>
@@ -132,9 +131,34 @@ export function Huddle() {
                   </div>
                   <span className={`pill ${st.tone}`}>{st.label}</span>
                 </Link>
+                {/* R17: a likely duplicate is flagged, never merged; the link opens the other item. */}
+                {i.similar.length > 0 && (
+                  <p className="similar">
+                    <Icon name="warn" small />
+                    <span>
+                      Similar to{' '}
+                      <Link to={`/huddle/${i.similar[0].id}`}>{i.similar[0].title}</Link>
+                      {i.similar.length > 1 ? ` and ${i.similar.length - 1} more open` : ''}
+                    </span>
+                  </p>
+                )}
+                </Fragment>
               );
             })}
           </section>
+          {nextCursor && (
+            <p className="loadmore">
+              <button type="button" className="btn plain" onClick={more} disabled={loadingMore} aria-busy={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load more decisions'}
+              </button>
+              {moreError && (
+                <span className="errtext" role="alert">
+                  {' '}
+                  {moreError}
+                </span>
+              )}
+            </p>
+          )}
         </div>
       </div>
       <Outlet />

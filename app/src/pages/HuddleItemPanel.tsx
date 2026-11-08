@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 
 import { Prose } from '../components/chat/Prose';
 import { Icon } from '../components/Icon';
-import { addComment, decide, fetchItem, kindInfo, markNeedsInput, me, useHuddle, vote } from '../lib/huddleData';
+import { addComment, decide, fetchItem, kindInfo, markNeedsInput, me, useHuddleItem, vote } from '../lib/huddleData';
+import { reasonFavoursOther } from '../lib/huddleReason';
 import { useSession } from '../lib/session';
 import { itemStatus } from './Huddle';
 import { relTime } from './Tickets';
@@ -21,11 +22,11 @@ const when = (iso: string) => {
 };
 
 function ItemPanel({ itemId }: { itemId: string | undefined }) {
-  const items = useHuddle();
-  const item = items.find((i) => i.id === itemId);
+  // The full item (discussion, cited summary) is read when it opens; the list holds summaries only.
+  const item = useHuddleItem(itemId);
   const { loaded: sessionLoaded } = useSession();
   const ref = useRef<HTMLElement>(null);
-  const [lookup, setLookup] = useState<'idle' | 'loading' | 'missing' | 'error'>('idle');
+  const [lookup, setLookup] = useState<'idle' | 'loading' | 'ready' | 'missing' | 'error'>('idle');
   const [draft, setDraft] = useState('');
   const [deciding, setDeciding] = useState(false);
   const [choice, setChoice] = useState<string>('');
@@ -37,15 +38,16 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   const voteName = useId();
   const decideName = useId();
 
-  // Not in the list yet (a deep link, a reload): ask the server.
+  // Read the item from the server when it opens (a click in the list, a deep link, a reload), so votes
+  // and comments are current.
   useEffect(() => {
-    if (!itemId || item || !sessionLoaded || lookup !== 'idle') return;
+    if (!itemId || !sessionLoaded || lookup !== 'idle') return;
     setLookup('loading');
     fetchItem(itemId).then(
-      (i) => setLookup(i ? 'idle' : 'missing'),
+      (i) => setLookup(i ? 'ready' : 'missing'),
       () => setLookup('error'),
     );
-  }, [itemId, item, sessionLoaded, lookup]);
+  }, [itemId, sessionLoaded, lookup]);
 
   useEffect(() => {
     if (window.matchMedia('(max-width: 899px)').matches) ref.current?.scrollIntoView({ block: 'start' });
@@ -76,6 +78,8 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
   const myVote = item.myVote;
   const leading = [...item.options].sort((a, b) => b.votes.length - a.votes.length)[0];
   const decidedOption = item.decision && item.options.find((o) => o.id === item.decision!.optionId);
+  // R16: a warning, never a block, when the reason seems to argue for another option.
+  const favoured = deciding ? reasonFavoursOther(reason, item.options, choice) : null;
 
   const run = async (what: string, fn: () => Promise<unknown>) => {
     setBusy(what);
@@ -159,6 +163,22 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
           </span>
           <Prose text={item.aiSummary} citations={item.citations} />
         </div>
+
+        {item.similar.length > 0 && !item.decision && (
+          <p className="callout" role="note">
+            <Icon name="warn" small />
+            <span>
+              Possibly the same decision as{' '}
+              {item.similar.map((s, n) => (
+                <span key={s.id}>
+                  {n > 0 ? ', ' : ''}
+                  <Link to={`/huddle/${s.id}`}>{s.title}</Link>
+                </span>
+              ))}
+              . Nothing is merged; decide each, or ask the team which one stands.
+            </span>
+          </p>
+        )}
 
         {item.affects.length > 0 && (
           <div className="block">
@@ -257,7 +277,15 @@ function ItemPanel({ itemId }: { itemId: string | undefined }) {
                 <label htmlFor={reasonId} className="blockhead">
                   Reason <span className="muted">(required, kept with every affected item)</span>
                 </label>
-                <textarea id={reasonId} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required />
+                <textarea id={reasonId} rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required aria-describedby={favoured ? `${reasonId}-warn` : undefined} />
+                {favoured && (
+                  <p id={`${reasonId}-warn`} className="callout reasonwarn" role="status">
+                    <Icon name="warn" small />
+                    <span>
+                      Your reason reads like an argument for "{favoured.title}", not for the option you chose. Check the choice before you confirm; you can still confirm as it is.
+                    </span>
+                  </p>
+                )}
                 <div className="acts">
                   <button type="button" className="btn plain" onClick={() => setDeciding(false)} disabled={busy === 'decide'}>
                     Cancel

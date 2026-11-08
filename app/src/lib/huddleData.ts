@@ -67,15 +67,37 @@ export interface HuddleItem {
   sourceId: string | null;
   decision?: { optionId: string; reason: string; at: string; by: string };
   myVote: string | null;
+  /** R17: open items of the same kind about the same source or with a near-identical title. */
+  similar: { id: string; title: string }[];
+  detail: true;
+}
+
+/** A list entry: the item without its discussion and cited summary (those load with the item). */
+export type HuddleSummary = Omit<HuddleItem, 'comments' | 'citations' | 'aiSummary' | 'detail'> & { commentCount: number; detail: false };
+
+export type HuddleFilter = 'open' | 'decided' | 'mine';
+export interface HuddleCounts {
+  open: number;
+  decided: number;
+  mine: number;
 }
 
 interface State {
-  items: HuddleItem[];
+  /** The pages loaded for the current filter and search, newest first. */
+  items: HuddleSummary[];
   loaded: boolean;
   error: string | null;
+  /** The next page's cursor, or null when the list is complete. */
+  nextCursor: string | null;
+  loadingMore: boolean;
+  counts: HuddleCounts;
+  query: { filter: HuddleFilter; q: string };
+  /** Full items, read on demand when one is opened. */
+  details: Record<string, HuddleItem>;
 }
 
-let state: State = { items: [], loaded: false, error: null };
+const EMPTY: State = { items: [], loaded: false, error: null, nextCursor: null, loadingMore: false, counts: { open: 0, decided: 0, mine: 0 }, query: { filter: 'open', q: '' }, details: {} };
+let state: State = EMPTY;
 const listeners = new Set<() => void>();
 const set = (next: Partial<State>) => {
   state = { ...state, ...next };
@@ -86,8 +108,9 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-export const useHuddle = () => useSyncExternalStore(subscribe, () => state.items);
 export const useHuddleState = () => useSyncExternalStore(subscribe, () => state);
+/** One full item, once it was read with fetchItem. */
+export const useHuddleItem = (id: string | undefined) => useSyncExternalStore(subscribe, () => (id ? state.details[id] : undefined));
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const epoch = sessionEpoch();
@@ -98,31 +121,84 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
+interface Page {
+  items: HuddleSummary[];
+  nextCursor: string | null;
+  counts: HuddleCounts;
+}
+const pageUrl = (query: State['query'], cursor?: string | null) => {
+  const p = new URLSearchParams();
+  if (query.filter === 'mine') p.set('mine', '1');
+  else p.set('status', query.filter);
+  if (query.q.trim()) p.set('q', query.q.trim());
+  if (cursor) p.set('cursor', cursor);
+  return `/api/huddle?${p}`;
+};
+
 let loading: Promise<void> | null = null;
-export function loadHuddle(force = false): Promise<void> {
-  if (loading && !force) return loading;
-  loading = api<{ items: HuddleItem[] }>('/api/huddle')
-    .then((b) => set({ items: b.items, loaded: true, error: null }))
+let generation = 0;
+/** Loads the first page for the current filter and search (or a new one). */
+export function loadHuddle(force = false, query?: Partial<State['query']>): Promise<void> {
+  const q = { ...state.query, ...(query ?? {}) };
+  const changed = q.filter !== state.query.filter || q.q !== state.query.q;
+  if (loading && !force && !changed) return loading;
+  const gen = ++generation;
+  if (changed) set({ query: q, loaded: false });
+  loading = api<Page>(pageUrl(q))
+    .then((b) => {
+      if (gen !== generation) return;
+      set({ items: b.items, nextCursor: b.nextCursor, counts: b.counts, loaded: true, error: null });
+    })
     .catch((e: Error) => {
-      if (e instanceof StaleScopeError) return;
+      if (e instanceof StaleScopeError || gen !== generation) return;
       loading = null;
       set({ loaded: true, error: e.message });
     });
   return loading;
 }
 
+/** Appends the next page. */
+export async function loadMoreHuddle(): Promise<void> {
+  if (!state.nextCursor || state.loadingMore) return;
+  const gen = generation;
+  set({ loadingMore: true });
+  try {
+    const b = await api<Page>(pageUrl(state.query, state.nextCursor));
+    if (gen !== generation) return;
+    const have = new Set(state.items.map((i) => i.id));
+    set({ items: [...state.items, ...b.items.filter((i) => !have.has(i.id))], nextCursor: b.nextCursor, counts: b.counts, loadingMore: false });
+  } catch (e) {
+    set({ loadingMore: false });
+    if (!(e instanceof StaleScopeError)) throw e;
+  }
+}
+
+/** Counts for the whole application (the sidebar badge, the filter buttons), after a change. */
+async function refreshCounts() {
+  try {
+    const b = await api<Page>(`/api/huddle?limit=1`);
+    set({ counts: b.counts });
+  } catch {
+    /* keep the last counts */
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('hz:session', () => {
     loading = null;
-    state = { items: [], loaded: false, error: null };
+    generation++;
+    state = { ...EMPTY, query: state.query };
     listeners.forEach((l) => l());
-    void loadHuddle();
+    void loadHuddle(true);
   });
 }
 
-const replace = (item: HuddleItem) => set({ items: state.items.some((i) => i.id === item.id) ? state.items.map((i) => (i.id === item.id ? item : i)) : [item, ...state.items] });
+const toSummary = ({ comments, citations: _c, aiSummary: _a, detail: _d, ...rest }: HuddleItem): HuddleSummary => ({ ...rest, commentCount: comments.length, detail: false });
+/** A full item from the server: kept as the item's detail, and its list entry (if loaded) follows it. */
+const replace = (item: HuddleItem) =>
+  set({ details: { ...state.details, [item.id]: item }, items: state.items.map((i) => (i.id === item.id ? toSummary(item) : i)) });
 
-/** One item, from memory or the server. Null when it does not exist in this application. */
+/** One full item from the server. Null when it does not exist in this application. */
 export async function fetchItem(id: string): Promise<HuddleItem | null> {
   try {
     const { item } = await api<{ item: HuddleItem }>(`/api/huddle/${encodeURIComponent(id)}`);
@@ -137,6 +213,7 @@ export async function fetchItem(id: string): Promise<HuddleItem | null> {
 const action = async (id: string, what: string, body: unknown) => {
   const { item } = await api<{ item: HuddleItem }>(`/api/huddle/${encodeURIComponent(id)}/${what}`, { method: 'POST', body: JSON.stringify(body) });
   replace(item);
+  void refreshCounts();
   return item;
 };
 
@@ -151,5 +228,6 @@ export const decide = (itemId: string, optionId: string, reason: string) => acti
 export async function raiseItem(input: { kind: Exclude<HuddleKind, 'conflict'>; title: string; summary: string; options: string[]; affects?: { label: string; href?: string }[] }): Promise<HuddleItem> {
   const { item } = await api<{ item: HuddleItem }>('/api/huddle', { method: 'POST', body: JSON.stringify(input) });
   replace(item);
+  void loadHuddle(true);
   return item;
 }

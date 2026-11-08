@@ -10,7 +10,8 @@
  *
  *   GET  /api/health               model and workspace status (never the key)
  *   GET  /api/me                   the user, their applications and roles, and everyone (for Sign in as)
- *   GET  /api/chats                the user's recent chats in the application
+ *   GET  /api/chats                the user's recent chats in the application (?limit, ?cursor -> nextCursor)
+ *   GET  /api/chats/:id            a chat with its latest page of messages (?limit, ?before=<olderCursor>)
  *   POST /api/run                  SSE stream of WorkflowEvent: the agent workflow (server/workflow.ts)
  *   GET  /api/agents               agent activity in the application: running now, plus recent runs
  *   GET  /api/usage                token totals for the application
@@ -41,8 +42,8 @@ import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import { extraRoutes } from './api-context';
 import { addAttachments, AttachmentError, attachmentsForRun } from './attachments';
 import { RequestError } from './context';
-import { componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
-import { HuddleError, listItems, raiseFeedbackPattern } from './huddle';
+import { CHAT_PAGE, componentId, OwnershipError, STATUSES, type ApprovalPayload, type HorizonDb, type PersonRecord, type Role, type StoredStory } from './db';
+import { HuddleError, huddleCounts, raiseFeedbackPattern } from './huddle';
 import { LocalBlobStore, type BlobStore } from './storage';
 import { maxScansFromEnv, RunLimiter, runLimitsFromEnv, type RunLimits } from './limits';
 import { DeepSeekError, type DeepSeekConfig } from './deepseek';
@@ -373,7 +374,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         return;
 
       if (url === '/api/chats' && req.method === 'GET') {
-        return send(res, 200, { chats: db.listChats(appId, user.id) });
+        // Recent chats a page at a time (?limit, ?cursor); without them, the first 12 as before.
+        return send(res, 200, db.listChatsPage(appId, user.id, { limit: boundedInt(full.searchParams.get('limit'), 12, 100), cursor: full.searchParams.get('cursor') }));
       }
 
       // Development only: seed the running server from the workspace again (new stories, edited manual tests).
@@ -391,7 +393,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const latest = runs[0];
         return send(res, 200, {
           pendingApprovals: db.listPendingApprovals(appId, 10),
-          openDecisions: listItems(db, appId).filter((i) => !i.decision).length,
+          openDecisions: huddleCounts(db, appId, null).open,
           stories: db.countStories(appId),
           runs: { recent: runs.length, failed: runs.filter((r) => r.status === 'failed').length, latest: latest ? { id: latest.id, repo: latest.repo, status: latest.status, at: latest.at, prNumber: latest.prNumber } : null },
           tests: db.testStats(appId).total,
@@ -504,7 +506,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       const chatMatch = /^\/api\/chats\/([A-Za-z0-9_-]{1,64})$/.exec(url);
       if (chatMatch && req.method === 'GET') {
-        const chat = db.getChatFull(chatMatch[1], user.id);
+        // The latest page of messages (?limit); ?before=<olderCursor> reads the page before it.
+        const before = full.searchParams.get('before');
+        const chat = db.getChatFull(chatMatch[1], user.id, { limit: boundedInt(full.searchParams.get('limit'), CHAT_PAGE, 200, 2), before: before != null && /^\d+$/.test(before) ? Number(before) : null });
         if (!chat || chat.applicationId !== appId) return send(res, 404, { error: 'This chat does not exist in this application.' });
         return send(res, 200, { chat });
       }

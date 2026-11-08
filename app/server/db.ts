@@ -249,6 +249,20 @@ function migrate(db: Database.Database) {
   }
 }
 
+/** Messages per page of a chat (latest first). */
+export const CHAT_PAGE = 40;
+
+/** The (updated_at, id) of the last chat on a page, from its opaque cursor. */
+function decodeChatCursor(c: string | null | undefined): [string, string] | null {
+  if (!c) return null;
+  try {
+    const v = JSON.parse(Buffer.from(c, 'base64url').toString('utf8')) as unknown;
+    return Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && typeof v[1] === 'string' ? [v[0], v[1]] : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
 export const componentId = (app: string, name: string) => `${app}/${name}`;
 
@@ -570,11 +584,26 @@ export function openDb(path: string) {
     },
     /** A person's recent chats in an application. */
     listChats(app: string, userId: string, limit = 12) {
-      return (db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? ORDER BY updated_at DESC LIMIT ?').all(app, userId, limit) as Row[]).map((r) => ({
-        id: String(r.id),
-        title: String(r.title),
-        updatedAt: String(r.updated_at),
-      }));
+      return this.listChatsPage(app, userId, { limit }).chats;
+    },
+    /**
+     * A page of a person's recent chats, most recently active first. The cursor is the last chat's
+     * (updated_at, id): chats started after the first page go above it and never shift later pages. A
+     * chat that becomes active again moves to the top, where the next first-page read shows it.
+     */
+    listChatsPage(app: string, userId: string, page: { limit?: number; cursor?: string | null } = {}) {
+      const limit = Math.max(1, Math.min(100, Math.trunc(Number.isFinite(page.limit) ? page.limit! : 12)));
+      const after = decodeChatCursor(page.cursor);
+      const rows = (
+        after
+          ? db
+              .prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? AND (updated_at < ? OR (updated_at = ? AND id < ?)) ORDER BY updated_at DESC, id DESC LIMIT ?')
+              .all(app, userId, after[0], after[0], after[1], limit + 1)
+          : db.prepare('SELECT id, title, updated_at FROM chats WHERE application_id = ? AND created_by = ? ORDER BY updated_at DESC, id DESC LIMIT ?').all(app, userId, limit + 1)
+      ) as Row[];
+      const chats = rows.slice(0, limit).map((r) => ({ id: String(r.id), title: String(r.title), updatedAt: String(r.updated_at) }));
+      const last = chats[chats.length - 1];
+      return { chats, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify([last.updatedAt, last.id])).toString('base64url') : null };
     },
     getChat,
     /**
@@ -1497,13 +1526,30 @@ export function openDb(path: string) {
       })();
     },
 
-    /** A chat with its messages and the latest revision of each answer, in the browser's shape. */
-    getChatFull(chatId: string, forUser: string) {
+    /**
+     * A chat with its messages and the latest revision of each answer, in the browser's shape. Messages
+     * come a page at a time, latest first: `before` is the `olderCursor` of the page already shown (the
+     * oldest seq on it), and a page never starts with an answer whose question is on the older page.
+     * Seq numbers only grow, so new messages never shift an older page. Revision and approval ids are
+     * the stored ones whichever page they arrive on.
+     */
+    getChatFull(chatId: string, forUser: string, page: { limit?: number; before?: number | null } = {}) {
       const c = db
         .prepare('SELECT c.*, w.name AS workspace_name, a.name AS app_name FROM chats c LEFT JOIN workspaces w ON w.id = c.workspace_id JOIN applications a ON a.id = c.application_id WHERE c.id = ?')
         .get(chatId) as Row | undefined;
       if (!c) return undefined;
-      const rows = db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY seq').all(chatId) as Row[];
+      const limit = Math.max(2, Math.min(200, Math.trunc(Number.isFinite(page.limit) ? page.limit! : CHAT_PAGE)));
+      const before = page.before != null && Number.isInteger(page.before) ? page.before : null;
+      const latestFirst = (
+        before == null
+          ? db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY seq DESC LIMIT ?').all(chatId, limit + 2)
+          : db.prepare('SELECT * FROM messages WHERE chat_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(chatId, before, limit + 2)
+      ) as Row[];
+      let take = Math.min(limit, latestFirst.length);
+      // Keep a question with its answer: a page that would begin with an answer takes its question too.
+      if (take < latestFirst.length && latestFirst[take - 1]?.role === 'assistant') take++;
+      const rows = latestFirst.slice(0, take).reverse();
+      const olderCursor = latestFirst.length > take && rows.length ? Number(rows[0].seq) : null;
       const items = db.prepare('SELECT item_type AS type, item_ref AS ref FROM message_items WHERE message_id = ?');
       const files = db.prepare("SELECT a.id, a.filename, a.status FROM message_items i JOIN attachments a ON a.id = i.item_ref WHERE i.message_id = ? AND i.item_type = 'file' ORDER BY a.created_at");
       const latest = db.prepare('SELECT * FROM answer_revisions WHERE message_id = ? ORDER BY revision DESC LIMIT 1');
@@ -1576,6 +1622,8 @@ export function openDb(path: string) {
         createdBy: String(c.created_by),
         messages,
         artifacts,
+        /** Pass as `before` to read the next older page; null when this page reaches the first message. */
+        olderCursor,
       };
     },
 
