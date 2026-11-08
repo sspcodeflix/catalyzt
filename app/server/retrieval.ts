@@ -274,7 +274,9 @@ export interface RankResult<T extends Candidate> {
 
 /** Words that carry no meaning for matching; without them "the" alone would make any passage relevant. */
 export const STOP = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'any', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'why', 'did', 'does', 'get', 'got', 'let', 'say', 'she', 'too', 'use', 'with', 'this', 'that', 'what', 'when', 'where', 'which', 'while', 'from', 'into', 'than', 'then', 'them', 'they', 'their', 'there', 'these', 'those', 'will', 'would', 'should', 'could', 'about', 'after', 'before', 'being', 'been', 'were', 'your', 'ours', 'also', 'just', 'like', 'over', 'such', 'only', 'other', 'some', 'very', 'each', 'make', 'made', 'most', 'much', 'many', 'more', 'here', 'please', 'show', 'tell', 'give', 'need', 'want', 'know', 'does', 'is', 'it', 'in', 'on', 'of', 'to', 'be', 'as', 'at', 'by', 'or', 'an', 'if', 'do', 'so', 'we', 'he', 'me', 'my', 'no', 'up', 'us']);
-export const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g)?.filter((w) => w.length > 2 && !STOP.has(w)) ?? [];
+/** A light stem, applied to questions and passages alike, so "refunds", "refunding" and "refund" count as one word (the full-text index stems too). */
+export const stem = (w: string) => (w.length > 4 ? w.replace(/(ies|ing|ed|es|s)$/, (m) => (m === 'ies' ? 'y' : '')) : w);
+export const words = (s: string) => s.toLowerCase().match(/[a-z0-9]+/g)?.filter((w) => w.length > 2 && !STOP.has(w)).map(stem) ?? [];
 
 /** Keyword overlap, 0 to 1: how much of the question the passage covers, with a little for density. */
 export function keywordScore(qw: Set<string>, c: { where: string; text: string }) {
@@ -308,7 +310,7 @@ export const rerankRelevance = (logit: number) => Math.max(0, Math.min(1, (logit
  * top of the fused list is rescored by the cross-encoder. Candidates without a vector (not yet
  * embedded, or Jira and Hexa rows) still take part through keywords and the reranker.
  */
-export async function rank<T extends Candidate>(models: RetrievalModels, query: string, cands: T[], opts: { limit: number; minRelevance: number; rerank?: boolean }): Promise<RankResult<T>> {
+export async function rank<T extends Candidate>(models: RetrievalModels, query: string, cands: T[], opts: { limit: number; minRelevance: number; rerank?: boolean; queryVector?: Float32Array | null }): Promise<RankResult<T>> {
   const qw = new Set(words(query));
   const total = cands.filter(embeddable).length;
   const embedded = cands.filter((c) => c.vector).length;
@@ -320,16 +322,88 @@ export async function rank<T extends Candidate>(models: RetrievalModels, query: 
 
   let vs: (number | null)[] = cands.map(() => null);
   if (useVectors) {
-    let q: Float32Array;
-    try {
-      [q] = await models.embedder!.embed([query]);
-    } catch {
-      // The model could not load: keyword only, honestly labelled.
-      return finish(models, query, cands, kw, vs, 'keyword', opts);
+    let q = opts.queryVector ?? null;
+    if (!q) {
+      try {
+        [q] = await models.embedder!.embed([query]);
+      } catch {
+        // The model could not load: keyword only, honestly labelled.
+        return finish(models, query, cands, kw, vs, 'keyword', opts);
+      }
     }
-    vs = cands.map((c) => (c.vector ? cosine(q, c.vector) : null));
+    const qv = q;
+    vs = cands.map((c) => (c.vector ? cosine(qv, c.vector) : null));
   }
   return finish(models, query, cands, kw, vs, useVectors ? 'hybrid' : 'keyword', opts);
+}
+
+/** The question as a vector, or null when there is no embedder or it could not run (callers fall back to keywords). */
+export async function embedQuery(models: RetrievalModels, query: string): Promise<Float32Array | null> {
+  if (!models.embedder || !query.trim()) return null;
+  try {
+    const [q] = await models.embedder.embed([query]);
+    return q ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------- Vector candidates (F24) ---------- */
+
+interface VectorSet {
+  stamp: string;
+  rowids: number[];
+  matrix: Float32Array;
+  dims: number;
+}
+/** Per database: the current vectors of each application and model, as one matrix, rebuilt when they change. */
+const VECTORS = new WeakMap<object, Map<string, VectorSet>>();
+
+/**
+ * The passages whose vectors are closest to the question: the application's current vectors are held
+ * in memory as one matrix (50k passages × 384 floats is about 77 MB) and rebuilt only when their
+ * count or latest row changes, so a question costs one pass of dot products, not a table load.
+ */
+export function vectorCandidates(db: HorizonDb, app: string, embedder: Embedder | null, q: Float32Array | null, k: number): number[] {
+  if (!embedder || !q) return [];
+  const sets = VECTORS.get(db) ?? new Map<string, VectorSet>();
+  VECTORS.set(db, sets);
+  const key = `${app}/${embedder.id}`;
+  const st = db.raw
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(MAX(e.rowid), 0) AS m FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id JOIN context_sources s ON s.id = c.source_id
+       WHERE e.model = ? AND s.application_id = ? AND c.retired_at IS NULL AND e.text_sha = c.text_sha`,
+    )
+    .get(embedder.id, app) as { n: number; m: number };
+  const stamp = `${st.n}/${st.m}`;
+  let set = sets.get(key);
+  if (!set || set.stamp !== stamp) {
+    const rows = db.raw
+      .prepare(
+        `SELECT c.rowid AS rid, e.vector FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id JOIN context_sources s ON s.id = c.source_id
+         WHERE e.model = ? AND s.application_id = ? AND c.retired_at IS NULL AND e.text_sha = c.text_sha ORDER BY c.rowid`,
+      )
+      .all(embedder.id, app) as { rid: number; vector: Buffer }[];
+    const usable = rows.filter((r) => r.vector.byteLength === q.length * 4);
+    const dims = q.length;
+    const matrix = new Float32Array(usable.length * dims);
+    usable.forEach((r, i) => matrix.set(fromBlob(r.vector), i * dims));
+    set = { stamp, rowids: usable.map((r) => r.rid), matrix, dims };
+    sets.set(key, set);
+  }
+  if (set.rowids.length === 0 || set.dims !== q.length) return [];
+  const scores = new Float32Array(set.rowids.length);
+  for (let i = 0; i < set.rowids.length; i++) {
+    let s = 0;
+    const off = i * set.dims;
+    for (let d = 0; d < set.dims; d++) s += set.matrix[off + d] * q[d];
+    scores[i] = s;
+  }
+  return Array.from(scores.keys())
+    .sort((a, b) => scores[b] - scores[a])
+    .slice(0, k)
+    .filter((i) => scores[i] >= 0.1)
+    .map((i) => set!.rowids[i]);
 }
 
 async function finish<T extends Candidate>(models: RetrievalModels, query: string, cands: T[], kw: number[], vs: (number | null)[], mode: RetrievalMode, opts: { limit: number; minRelevance: number; rerank?: boolean }): Promise<RankResult<T>> {

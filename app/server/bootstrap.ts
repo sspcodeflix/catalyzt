@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { seedContext } from './context';
+import { ensureFts, seedContext } from './context';
 import { openDb, seedWorkspace, type HorizonDb } from './db';
 import { parseCsv, readOctaneRows } from './octane';
 import { loadWorkspace, WorkspaceError, type Workspace } from './workspace';
@@ -77,6 +77,8 @@ export function bootstrap(env: Record<string, string | undefined>, log: (line: s
   const db = openDb(env.HORIZON_DB_PATH || 'data/horizon.db');
   // Anything still marked running belongs to a server that stopped; close it.
   db.stopOrphans();
+  // The passage full-text index follows source_chunks by triggers; a rebuild here covers a VACUUM that moved rowids.
+  if (ensureFts(db)) log('[horizon] rebuilt the passage full-text index');
   const r = reseed(db, env, log);
   return { db, workspace: r.workspace, summary: r.summary };
 }

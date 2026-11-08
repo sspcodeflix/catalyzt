@@ -7,7 +7,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { addConfluence, addUploads, chunkDocs, collectDocs, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, seedContext, syncSource, testQuestion } from './context';
+import { addConfluence, addUploads, chunkDocs, collectDocs, ensureFts, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, seedContext, syncSource, testQuestion } from './context';
 import { fixtureWithDocs, REFUNDS_DOC, SHOP_README } from './fixture';
 import { decide, getItem, listItems } from './huddle';
 import { embedPending, embeddingCounts, fakeModels, RetrievalService, type RetrievalModels } from './retrieval';
@@ -370,5 +370,42 @@ describe('passages are immutable history (F20)', () => {
     // A sync with no change leaves everything as it is (no third version, nothing retired again).
     expect(syncSource(db, 'ABCD', repo.id).source.version).toBe(2);
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM source_chunks WHERE source_id = ? AND retired_at IS NOT NULL").get(repo.id)).toEqual({ n: v1.length });
+  });
+});
+
+describe('bounded retrieval (F24)', () => {
+  it('loads only the question’s candidates, finds stemmed words through the full-text index, and still ranks the right passage first', async () => {
+    const { db } = fixtureWithDocs();
+    // Three hundred passages about something else: none of them should be loaded for a refund question.
+    const ins = db.raw.prepare("INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, 'ABCD-repo-shop', ?, ?, NULL, ?, 1, 60, ?)");
+    db.raw.transaction(() => {
+      for (let i = 0; i < 300; i++) ins.run(`ABCD-repo-shop#noise-${i}`, `docs/noise.md ¶${i}`, `Kubernetes node pool ${i} autoscaling notes and ingress certificate rotation.`, 1000 + i, `n${i}`);
+    })();
+    const r = await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?');
+    expect(r.passages[0].locator).toBe('docs/refunds.md ¶1');
+    expect(r.candidates).toBeLessThan(50);
+    expect(r.total).toBeGreaterThan(300);
+    // Stemming: "refunding" and "windows" reach the refund-window passage although the exact words are absent.
+    const stemmed = await retrieveContext(db, 'ABCD', 'refunding windows', { minRelevance: 0.01 });
+    expect(stemmed.passages.some((p) => p.locator === 'docs/refunds.md ¶1')).toBe(true);
+    // A question about the noise brings in at most the lexical bound.
+    const noise = await retrieveContext(db, 'ABCD', 'kubernetes ingress certificate rotation', { minRelevance: 0.01, limit: 4 });
+    expect(noise.candidates).toBeLessThanOrEqual(200);
+    expect(noise.passages.length).toBe(4);
+  });
+
+  it('with embeddings, the nearest vectors are candidates even without a shared word, and the index is rebuilt when it disagrees', async () => {
+    const { db } = fixtureWithDocs();
+    const m = fakeModels({ money: 'refund', back: 'refund', period: 'window' });
+    await embedPending(db, m.embedder!);
+    const hits = await retrieveContext(db, 'ABCD', 'money back period', { models: m });
+    expect(hits.mode).toBe('hybrid');
+    expect(hits.passages.map((p) => p.locator)).toContain('docs/refunds.md ¶1');
+    // Break the full-text index on purpose; start-up repairs it.
+    db.raw.exec("INSERT INTO source_chunks_fts(source_chunks_fts) VALUES ('delete-all')");
+    expect((await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?')).passages).toEqual([]);
+    expect(ensureFts(db)).toBe(true);
+    expect((await retrieveContext(db, 'ABCD', 'What is the refund window for partial refunds?')).passages[0].locator).toBe('docs/refunds.md ¶1');
+    expect(ensureFts(db)).toBe(false);
   });
 });

@@ -821,4 +821,22 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS model_calls_run ON model_calls (workflow_run_id);
   CREATE INDEX IF NOT EXISTS ratings_created ON ratings (created_at);
   `,
+  // 17: bounded retrieval (F24). A full-text index over passages (external content, porter stemming)
+  //     gives the lexical candidates in SQL, so a question no longer loads every passage of the
+  //     application. Triggers keep it in step with source_chunks; the server rebuilds it at start when
+  //     the counts disagree (rowids of a text-keyed table can move under VACUUM).
+  `
+  CREATE VIRTUAL TABLE source_chunks_fts USING fts5(text, locator, content='source_chunks', content_rowid='rowid', tokenize='porter unicode61');
+  INSERT INTO source_chunks_fts(source_chunks_fts) VALUES ('rebuild');
+  CREATE TRIGGER source_chunks_fts_ai AFTER INSERT ON source_chunks BEGIN
+    INSERT INTO source_chunks_fts(rowid, text, locator) VALUES (new.rowid, new.text, new.locator);
+  END;
+  CREATE TRIGGER source_chunks_fts_ad AFTER DELETE ON source_chunks BEGIN
+    INSERT INTO source_chunks_fts(source_chunks_fts, rowid, text, locator) VALUES ('delete', old.rowid, old.text, old.locator);
+  END;
+  CREATE TRIGGER source_chunks_fts_au AFTER UPDATE OF text, locator ON source_chunks BEGIN
+    INSERT INTO source_chunks_fts(source_chunks_fts, rowid, text, locator) VALUES ('delete', old.rowid, old.text, old.locator);
+    INSERT INTO source_chunks_fts(rowid, text, locator) VALUES (new.rowid, new.text, new.locator);
+  END;
+  `,
 ];

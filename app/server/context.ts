@@ -19,7 +19,7 @@ import { containsSecret } from '../src/lib/guardrails';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import { createItem } from './huddle';
-import { fromBlob, NO_MODELS, rank, textSha, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
+import { embeddingCounts, embedQuery, fromBlob, NO_MODELS, rank, textSha, vectorCandidates, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
 import type { BlobStore } from './storage';
 import type { Workspace } from './workspace';
 
@@ -568,21 +568,73 @@ interface Cand extends Candidate {
   scope: string;
 }
 
+/** How many candidates a question may bring in from each side before ranking (F24). */
+const LEXICAL_CANDIDATES = 200;
+const VECTOR_CANDIDATES = 60;
+
 /**
- * Every passage of the application, with its vector for the given embedding model when it has one
- * that was computed from the passage's current text (F25) and has the model's dimensions.
+ * The rowids of the passages worth ranking for a question: the best lexical matches from the
+ * full-text index (porter stemming, bm25 order) plus the nearest vectors. Null when the full-text
+ * index cannot answer (missing or a query it rejects), which means "consider every passage".
  */
-function candidates(db: HorizonDb, app: string, model: string | null, dims = 0): Cand[] {
-  const rows = db.raw
-    .prepare(
-      `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
+function candidateRowids(db: HorizonDb, app: string, models: RetrievalModels, query: string, queryVector: Float32Array | null): number[] | null {
+  const qw = words(query);
+  const ids = new Set<number>();
+  if (qw.length) {
+    try {
+      const match = qw.map((w) => `"${w.replace(/"/g, '')}"`).join(' OR ');
+      const rows = db.raw
+        .prepare(
+          `SELECT c.rowid AS rid FROM source_chunks_fts f JOIN source_chunks c ON c.rowid = f.rowid JOIN context_sources s ON s.id = c.source_id
+           WHERE source_chunks_fts MATCH ? AND s.application_id = ? AND c.retired_at IS NULL ORDER BY bm25(source_chunks_fts) LIMIT ?`,
+        )
+        .all(match, app, LEXICAL_CANDIDATES) as { rid: number }[];
+      for (const r of rows) ids.add(r.rid);
+    } catch {
+      return null;
+    }
+  }
+  for (const rid of vectorCandidates(db, app, models.embedder, queryVector, VECTOR_CANDIDATES)) ids.add(rid);
+  return [...ids];
+}
+
+/**
+ * Rebuilds the full-text index when it disagrees with the passages (rowids of a text-keyed table can
+ * move under VACUUM). Called at start-up; cheap when nothing is wrong.
+ */
+export function ensureFts(db: HorizonDb) {
+  try {
+    // An external-content index reads rows from source_chunks, so a COUNT never disagrees; the strict
+    // integrity check (rank = 1) compares the index with the table and fails when they differ. On a
+    // SQLite without it the statement itself fails, which also ends in a rebuild: always safe.
+    db.raw.exec("INSERT INTO source_chunks_fts(source_chunks_fts, rank) VALUES ('integrity-check', 1)");
+    return false;
+  } catch {
+    try {
+      db.raw.exec("INSERT INTO source_chunks_fts(source_chunks_fts) VALUES ('rebuild')");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * The passages of the application worth considering, with their vector for the given embedding
+ * model when it was computed from the passage's current text (F25) and has the model's dimensions.
+ * With a question, only its candidates are loaded (F24); without one, every current passage.
+ */
+function candidates(db: HorizonDb, app: string, models: RetrievalModels, dims = 0, question?: { query: string; queryVector: Float32Array | null }): Cand[] {
+  const model = models.embedder?.id ?? null;
+  const rowids = question ? candidateRowids(db, app, models, question.query, question.queryVector) : null;
+  if (rowids !== null && rowids.length === 0) return [];
+  const select = `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
          (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted,
          e.vector AS vector
        FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
        LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha
-       WHERE s.application_id = ? AND c.retired_at IS NULL`,
-    )
-    .all(model ?? '', app) as Row[];
+       WHERE s.application_id = ? AND c.retired_at IS NULL`;
+  const rows = (rowids === null ? db.raw.prepare(select).all(model ?? '', app) : db.raw.prepare(`${select} AND c.rowid IN (${rowids.map(() => '?').join(', ')})`).all(model ?? '', app, ...rowids)) as Row[];
   const usable = (v: unknown): v is Buffer => Buffer.isBuffer(v) && v.byteLength > 0 && v.byteLength % 4 === 0 && (!dims || v.byteLength === dims * 4);
   return rows.map((r) => ({
     key: str(r.id),
@@ -613,9 +665,11 @@ export interface Retrieval {
   passages: ContextPassage[];
   mode: RetrievalMode;
   reranked: boolean;
-  /** Passages with a vector, out of the usable ones; below total while the embedding job runs. */
+  /** Passages of the application with a current vector, out of all; below total while the embedding job runs. */
   embedded: number;
   total: number;
+  /** How many passages were loaded and ranked for the question (bounded, F24). */
+  candidates: number;
 }
 
 /** Relevance (0 to 1) a passage needs before an answer may use it. */
@@ -633,20 +687,22 @@ export const describeRetrieval = (r: { mode: RetrievalMode; reranked: boolean; e
  * and why, plus Jira stories and Hexa test titles so the person sees everything considered.
  */
 export async function testQuestion(db: HorizonDb, app: AppRecord, question: string, models: RetrievalModels = NO_MODELS) {
-  const cands: Cand[] = candidates(db, app.id, models.embedder?.id ?? null, models.embedder?.dims ?? 0);
+  const queryVector = await embedQuery(models, question);
+  const cands: Cand[] = candidates(db, app.id, models, models.embedder?.dims ?? 0, { query: question, queryVector });
   const stories = db.listStories(app.id);
   for (const s of stories) cands.push({ key: `jira:${s.key}`, chunkId: null, sourceId: jiraSourceId(app.id), sourceTitle: 'Jira', sourceType: 'Jira', version: 1, locator: s.key, where: `Jira · ${s.key}`, text: [s.summary, ...s.acceptanceCriteria].join(' '), reason: null, href: `/tickets/${s.key}`, scope: 'App' });
   const tests = db.listTests(app.id, { limit: 200 }).rows;
   for (const t of tests) cands.push({ key: `hexa:${t.id}`, chunkId: null, sourceId: null, sourceTitle: 'Hexa', sourceType: 'File', version: 1, locator: t.id, where: `Hexa · ${t.id}`, text: t.suite ? `${t.title} (${t.suite})` : t.title, reason: null, href: `/hexa/test/${t.id}`, scope: 'App' });
-  const considered = { passages: cands.filter((c) => c.chunkId).length, stories: stories.length, tests: tests.length };
+  const counts = embeddingCounts(db, models.embedder?.id ?? null, app.id);
+  const considered = { passages: counts.embedded + counts.pending, candidates: cands.filter((c) => c.chunkId).length, stories: stories.length, tests: tests.length };
   if (words(question).length === 0 && !models.embedder) return { results: [] as RankedChunk[], considered, mode: 'keyword' as RetrievalMode, reranked: false, how: describeRetrieval({ mode: 'keyword', reranked: false, embedded: 0, total: 0 }) };
-  const r = await rank(models, question, cands, { limit: 5, minRelevance: 0.01 });
+  const r = await rank(models, question, cands, { limit: 5, minRelevance: 0.01, queryVector });
   // "Used" means an answer would take it: usable source and above the same relevance bar retrieveContext applies.
   const results: RankedChunk[] = r.ranked.map(({ item: c, relevance }) => {
     const reason = c.reason ?? (relevance < MIN_RELEVANCE ? 'Below the relevance bar' : null);
     return { chunkId: c.chunkId, sourceId: c.sourceId, sourceTitle: c.sourceTitle, where: c.where, text: c.text, relevance: Math.round(relevance * 100) / 100, used: !reason, reason, href: c.href };
   });
-  return { results, considered, mode: r.mode, reranked: r.reranked, how: describeRetrieval(r) };
+  return { results, considered, mode: r.mode, reranked: r.reranked, how: describeRetrieval({ ...r, embedded: counts.embedded, total: counts.embedded + counts.pending }) };
 }
 
 /**
@@ -657,14 +713,18 @@ export async function testQuestion(db: HorizonDb, app: AppRecord, question: stri
  */
 export async function retrieveContext(db: HorizonDb, app: string, query: string, opts: RetrievalOptions = {}): Promise<Retrieval> {
   const models = opts.models ?? NO_MODELS;
-  const usable = candidates(db, app, models.embedder?.id ?? null, models.embedder?.dims ?? 0).filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace));
-  const r = await rank(models, query, usable, { limit: opts.limit ?? 4, minRelevance: opts.minRelevance ?? MIN_RELEVANCE });
+  const queryVector = await embedQuery(models, query);
+  const usable = candidates(db, app, models, models.embedder?.dims ?? 0, { query, queryVector }).filter((c) => !c.reason && c.chunkId && (c.scope === 'App' || !opts.workspace || c.scope === opts.workspace));
+  const r = await rank(models, query, usable, { limit: opts.limit ?? 4, minRelevance: opts.minRelevance ?? MIN_RELEVANCE, queryVector });
+  const counts = embeddingCounts(db, models.embedder?.id ?? null, app);
   return {
     passages: r.ranked.map(({ item: c }) => ({ chunkId: c.chunkId!, sourceId: c.sourceId!, sourceTitle: c.sourceTitle, sourceType: c.sourceType, version: c.version, locator: c.locator, text: c.text, href: c.href! })),
-    mode: r.mode,
+    // Keyword mode is honest about the application, not just this question's candidates.
+    mode: models.embedder && counts.embedded > 0 ? r.mode : 'keyword',
     reranked: r.reranked,
-    embedded: r.embedded,
-    total: r.total,
+    embedded: counts.embedded,
+    total: counts.embedded + counts.pending,
+    candidates: usable.length,
   };
 }
 

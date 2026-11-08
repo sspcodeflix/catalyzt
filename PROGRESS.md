@@ -24,12 +24,13 @@ cases of F05–F17) and a data-model and scalability review (F23–F28 plus hard
 follow-up table in [docs/FINDINGS.md](docs/FINDINGS.md) tracks them. Done so far: F18, F19, F21,
 F22, F23, F25, F26, F27, F28 and the residuals of F05, F06, F07, F08, F09, F10, F12, F15, F16, F17,
 each with a regression test (227 unit and API tests across 19 files; browser suite at 75 checks).
-Still open: F20 (immutable source versions behind citations), F24 (bounded retrieval with an indexed
-lexical candidate set) and the hardening table's performance items (story hydration, Huddle paging,
-usage summaries, ingestion lookup maps, indexes, retention, repository interfaces).
+Also done: F20 (immutable passage versions behind citations), F24 (bounded retrieval through an FTS5
+index and in-memory vectors) and the hardening items for story hydration, ingestion lookups, usage
+summaries and indexes. Still open: Huddle and chat paging, retention and quota policy, explicit
+repository interfaces, and a repeatable load-test profile with agreed response-time objectives.
 
 ## Known limits (stated, not hidden)
-- Retrieval in App Context is hybrid: keyword overlap plus a local embedding model (all-MiniLM-L6-v2, 384 dimensions) fused by rank, then a local cross-encoder reranker (ms-marco-MiniLM-L-6-v2), both run on the CPU by transformers.js and cached under `app/data/models` (46 MB, downloaded once). Until a passage has a vector, or without the models (`HORIZON_RETRIEVAL=keyword`), it is keyword-only and the page, the API and the answer's step say so. There is no approximate-nearest-neighbour index: cosine runs over every vector of the application, which is fine at thousands of passages. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.
+- Retrieval in App Context is hybrid: keyword overlap plus a local embedding model (all-MiniLM-L6-v2, 384 dimensions) fused by rank, then a local cross-encoder reranker (ms-marco-MiniLM-L-6-v2), both run on the CPU by transformers.js and cached under `app/data/models` (46 MB, downloaded once). Until a passage has a vector, or without the models (`HORIZON_RETRIEVAL=keyword`), it is keyword-only and the page, the API and the answer's step say so. Candidates come from an FTS5 index (lexical) and an in-memory pass over the application's vectors (semantic), so a question loads a few hundred passages at most; the vector pass is a scan, fine to tens of thousands of passages per application. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.
 - Not externally validated: a real GitHub Actions push to `/api/hexa/results` (the payload and semantics are tested against the API), a real sign-in proxy (the header mode is tested with synthetic requests), model-written answers (tests stub the model; the key in `app/.env` is only used when you run the app).
 - The wordmark uses Montserrat (OFL), the closest licensed face available offline; the reference sheet's exact typeface is unknown. No trademark clearance is claimed.
 

@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (15 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (17 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -130,6 +130,7 @@ erDiagram
 |---|---|---|
 | `context_sources` | `id`, `application_id`, `scope_type`, `scope_ref`, `type`, `title`, `subtitle`, `trust`, `status`, `content`, `note`, `href`, `location`, `size_bytes`, `mime`, `version`, `storage_key`, `sha256`, `synced_at`, `created_by` | `type`: `Repository` (documentation read from the clone), `Jira`, `Text` (readable upload), `PDF`, `Word`, `Image`, `ZIP`, `File`. `trust`: `High`, `Tickets`, `Code`, `Team upload`. `status`: `ready`, `indexed`, `review` (open conflict), `stored` (kept, not readable in this build), `failed`. `version` bumps when the text changes; citations carry it. No Confluence or Fabric is connected. |
 | `source_chunks` | `id` (`<source>@v<version>#<seq>`; version-1 rows from before migration 15 are `<source>#<seq>`), `source_id`, `seq`, `locator`, `text`, `excluded_reason`, `source_version`, `chars`, `text_sha`, `retired_at` | Passages, kept as history (F20): a re-index retires the current version's passages and writes the new version; a citation's link `…?v=<version>#chunk-<seq>` keeps opening the text it cited. Retrieval, counts and conflicts see current passages (`retired_at IS NULL`) only. Excluded passages stay excluded until a decision; a passage that holds what looks like a secret stays excluded. |
+| `source_chunks_fts` | FTS5 virtual table over `source_chunks` (`text`, `locator`; external content, porter stemming) | The lexical side of retrieval (F24): a question's candidates are the best bm25 matches, never the whole table. Triggers keep it in step; the server runs the strict integrity check at start and rebuilds when needed. |
 | `chunk_embeddings` | `chunk_id`, `model`, `dims`, `vector` (float32 BLOB, unit length), `text_sha`, `created_at`; key (`chunk_id`, `model`) | One vector per passage and embedding model, written by the background embedding job (`server/retrieval.ts`). Retrieval is hybrid: keyword overlap and cosine similarity fused by rank, then reranked by a local cross-encoder; a passage without a vector still matches by keyword. Removing a passage removes its vectors; a re-index keeps vectors whose text did not change (`text_sha`). |
 | `conflicts` | `id`, `source_id`, `other_source_id`, `title`, `detail`, `compare` (JSON), `huddle_item_id`, `status`, `resolution`, `created_at`, `resolved_at` | A source against a higher-trust one. Resolved by the Huddle decision (`keep_higher` or `use_upload`) in the same transaction. |
 | `huddle_items` | `id`, `application_id`, `kind`, `title`, `summary`, `scope`, `ai_summary`, `citations` (JSON), `source_id`, `status`, `needs_input`, `raised_by_type`, `raised_by` | `kind`: `conflict`, `mapping`, `risk`, `feedback`. Raised by a person or by Catalyzt (the feedback-pattern rule). |
