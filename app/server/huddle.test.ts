@@ -65,7 +65,9 @@ describe('Huddle items', () => {
     const saved = db.saveAnswer({ app: 'ABCD', chatId: 'c1', answerId: 'a1', userMessageId: 'm1', workflowRunId: null, userId: 'u-ram', status: 'done', intent: { capability: 'analysis', testType: null, action: 'x', tickets: [], components: [], confidence: 1, question: null, options: [], source: 'rules' }, blocks: [], citations: [], artifact: null });
     for (const u of ['u-ram', 'u-sourav', 'u-devi']) db.rateAnswer({ revisionId: saved.revisionId, userId: u, stars: 2, reasons: ['Wrong coverage'], comment: 'Expected the linked tests to be named.' });
     const patterns = db.lowRatingPatterns('ABCD');
-    expect(patterns).toEqual([{ capability: 'analysis', reason: 'Wrong coverage', count: 3 }]);
+    expect(patterns).toEqual([{ capability: 'analysis', reason: 'Wrong coverage', count: 3, people: expect.any(Number) }]);
+    expect(patterns[0].people).toBeGreaterThanOrEqual(1);
+    expect(patterns[0].people).toBeLessThanOrEqual(3);
     const item = raiseFeedbackPattern(db, db.getApp('ABCD')!, patterns[0])!;
     expect(item).toMatchObject({ kind: 'feedback', raisedBy: 'Catalyzt', raisedByType: 'agent', openLabel: 'Pattern to review', title: 'Test analysis answers rated low for "Wrong coverage"' });
     expect(item.affects).toEqual([{ label: 'Coverage of refunds', href: '/chat/c1' }]);

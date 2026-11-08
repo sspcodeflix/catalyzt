@@ -169,7 +169,7 @@ export async function runWorkflow(
   const secret = containsSecret(req.text) || (!g.allowed && g.policy.id === 'secret-in-input');
   if (db && req.chatId && req.messageId) {
     const wanted = (req.chatTitle ?? req.text).slice(0, 80);
-    const title = secret || containsSecret(wanted) ? 'Message removed' : redactSecrets(wanted);
+    const title = secret || containsSecret(wanted) ? 'Removed: it contained a secret' : redactSecrets(wanted);
     db.upsertChat({ id: req.chatId, title, agent: req.agent, workspace: req.scope.workspace, userId }, app);
     db.addUserMessage({
       id: req.messageId,

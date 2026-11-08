@@ -572,7 +572,7 @@ function Runs() {
               <div className="runbody">
                 <span>
                   <b>{r.passed}</b> passed · <b className={r.failed ? 'failnum' : undefined}>{r.failed}</b> failed · <b>{r.skipped}</b> skipped of {r.total}
-                  {r.durationMs ? ` · ${(r.durationMs / 1000).toFixed(1)} s` : ''}
+                  {r.durationMs ? ` · ${(r.durationMs / 1000).toFixed(1)} s of test time` : ''}
                 </span>
                 <span className="muted">{r.source === 'github_actions' ? 'Collected from GitHub Actions' : r.source === 'webhook' ? 'Pushed by CI' : `Uploaded${r.by ? ` by ${r.by}` : ''}`}</span>
               </div>
@@ -583,10 +583,15 @@ function Runs() {
                       <Icon name="warn" small className="bad" />
                       <span>
                         <Link to={`/hexa/test/${f.id}?tab=runs`}>{f.title}</Link>
-                        {f.message && <small className="mono">{f.message.split('\n')[0].slice(0, 200)}</small>}
+                        {f.message && <small className="mono">{f.message.split('\n').find((l) => l.trim()) ?.slice(0, 200)}</small>}
                       </span>
                     </li>
                   ))}
+                  {r.failed > r.failures.length && (
+                    <li className="muted">
+                      Showing {r.failures.length} of {r.failed} failures; the rest are on each test's page.
+                    </li>
+                  )}
                 </ul>
               )}
             </li>

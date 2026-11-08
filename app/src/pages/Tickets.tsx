@@ -22,7 +22,9 @@ export const relTime = (iso: string) => {
 };
 
 export const uatText = (t: Ticket) =>
-  t.uat.state === 'not-analysed' ? uatPill[t.uat.state].label : `${uatPill[t.uat.state].label} · ${t.uat.covered} of ${t.uat.total}`;
+  t.uat.state === 'not-analysed'
+    ? uatPill[t.uat.state].label
+    : `${uatPill[t.uat.state].label} · ${t.uat.covered} of ${t.uat.total}${t.uat.analysedAt ? ` · analysed ${relTime(t.uat.analysedAt)}${t.uat.by ? ` by ${t.uat.by}` : ''}` : ''}`;
 
 type Filter = 'all' | UatState;
 

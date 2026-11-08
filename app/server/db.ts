@@ -251,6 +251,19 @@ function migrate(db: Database.Database) {
 
 /** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
 export const componentId = (app: string, name: string) => `${app}/${name}`;
+
+/** JUnit failure messages arrive with XML entities ("&#10;" for a newline); people read them decoded (R11). */
+export function decodeEntities(s: string | null): string | null {
+  if (!s) return s;
+  return s
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
 /** Requirement rows are "<application>/<external id>" for the same reason (F23). */
 export const requirementUid = (app: string, externalId: string) => `${app}/${externalId}`;
 
@@ -1092,9 +1105,11 @@ export function openDb(path: string) {
         durationMs: r.duration_ms == null ? null : Number(r.duration_ms),
         at: String(r.started_at ?? r.ingested_at),
         by: (r.user_name as string) ?? null,
-        failures: db
-          .prepare("SELECT t.id, t.title, res.message FROM test_results res JOIN test_cases t ON t.id = res.test_case_id WHERE res.run_id = ? AND res.status = 'failed' ORDER BY t.title LIMIT 20")
-          .all(r.id) as { id: string; title: string; message: string | null }[],
+        failures: (
+          db
+            .prepare("SELECT t.id, t.title, res.message FROM test_results res JOIN test_cases t ON t.id = res.test_case_id WHERE res.run_id = ? AND res.status = 'failed' ORDER BY t.title LIMIT 20")
+            .all(r.id) as { id: string; title: string; message: string | null }[]
+        ).map((f) => ({ ...f, message: decodeEntities(f.message) })),
       }));
     },
 
@@ -1143,7 +1158,7 @@ export function openDb(path: string) {
         ).map((h) => ({
           status: String(h.status),
           durationMs: h.duration_ms == null ? null : Number(h.duration_ms),
-          message: (h.message as string) ?? null,
+          message: decodeEntities((h.message as string) ?? null),
           runId: String(h.run_id),
           source: String(h.source),
           workflow: (h.workflow as string) ?? null,
@@ -1569,12 +1584,34 @@ export function openDb(path: string) {
     lowRatingPatterns(app: string, days = 7, atLeast = 3) {
       return db
         .prepare(
-          `SELECT COALESCE(json_extract(ar.intent, '$.capability'), 'unknown') AS capability, je.value AS reason, COUNT(*) AS count
+          `SELECT COALESCE(json_extract(ar.intent, '$.capability'), 'unknown') AS capability, je.value AS reason, COUNT(*) AS count, COUNT(DISTINCT r.user_id) AS people
            FROM ratings r JOIN answer_revisions ar ON ar.id = r.revision_id JOIN messages m ON m.id = ar.message_id JOIN chats c ON c.id = m.chat_id, json_each(r.reasons) je
            WHERE c.application_id = ? AND r.stars < 4 AND r.created_at >= ?
            GROUP BY capability, reason HAVING COUNT(*) >= ? ORDER BY count DESC`,
         )
-        .all(app, daysAgo(days), atLeast) as { capability: string; reason: string; count: number }[];
+        .all(app, daysAgo(days), atLeast) as { capability: string; reason: string; count: number; people: number }[];
+    },
+
+    /**
+     * The latest saved UAT report per story of an application (R13): the Search page shows the real
+     * analysis state after a reload, not only what this browser session saw.
+     */
+    uatStates(app: string) {
+      const rows = db
+        .prepare(
+          `SELECT a.body, a.chat_id, a.created_at, u.name AS by FROM artifacts a JOIN chats c ON c.id = a.chat_id LEFT JOIN users u ON u.id = c.created_by
+           WHERE c.application_id = ? AND a.kind = 'uat_report' ORDER BY a.created_at DESC, a.rowid DESC`,
+        )
+        .all(app) as Row[];
+      const out = new Map<string, { state: 'gaps' | 'ready'; covered: number; total: number; chatId: string; analysedAt: string; by: string | null }>();
+      for (const r of rows) {
+        const body = json<{ ticketKey?: string; criteria?: { status: string }[] }>(r.body, {});
+        if (!body.ticketKey || out.has(body.ticketKey)) continue;
+        const statuses = (body.criteria ?? []).map((c) => c.status);
+        const covered = statuses.filter((s) => s === 'passing').length;
+        out.set(body.ticketKey, { state: statuses.length > 0 && covered === statuses.length ? 'ready' : 'gaps', covered, total: statuses.length, chatId: String(r.chat_id), analysedAt: String(r.created_at), by: (r.by as string) ?? null });
+      }
+      return out;
     },
 
     getApproval,

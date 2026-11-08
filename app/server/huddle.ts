@@ -234,6 +234,8 @@ const CAP_LABEL: Record<string, string> = { analysis: 'Test analysis', authoring
 export function raiseFeedbackPattern(db: HorizonDb, app: AppRecord, p: { capability: string; reason: string; count: number }, days = 7) {
   const key = `${p.capability}|${p.reason}`;
   if (findOpenItem(db, app.id, 'feedback_pattern', key)) return null;
+  // R18: ratings and people are different counts; three ratings may come from two people.
+  const people = (x: { count: number; people?: number }) => `${x.people ?? x.count} ${(x.people ?? x.count) === 1 ? 'person' : 'people'}`;
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
   const recent = db.raw
     .prepare(
@@ -249,10 +251,10 @@ export function raiseFeedbackPattern(db: HorizonDb, app: AppRecord, p: { capabil
     {
       kind: 'feedback',
       title: `${cap} answers rated low for "${p.reason}"`,
-      summary: `${p.count} ratings below 4 stars in ${days} days gave the reason "${p.reason}" for ${cap.toLowerCase()} answers.`,
+      summary: `${p.count} ratings from ${people(p)} below 4 stars in ${days} days gave the reason "${p.reason}" for ${cap.toLowerCase()} answers.`,
       scope: `${app.name} · whole app`,
-      aiSummary: `${p.count} people rated ${cap.toLowerCase()} answers below 4 stars in the last ${days} days and picked "${p.reason}" [1]. Catalyzt does not change its own behaviour from feedback; the team decides whether the sources, the prompts or the expectation need to change.`,
-      citations: [{ n: 1, title: 'Ratings with reasons and comments', detail: `${p.count} in ${days} days · ${cap} · "${p.reason}"` }],
+      aiSummary: `${p.count} ratings from ${people(p)} put ${cap.toLowerCase()} answers below 4 stars in the last ${days} days with the reason "${p.reason}" [1]. Catalyzt does not change its own behaviour from feedback; the team decides whether the sources, the prompts or the expectation need to change.`,
+      citations: [{ n: 1, title: 'Ratings with reasons and comments', detail: `${p.count} ratings from ${people(p)} in ${days} days · ${cap} · "${p.reason}"` }],
       options: [
         { title: 'Review the sources and prompt for this capability', detail: 'Someone reads the rated answers and their comments, and proposes what to change.' },
         { title: 'Keep as is and watch', detail: 'Leave it; Catalyzt raises it again if the pattern continues after this is decided.' },

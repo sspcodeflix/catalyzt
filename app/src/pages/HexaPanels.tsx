@@ -435,17 +435,18 @@ async function unlink(testId: string, l: { type: string; ref: string }) {
 function LinkForm({ testId, linked }: { testId: string; linked: { type: string; ref: string }[] }) {
   const tickets = useTickets();
   const components = useSession().me?.app?.components ?? [];
+  // R08: nothing is preselected; the Link button stays disabled until a target is chosen, so one press never links the wrong thing.
   const [type, setType] = useState<'criterion' | 'story' | 'component'>('criterion');
   const [story, setStory] = useState('');
-  const [ac, setAc] = useState(1);
+  const [ac, setAc] = useState(0);
   const [component, setComponent] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
-  const chosen = tickets.find((x) => x.key === story) ?? tickets[0];
+  const chosen = tickets.find((x) => x.key === story);
   const storyKey = chosen?.key ?? '';
   const criteria = chosen?.acceptanceCriteria ?? [];
-  const ref = type === 'component' ? component || components[0]?.name || '' : type === 'story' ? storyKey : storyKey ? `${storyKey}#AC${ac}` : '';
+  const ref = type === 'component' ? component : type === 'story' ? storyKey : storyKey && ac > 0 ? `${storyKey}#AC${ac}` : '';
   const already = linked.some((l) => l.type === type && (l.type === 'component' ? l.ref.endsWith(`/${ref}`) : l.ref === ref));
 
   const submit = async (e: FormEvent) => {
@@ -479,8 +480,8 @@ function LinkForm({ testId, linked }: { testId: string; linked: { type: string; 
             <label htmlFor={`${id}-story`} className="sr">
               Story
             </label>
-            <select id={`${id}-story`} value={storyKey} onChange={(e) => setStory(e.target.value)} disabled={tickets.length === 0}>
-              {tickets.length === 0 && <option value="">No stories in the Jira filter</option>}
+            <select id={`${id}-story`} value={storyKey} onChange={(e) => (setStory(e.target.value), setAc(0))} disabled={tickets.length === 0}>
+              <option value="">{tickets.length === 0 ? 'No stories in the Jira filter' : 'Choose a story…'}</option>
               {tickets.map((t) => (
                 <option key={t.key} value={t.key}>
                   {t.key} · {t.summary.slice(0, 48)}
@@ -495,6 +496,7 @@ function LinkForm({ testId, linked }: { testId: string; linked: { type: string; 
               Criterion
             </label>
             <select id={`${id}-ac`} value={ac} onChange={(e) => setAc(Number(e.target.value))}>
+              <option value={0}>Choose a criterion…</option>
               {criteria.map((c, i) => (
                 <option key={i} value={i + 1}>
                   AC{i + 1} · {c.slice(0, 60)}
@@ -508,7 +510,8 @@ function LinkForm({ testId, linked }: { testId: string; linked: { type: string; 
             <label htmlFor={`${id}-component`} className="sr">
               Component
             </label>
-            <select id={`${id}-component`} value={component || components[0]?.name || ''} onChange={(e) => setComponent(e.target.value)}>
+            <select id={`${id}-component`} value={component} onChange={(e) => setComponent(e.target.value)}>
+              <option value="">Choose a component…</option>
               {components.map((c) => (
                 <option key={c.id} value={c.name}>
                   {c.name}

@@ -587,7 +587,7 @@ describe('F05: a rejected secret is nowhere in the database', () => {
     const events = await sourav.run({ ...uatRun('ABCD-1001', ids('1')), text: `my key is ${SECRET}`, chatTitle: `key ${SECRET}` });
     expect(events.find((e) => e.type === 'rejected')).toMatchObject({ policy: { id: 'secret-in-input' } });
     expect(dump(db)).not.toContain(SECRET);
-    expect(db.getChat('c1')?.title).toBe('Message removed');
+    expect(db.getChat('c1')?.title).toBe('Removed: it contained a secret');
     expect(db.raw.prepare('SELECT text, removed_reason FROM messages WHERE id = ?').get('m1')).toEqual({ text: '', removed_reason: 'secret-in-input' });
     expect(db.raw.prepare('SELECT COUNT(*) AS n FROM message_items').get()).toEqual({ n: 0 });
     // The rejection itself is kept as the answer, so a reload explains what happened.
@@ -605,7 +605,7 @@ describe('F05: a rejected secret is nowhere in the database', () => {
   it('keeps a secret out of a title even when the message itself is clean', async () => {
     await api.as('u-sourav', 'ABCD').run({ ...uatRun('ABCD-1001', ids('1')), chatTitle: `token=${SECRET}` });
     expect(dump(db)).not.toContain(SECRET);
-    expect(db.getChat('c1')?.title).toBe('Message removed');
+    expect(db.getChat('c1')?.title).toBe('Removed: it contained a secret');
   });
 });
 
@@ -740,5 +740,21 @@ describe('F05: files that hold a secret are refused, not stored', () => {
     expect(body.attachments.map((a) => a.filename)).toEqual(['ok.md']);
     expect(body.errors[0]).toMatch(/creds\.md.*not kept/);
     expect(dump(db)).not.toContain(SECRET);
+  });
+});
+
+describe('R13: the story list carries the latest saved UAT analysis', () => {
+  it('shows who analysed a story and when, for everyone and after a reload', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    await sourav.run(uatRun('ABCD-1001', ids('1')));
+    const list = (await (await api.as('u-ram', 'ABCD').get('/api/stories')).json()) as { stories: { key: string; uat: { state: string; covered: number; total: number; chatId?: string; by?: string | null; analysedAt?: string } }[] };
+    const analysed = list.stories.find((s) => s.key === 'ABCD-1001')!.uat;
+    expect(analysed).toMatchObject({ state: 'gaps', total: 4, chatId: 'c1', by: 'Sourav' });
+    expect(analysed.covered).toBeGreaterThanOrEqual(0);
+    expect(analysed.analysedAt).toBeTruthy();
+    expect(list.stories.find((s) => s.key === 'ABCD-1002')!.uat).toMatchObject({ state: 'not-analysed', covered: 0, total: 2 });
+    // Another application never sees it.
+    const other = (await (await api.as('u-nabih', 'IBGM').get('/api/stories')).json()) as { stories: { uat: { state: string } }[] };
+    expect(other.stories.every((s) => s.uat.state === 'not-analysed')).toBe(true);
   });
 });

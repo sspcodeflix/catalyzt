@@ -680,7 +680,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
 
       if (url === '/api/stories' && req.method === 'GET') {
         const filter = db.getFilter(appId);
-        return send(res, 200, { stories: db.listStories(appId, filter), filter });
+        // R13: each story carries its latest saved UAT analysis, so the Search page is right after a reload.
+        const states = db.uatStates(appId);
+        return send(res, 200, { stories: db.listStories(appId, filter).map((s) => ({ ...s, uat: states.get(s.key) ?? { state: 'not-analysed', covered: 0, total: s.acceptanceCriteria.length } })), filter });
       }
 
       if (url === '/api/stories' && req.method === 'POST') {

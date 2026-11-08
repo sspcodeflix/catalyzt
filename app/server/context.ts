@@ -160,6 +160,14 @@ const SELECT = `
     (SELECT k.id FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' ORDER BY k.created_at LIMIT 1) AS conflict_id
   FROM context_sources s LEFT JOIN users u ON u.id = s.created_by`;
 
+/** The row's summary from live counts (R16): an upload says how many passages it has now, and how many a decision excludes. */
+function liveContent(r: Row): string {
+  const n = Number(r.chunk_count ?? 0);
+  const excluded = Number(r.excluded ?? 0);
+  const base = r.type === 'Text' && n > 0 ? `${n} passage${n === 1 ? '' : 's'}` : str(r.content);
+  return n > 0 && excluded > 0 ? `${base} · ${excluded} excluded` : base;
+}
+
 function toView(r: Row): SourceView {
   return {
     id: str(r.id),
@@ -169,7 +177,7 @@ function toView(r: Row): SourceView {
     scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
     trust: r.trust as Trust,
     status: r.status as SourceStatus,
-    content: str(r.content),
+    content: liveContent(r),
     note: nullable(r.note),
     href: nullable(r.href),
     addedBy: nullable(r.added_by),

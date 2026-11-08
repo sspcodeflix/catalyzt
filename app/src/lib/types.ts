@@ -192,7 +192,8 @@ export interface Ticket {
   description: string;
   acceptanceCriteria: string[];
   requirements: string[];
-  uat: { state: UatState; covered: number; total: number; chatId?: string };
+  /** The latest UAT analysis: from the server's saved reports, or from this session when fresher. */
+  uat: { state: UatState; covered: number; total: number; chatId?: string; analysedAt?: string; by?: string | null };
   /** 'horizon' when created in Catalyzt's dummy Jira. */
   source?: 'jira_sync' | 'horizon';
   applicationId?: string;

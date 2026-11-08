@@ -9,7 +9,8 @@ import { http, sessionEpoch, StaleScopeError } from './session';
 import type { CriterionStatus, JiraSync, Refined, StoryDraft, StoryStatus, Ticket, UatState } from './types';
 import { summariseCoverage } from './uat';
 
-type ServerStory = Omit<Ticket, 'uat'>;
+/** The server sends each story with its latest saved UAT analysis (R13); older servers may omit it. */
+type ServerStory = Omit<Ticket, 'uat'> & { uat?: Ticket['uat'] };
 interface ServerFilter {
   project: string;
   statuses: StoryStatus[];
@@ -34,9 +35,10 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
+// An analysis this session just ran is fresher than the list the server sent before it; otherwise the server's saved state wins.
 const withUat = (s: ServerStory): Ticket => ({
   ...s,
-  uat: uat.get(s.key) ?? { state: 'not-analysed' as UatState, covered: 0, total: s.acceptanceCriteria.length },
+  uat: uat.get(s.key) ?? s.uat ?? { state: 'not-analysed' as UatState, covered: 0, total: s.acceptanceCriteria.length },
 });
 
 const jql = (f: ServerFilter) => `project = ${f.project} AND status in (${f.statuses.map((s) => `"${s}"`).join(', ')})`;

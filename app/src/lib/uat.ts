@@ -25,6 +25,34 @@ export const summariseCoverage = (statuses: CriterionStatus[]): Ticket['uat'] =>
   return { state: covered === statuses.length && statuses.length > 0 ? 'ready' : 'gaps', covered, total: statuses.length };
 };
 
+/** A proposed case's title: the criterion, cut at a word boundary when it is a whole sentence (R07). */
+export const shortTitle = (text: string) => {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= 90) return t;
+  const cut = t.slice(0, 90);
+  return `${cut.slice(0, Math.max(40, cut.lastIndexOf(' ')))}…`;
+};
+
+/** Lower-cases a leading capital only when it starts an ordinary word, never an acronym or a method name (PUT, API, HTTP). */
+const lowerLead = (s: string) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+
+const EXPECTS = /\b(returns?|answers?|responds?|shows?|displays?|lists?|contains?|rejects?|fails?|exits?|makes?|is shown|appears?|redirects?)\b/i;
+
+/**
+ * Steps derived from the criterion itself (R07): the situation it starts from, the call it names
+ * when it names one, and the check it states. Never a sign-in step for a criterion about a container
+ * or a batch job.
+ */
+export function stepsFor(criterion: string): string[] {
+  const text = criterion.replace(/\s+/g, ' ').trim();
+  const http = /\b(GET|POST|PUT|PATCH|DELETE|HEAD)\s+(\/[^\s,;]+)/.exec(text);
+  const m = EXPECTS.exec(text);
+  const given = (m ? text.slice(0, m.index) : '').replace(http?.[0] ?? '', '').replace(/\s+/g, ' ').replace(/[,:;]\s*$/, '').trim();
+  const expected = m ? text.slice(m.index).trim() : text;
+  const setup = given.length >= 12 ? `Set up: ${lowerLead(given)}` : 'Set up the situation the criterion describes (data, roles, configuration)';
+  return http ? [setup, `Call ${http[1]} ${http[2]} as the criterion describes`, `Check: ${lowerLead(expected)}`] : [setup, `Check: ${lowerLead(expected)}`, 'Record the result and a screenshot'];
+}
+
 /** A story is a UAT candidate once Jira says it is ready for UAT (or further along); earlier states are flagged (R06). */
 export const isUatCandidate = (status: string) => /\b(uat|done|release|accept)/i.test(status);
 
@@ -54,9 +82,9 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
       // one, and the same gap gets the same id in every analysis.
       proposedCases: missing.map((c) => ({
         id: `UAT-${t.key}-${c.id}`,
-        title: c.text,
+        title: shortTitle(c.text),
         criterion: c.id,
-        steps: ['Sign in to the test environment as a test user', `Check: ${c.text.charAt(0).toLowerCase()}${c.text.slice(1)}`, 'Record the result and a screenshot'],
+        steps: stepsFor(c.text),
       })),
       note: `Acceptance criteria are read from ${t.key} in Jira. Coverage comes from the tests linked to each criterion in Hexa, read against the latest merge-commit run of each test's repository (named in the evidence)${t.requirements.length ? `; requirements: ${t.requirements.join(', ')}` : ''}. A criterion counts as covered only when a linked automated test passed in that run; an earlier pass, a skipped test or a test missing from the run does not count.`,
     },
