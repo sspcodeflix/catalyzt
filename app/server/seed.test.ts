@@ -17,13 +17,19 @@ describe('workspaces follow the team file', () => {
     expect(chatWorkspace()).toBe('ABCD-payments');
     expect(db.getApp('ABCD')!.components.find((c) => c.name === 'checkoutservice')?.workspace).toBe('payments');
 
-    const trimmed = { ...FIXTURE, teams: FIXTURE.teams.map((t) => (t.id === 'ABCD' ? { ...t, workspaces: ['storefront'] } : t)) };
+    // The team drops "payments"; one component moves to storefront, the other still names the dropped workspace.
+    const trimmed = {
+      ...FIXTURE,
+      teams: FIXTURE.teams.map((t) => (t.id === 'ABCD' ? { ...t, workspaces: ['storefront'], components: t.components.map((c) => (c.name === 'frontend' ? { ...c, workspace: 'storefront' } : c)) } : t)),
+    };
     seedWorkspace(db, trimmed);
 
     expect(db.getApp('ABCD')!.workspaces).toEqual(['storefront']);
     expect(db.raw.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE application_id = 'ABCD'").get()).toEqual({ n: 1 });
     expect(chatWorkspace()).toBeNull();
-    expect(db.getApp('ABCD')!.components.find((c) => c.name === 'checkoutservice')?.workspace ?? null).toBeNull();
+    const comps = db.getApp('ABCD')!.components;
+    expect(comps.find((c) => c.name === 'checkoutservice')?.workspace ?? null).toBeNull();
+    expect(comps.find((c) => c.name === 'frontend')?.workspace).toBe('storefront');
     // Another team's workspaces are untouched, and seeding the original file brings the workspace back.
     expect(db.getApp('IBGM')!.workspaces).toEqual(['core-banking']);
     seedWorkspace(db, FIXTURE);

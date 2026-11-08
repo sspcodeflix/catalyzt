@@ -1706,7 +1706,7 @@ export function seedWorkspace(h: HorizonDb, ws: Workspace) {
         db.prepare(
           `INSERT INTO components (id, application_id, name, manager_id, workspace_id, repo, path, language, tests) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET manager_id = excluded.manager_id, workspace_id = excluded.workspace_id, repo = excluded.repo, path = excluded.path, language = excluded.language, tests = excluded.tests`,
-        ).run(componentId(team.id, c.name), team.id, c.name, c.manager, `${team.id}-${c.workspace}`, repo?.github ?? c.repo, c.path, c.language, c.tests);
+        ).run(componentId(team.id, c.name), team.id, c.name, c.manager, team.workspaces.includes(c.workspace) ? `${team.id}-${c.workspace}` : null, repo?.github ?? c.repo, c.path, c.language, c.tests);
         counts.components++;
       }
       db.prepare('INSERT OR IGNORE INTO jira_sync (application_id, project, statuses, every_minutes, last_sync_at) VALUES (?, ?, ?, ?, ?)').run(
