@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { startApi, type TestApi } from './api-harness';
+import { hexaEvidence } from './evidence';
 import type { HorizonDb } from './db';
 import { fixtureDb, seedRefundTests } from './fixture';
 import { analyseStory, type BulkReviewResult, type FlowView } from './flows';
@@ -325,6 +326,10 @@ describe('approving several stories at once', () => {
     const sourav = api.as('u-sourav', 'ABCD');
     const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001', 'ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
     const f = await until('u-sourav', id, (x) => x.items.length === 2 && x.items.every((s) => s.steps.find((st) => st.key === 'review')?.state === 'waiting'));
+    // The Analysis agent gets the story's saved analyses, so "what changed since it was last analysed" has an answer.
+    const fact = hexaEvidence(db, 'ABCD', { components: [], tickets: ['ABCD-1001'], text: 'What changed since ABCD-1001 was last analysed?', known: [] }).find((x) => x.title === 'Hexa · ABCD-1001')!;
+    expect(fact.text).toMatch(/Saved UAT analyses of ABCD-1001 \(newest first\):\n- \S+ by Sourav: AC1 \S+/);
+    expect(fact.text).toMatch(/Since the newest analysis \(\S+\): no criterion changed status; the story was not edited in Jira since/);
     const mine = f.waiting.find((w) => w.you)!;
     expect(mine.action).toBe('Review cases');
     expect([...mine.stories].sort()).toEqual(['ABCD-1001', 'ABCD-1002']);

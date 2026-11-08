@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Ticket } from './types';
-import { isUatCandidate, shortTitle, stepsFor, uatAnswer } from './uat';
+import { followUps, isUatCandidate, shortTitle, stepsFor, uatAnswer } from './uat';
 
 describe('scan-only repository caveat (R24)', () => {
   const t: Ticket = {
@@ -38,6 +38,19 @@ describe('scan-only repository caveat (R24)', () => {
     const prose = answer.blocks.find((b) => b.kind === 'prose');
     expect(prose?.kind === 'prose' && prose.text).not.toMatch(/scanned through GitHub/);
     expect(artifact.subtitle).not.toContain('scan-only');
+  });
+});
+
+describe('follow-up questions', () => {
+  it('offers "what changed since" only when an earlier analysis exists, and points suggested tests at the report, not a sign-off note', () => {
+    const base = { gaps: false, failing: false, ready: false, suggested: true, previous: false };
+    expect(followUps('SALR-1004', base)).toEqual(['Which tests cover this story?', 'Show the latest pipeline run']);
+    expect(followUps('SALR-1004', { ...base, previous: true })).toEqual(['Which tests cover this story?', 'What changed since SALR-1004 was last analysed?']);
+    expect(followUps('SALR-1004', { ...base, ready: true })).toEqual(['Draft the UAT sign-off note', 'Which tests cover this story?']);
+    expect(followUps('SALR-1004', { ...base, ready: true, previous: true })).toEqual(['Draft the UAT sign-off note', 'What changed since SALR-1004 was last analysed?']);
+    expect(followUps('SALR-1004', { ...base, gaps: true, previous: true })).toEqual(['Write automation for the gaps', 'Which tests cover this story?']);
+    // No pair ever repeats a question.
+    for (const s of [base, { ...base, suggested: false }, { ...base, ready: true }]) expect(new Set(followUps('X-1', s)).size).toBe(2);
   });
 });
 

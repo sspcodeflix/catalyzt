@@ -62,6 +62,21 @@ export const isUatCandidate = (status: string) => /\b(uat|done|release|accept)/i
 export interface UatContext {
   /** Components of the story whose repository is scanned through GitHub only, with no clone, no CI target and no recorded run (R24). */
   scanOnly?: { component: string; repo: string }[];
+  /** The story's previous saved analysis, if any: only then is "what changed since" a question with an answer. */
+  previous?: { at: string; by: string | null } | null;
+}
+
+/**
+ * What to ask next: only questions the assistant can answer from what it holds. "What changed since the
+ * last analysis" is offered only when an earlier analysis of the story exists; a story whose criteria
+ * have suggested tests is pointed at them, not at a sign-off note.
+ */
+export function followUps(key: string, s: { gaps: boolean; failing: boolean; ready: boolean; suggested: boolean; previous: boolean }): string[] {
+  const changed = `What changed since ${key} was last analysed?`;
+  if (s.gaps) return ['Write automation for the gaps', 'Which tests cover this story?'];
+  if (s.failing) return ['Why are the linked tests failing?', 'Show the latest pipeline run'];
+  if (s.ready) return ['Draft the UAT sign-off note', s.previous ? changed : 'Which tests cover this story?'];
+  return [s.suggested ? 'Which tests cover this story?' : 'Show the latest pipeline run', s.previous ? changed : s.suggested ? 'Show the latest pipeline run' : 'Which tests cover this story?'];
 }
 
 /** R24: one sentence saying that automated evidence cannot arrive for these components. */
@@ -198,11 +213,7 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[], ctx: UatContext
         : []),
       {
         kind: 'followups',
-        items: gaps
-          ? ['Write automation for the gaps', 'Which tests cover this story?']
-          : failing
-            ? ['Why are the linked tests failing?', 'Show the latest pipeline run']
-            : ['Draft the UAT sign-off note', `What changed since ${t.key} was last analysed?`],
+        items: followUps(t.key, { gaps: gaps > 0, failing: failing > 0, ready, suggested: suggested > 0, previous: !!ctx.previous }),
       },
     ],
   };

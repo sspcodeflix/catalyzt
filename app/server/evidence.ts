@@ -88,9 +88,22 @@ export function hexaEvidence(db: HorizonDb, app: string, req: { components: stri
       const steps = db.getTest(t.id)?.steps ?? [];
       return steps.length ? [`${t.id} "${t.title}" steps: ${steps.slice(0, 8).map((s, i) => `${i + 1}. ${s.description.replace(/\s+/g, ' ').slice(0, 160)}`).join(' ')}`] : [];
     });
+    // The story's saved analyses, so "what changed since it was last analysed" has an answer: each report's
+    // criterion statuses then, the statuses now, and whether Jira changed the story after the newest one.
+    const earlier = db.uatReports(key, 3);
+    const history: string[] = [];
+    if (earlier.length) {
+      const last = earlier[0];
+      const moved = cov.map((c, i) => ({ id: `AC${i + 1}`, then: last.criteria.find((x) => x.id === `AC${i + 1}`)?.status ?? 'not in that report', now: c.status })).filter((x) => x.then !== x.now);
+      history.push(
+        `Saved UAT analyses of ${key} (newest first):`,
+        ...earlier.map((r) => `- ${r.at}${r.by ? ` by ${r.by}` : ''}: ${r.criteria.map((c) => `${c.id} ${c.status}`).join(', ')}; ${plural(r.proposed, 'case')} drafted.`),
+        `Since the newest analysis (${last.at}): ${moved.length ? moved.map((x) => `${x.id} ${x.then} → ${x.now}`).join(', ') : 'no criterion changed status'}; the story was ${story.updated > last.at ? `edited in Jira on ${story.updated}, after that analysis` : `not edited in Jira since (last change ${story.updated})`}.`,
+      );
+    }
     out.push({
       title: `Hexa · ${key}`,
-      text: `${key} "${story.summary}" (${story.status}${story.fixVersion ? `, ${story.fixVersion}` : ''}), components ${story.components.join(', ') || 'none'}. Readiness per acceptance criterion, against the target build of each linked test's repository:\n${lines.join('\n')}${stepLines.length ? `\nExisting manual tests linked to this story:\n${stepLines.join('\n')}` : ''}`,
+      text: `${key} "${story.summary}" (${story.status}${story.fixVersion ? `, ${story.fixVersion}` : ''}), components ${story.components.join(', ') || 'none'}. Readiness per acceptance criterion, against the target build of each linked test's repository:\n${lines.join('\n')}${stepLines.length ? `\nExisting manual tests linked to this story:\n${stepLines.join('\n')}` : ''}${history.length ? `\n${history.join('\n')}` : ''}`,
       detail: `${key} · readiness per criterion`,
       href: `/tickets/${key}`,
     });

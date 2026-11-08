@@ -1824,6 +1824,26 @@ export function openDb(path: string) {
       return out;
     },
 
+    /** The saved UAT analyses of one story, newest first: when, by whom, each criterion's status then, cases drafted. */
+    uatReports(storyKey: string, limit = 3): { at: string; by: string | null; chatId: string; criteria: { id: string; status: string }[]; proposed: number }[] {
+      const story = getStory(storyKey);
+      if (!story) return [];
+      const rows = db
+        .prepare(
+          `SELECT a.body, a.chat_id, a.created_at, u.name AS by FROM artifacts a JOIN chats c ON c.id = a.chat_id LEFT JOIN users u ON u.id = c.created_by
+           WHERE c.application_id = ? AND a.kind = 'uat_report' AND a.body LIKE ? ESCAPE '\\' ORDER BY a.created_at DESC, a.rowid DESC LIMIT ?`,
+        )
+        .all(story.applicationId, `%"ticketKey":"${escapeLike(storyKey)}"%`, limit * 2) as Row[];
+      const out: { at: string; by: string | null; chatId: string; criteria: { id: string; status: string }[]; proposed: number }[] = [];
+      for (const r of rows) {
+        const body = json<{ ticketKey?: string; criteria?: { id?: string; status?: string }[]; proposedCases?: unknown[] }>(r.body, {});
+        if (body.ticketKey !== storyKey) continue;
+        out.push({ at: String(r.created_at), by: (r.by as string) ?? null, chatId: String(r.chat_id), criteria: (body.criteria ?? []).map((c, i) => ({ id: c.id ?? `AC${i + 1}`, status: c.status ?? 'no-test' })), proposed: body.proposedCases?.length ?? 0 });
+        if (out.length >= limit) break;
+      }
+      return out;
+    },
+
     getApproval,
     /**
      * Decides a pending approval. For an approved local action, `execute` runs inside the same

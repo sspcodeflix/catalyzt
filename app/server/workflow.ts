@@ -335,7 +335,9 @@ export async function runWorkflow(
       const coverage = db ? db.suggestTests(ticket.key, db.coverageFor(ticket.key)) : ticket.acceptanceCriteria.map(() => ({ status: 'no-test' as const, evidence: 'No test linked to this criterion' }));
       // R24: a component whose repository is scan-only can never deliver an automated result; the report says so.
       const scanOnly = db ? scanOnlyComponents(db, app, ticket.components) : [];
-      const { answer, artifact } = uatAnswer(ticket, coverage, { scanOnly });
+      // The story's previous saved analysis, so the follow-ups offer "what changed since" only when it exists.
+      const prev = db?.uatStates(app).get(ticket.key);
+      const { answer, artifact } = uatAnswer(ticket, coverage, { scanOnly, previous: prev ? { at: prev.analysedAt, by: prev.by } : null });
       const run = answer.blocks[0];
       const tools = ['jira.get_story', 'hexa.linked_tests', 'hexa.latest_results', 'uat.draft_cases'];
       (run.kind === 'run' ? run.steps : []).forEach((s, i) => {
