@@ -16,18 +16,21 @@ export const flowsChanged = () => window.dispatchEvent(new Event('flows:changed'
 /** The application's active flows, refreshed every 20 seconds and after any change, for the nav and Home. */
 export function useActiveFlows(): FlowSummary[] | null {
   const { me, loaded } = useSession();
-  const [flows, setFlows] = useState<FlowSummary[] | null>(null);
+  // Kept with the application they belong to, so another portfolio's flows are never shown after a switch.
+  const [state, setState] = useState<{ app: string; flows: FlowSummary[] } | null>(null);
+  const app = me?.app?.id ?? null;
   useEffect(() => {
-    if (!loaded || !me?.app) return;
+    if (!loaded || !app) return;
     const epoch = sessionEpoch();
     let live = true;
     const load = () =>
       http('/api/flows')
         .then((r) => (r.ok ? (r.json() as Promise<{ flows: FlowSummary[] }>) : null))
         .then((d) => {
-          if (d && live && epoch === sessionEpoch()) setFlows(d.flows);
+          if (d && live && epoch === sessionEpoch()) setState({ app, flows: d.flows });
         })
         .catch(() => undefined);
+    // A failed load keeps the last flows (the catch above leaves them); the next tick tries again.
     void load();
     const timer = setInterval(load, 20_000);
     window.addEventListener('flows:changed', load);
@@ -36,8 +39,8 @@ export function useActiveFlows(): FlowSummary[] | null {
       clearInterval(timer);
       window.removeEventListener('flows:changed', load);
     };
-  }, [loaded, me?.app?.id, me?.user.id]);
-  return flows;
+  }, [loaded, app, me?.user.id]);
+  return state && state.app === app ? state.flows : null;
 }
 
 /** How many stories across the active flows wait on the signed-in person. */

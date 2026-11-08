@@ -27,7 +27,8 @@ with sync_playwright() as p:
     b = p.chromium.launch()
     ctx = b.new_context(viewport={'width': 1360, 'height': 900})
     page = ctx.new_page()
-    page.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '404' not in m.text else None)
+    # net::ERR_FAILED comes from the outage this script simulates on purpose.
+    page.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '404' not in m.text and 'ERR_FAILED' not in m.text else None)
     page.goto(BASE + '/')
     page.wait_for_selector('.mebtn')
     sign_in(page, 'Ram Kumar')
@@ -100,6 +101,25 @@ with sync_playwright() as p:
     page.goto(BASE + '/?ask=' + 'Write%20automated%20tests%20for%20ABCD-1001')
     page.wait_for_selector('.composer textarea, textarea', timeout=10000)
     check('home: ?ask= fills the message box, not sent', 'Write automated tests for ABCD-1001' in page.locator('textarea').first.input_value())
+
+    # A failed load (server restarting, connection dropped) keeps the flows on screen and retries.
+    page.goto(BASE + '/flows')
+    page.wait_for_selector('.flowcard', timeout=15000)
+    shown = page.locator('.flowcard').count()
+    page.route('**/api/flows**', lambda route: route.abort())
+    page.evaluate("window.dispatchEvent(new Event('flows:changed'))")
+    page.wait_for_selector('.errtext', timeout=10000)
+    check('outage: the flows stay on screen when a load fails', page.locator('.flowcard').count() == shown and page.locator('.flowempty').count() == 0)
+    check('outage: says it is retrying', 'Trying again' in page.inner_text('.errtext'))
+    page.unroute('**/api/flows**')
+    page.evaluate("window.dispatchEvent(new Event('flows:changed'))")
+    page.wait_for_timeout(1500)
+    check('outage: the message goes once the server answers', page.locator('.errtext').count() == 0)
+    # Switching from Sourav to Brijesh keeps the same flows.
+    sign_in(page, 'Sourav'); page.goto(BASE + '/flows'); page.wait_for_selector('.flowcard', timeout=15000)
+    n_sourav = page.locator('.flowcard').count()
+    sign_in(page, 'Brijesh'); page.wait_for_timeout(1500)
+    check('switch: Brijesh sees the same flows after Sourav', page.locator('.flowcard').count() == n_sourav)
 
     # Phone width: no sideways scroll on the flow page.
     page.set_viewport_size({'width': 390, 'height': 844})

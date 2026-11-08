@@ -254,6 +254,36 @@ function ChatView({ chatId }: { chatId: string }) {
               renderMessage(row.m)
             ),
           )}
+          {(() => {
+            // A question with no saved answer (the run stopped before it could save one) says so, never a blank page.
+            const last = chat?.messages[chat.messages.length - 1];
+            if (!chat || !last || last.role !== 'user' || isAnswering(chat)) return null;
+            return (
+              <div className="callout noanswer" role="status">
+                <Icon name="warn" small />
+                <span>No answer was saved for this question: the run stopped before it finished.</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={() =>
+                      send({
+                        text: last.text,
+                        agent: chat.agent,
+                        scope: chat.scope,
+                        testType: last.testType ?? chat.testType,
+                        testTypeSource: last.testType ? 'rules' : null,
+                        tickets: last.tickets ?? [],
+                        components: last.components ?? [],
+                      })
+                    }
+                  >
+                    Ask again
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
         </div>
         {!atBottom && chat && (

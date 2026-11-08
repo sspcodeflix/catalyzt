@@ -2,12 +2,12 @@
  * Test flows (docs/FLOWS.md): a UAT flow over a story moves through Analyse → Review cases → Run tests
  * → Sign off, with every step derived from the records, and the same view for everyone on the team.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { startApi, type TestApi } from './api-harness';
 import type { HorizonDb } from './db';
 import { fixtureDb, seedRefundTests } from './fixture';
-import type { FlowView } from './flows';
+import { analyseStory, type FlowView } from './flows';
 
 let db: HorizonDb;
 let api: TestApi;
@@ -181,6 +181,33 @@ describe('a flow\'s team thread', () => {
     expect(recents).not.toContain(f.threadId);
     // Another application cannot read or write it.
     expect((await api.as('u-nabih', 'IBGM').get(`/api/chats/${f.threadId}`)).status).toBe(404);
+  });
+});
+
+describe('a failed background analysis', () => {
+  it('leaves one chat, linked to the flow, with the failure as its answer, out of Recents; a retry reuses it', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
+    // Let the queued job finish first, then fail the next run on purpose.
+    for (let i = 0; i < 40 && !(db.raw.prepare("SELECT 1 FROM jobs WHERE kind = 'flow.analyse' AND status = 'done'").get()); i++) await new Promise((r) => setTimeout(r, 50));
+    const spy = vi.spyOn(db, 'suggestTests').mockImplementation(() => {
+      throw new Error('database unavailable');
+    });
+    await expect(analyseStory(db, null, id, 'ABCD-1002')).rejects.toThrow();
+    await expect(analyseStory(db, null, id, 'ABCD-1002')).rejects.toThrow();
+    spy.mockRestore();
+    const chatId = `fa-${id}-ABCD-1002`;
+    expect(db.raw.prepare('SELECT chat_id FROM flow_items WHERE flow_id = ?').get(id)).toEqual({ chat_id: chatId });
+    const chat = ((await (await sourav.get(`/api/chats/${chatId}`)).json()) as { chat: { messages: { role: string; status?: string; blocks?: { kind: string; text?: string }[] }[] } }).chat;
+    const answers = chat.messages.filter((m) => m.role === 'assistant');
+    // Every question in the chat has an answer; the failed ones say why.
+    expect(chat.messages.filter((m) => m.role === 'user')).toHaveLength(answers.length);
+    expect(answers.at(-1)).toMatchObject({ status: 'error' });
+    expect(answers.at(-1)!.blocks!.find((b) => b.kind === 'prose')?.text).toMatch(/The analysis failed: .*database unavailable/);
+    const recents = ((await (await sourav.get('/api/chats')).json()) as { chats: { id: string }[] }).chats.map((c) => c.id);
+    expect(recents).not.toContain(chatId);
+    // Only one chat for the story, however many attempts.
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM chats WHERE id LIKE 'fa-%'").get()).toEqual({ n: 1 });
   });
 });
 

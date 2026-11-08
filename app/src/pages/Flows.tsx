@@ -88,16 +88,30 @@ export function Flows() {
   const [flows, setFlows] = useState<FlowSummary[] | null>(null);
   const [error, setError] = useState('');
   const { me, loaded } = useSession();
+  // Another application's flows never stay on screen after a switch.
+  useEffect(() => setFlows(null), [me?.app?.id]);
   useEffect(() => {
     if (!loaded || !me?.app) return;
     const epoch = sessionEpoch();
+    let live = true;
+    // A failed load keeps the flows already on screen and tries again: a server restart or a dropped
+    // connection must never look like the flows are gone.
     const load = () =>
       api<{ flows: FlowSummary[] }>('/api/flows?all=1')
-        .then((d) => epoch === sessionEpoch() && setFlows(d.flows))
-        .catch((e) => setError((e as Error).message));
+        .then((d) => {
+          if (!live || epoch !== sessionEpoch()) return;
+          setFlows(d.flows);
+          setError('');
+        })
+        .catch((e) => live && setError(`Could not load the flows right now (${(e as Error).message}). Trying again…`));
     void load();
+    const timer = setInterval(load, 15_000);
     window.addEventListener('flows:changed', load);
-    return () => window.removeEventListener('flows:changed', load);
+    return () => {
+      live = false;
+      clearInterval(timer);
+      window.removeEventListener('flows:changed', load);
+    };
   }, [loaded, me?.app?.id, me?.user.id]);
   const active = (flows ?? []).filter((f) => f.status === 'active' || f.status === 'paused');
   const past = (flows ?? []).filter((f) => f.status === 'done' || f.status === 'cancelled');
@@ -116,6 +130,7 @@ export function Flows() {
               {error}
             </p>
           )}
+          {!flows && !error && <p className="muted">Loading the flows…</p>}
           {flows && active.length === 0 && (
             <section className="card flowempty">
               <b>No flow is running.</b>

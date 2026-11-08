@@ -14,7 +14,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { answerBlocks, applyEvent, initialAnswer } from '../src/lib/answerReducer';
+import { answerBlocks, applyEvent, finishAnswer, initialAnswer } from '../src/lib/answerReducer';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import type { Block } from '../src/lib/types';
 import type { AppRecord, CriterionCoverage, HorizonDb, StoredStory } from './db';
@@ -574,7 +574,10 @@ export async function analyseStory(db: HorizonDb, cfg: DeepSeekConfig | null, fl
   if (!story) return { skipped: true };
   const app = db.appsFor(flow.owner.id).find((a) => a.id === flow.app);
   if (!app) throw new Error(`${flow.owner.name} is no longer a member of ${flow.app}.`);
-  const chatId = randomUUID();
+  // One chat per story of a flow, linked to the flow before anything runs: a retry asks again in the same
+  // chat, and the chat is the flow's (never in anyone's Recents), even when the analysis fails.
+  const chatId = `fa-${flowId}-${key}`.slice(0, 64);
+  db.raw.prepare('UPDATE flow_items SET chat_id = ? WHERE flow_id = ? AND story_key = ?').run(chatId, flowId, key);
   const messageId = randomUUID();
   const answerId = randomUUID();
   const text = `Is ${key} ready for UAT?`;
@@ -603,10 +606,20 @@ export async function analyseStory(db: HorizonDb, cfg: DeepSeekConfig | null, fl
   };
   // The readiness check needs no model: routing by rules keeps a batch of stories cheap and predictable.
   void cfg;
-  const { workflowRunId } = await runWorkflow(req, null, emit, new AbortController().signal, { db, userId: flow.owner.id, app: app.id });
-  if (answer.status !== 'done') throw new Error('The UAT analyst did not finish.');
+  let workflowRunId: string | null = null;
+  try {
+    workflowRunId = (await runWorkflow(req, null, emit, new AbortController().signal, { db, userId: flow.owner.id, app: app.id })).workflowRunId;
+    if (answer.status !== 'done') throw new Error('The UAT analyst did not finish.');
+  } catch (e) {
+    // The question is already in the chat: save the failure as its answer, so the chat is never left blank.
+    const message = `The analysis failed: ${(e as Error).message}. The flow shows "Analyse again" for ${key}.`;
+    if (db.getChat(chatId)) {
+      const failed = { ...finishAnswer(answer, false, message), status: 'error' as const, text: message };
+      db.saveAnswer({ app: app.id, chatId, answerId, userMessageId: messageId, workflowRunId, userId: flow.owner.id, status: failed.status, intent: failed.intent, blocks: answerBlocks(failed), citations: [], artifact: null });
+    }
+    throw e;
+  }
   db.saveAnswer({ app: app.id, chatId, answerId, userMessageId: messageId, workflowRunId, userId: flow.owner.id, status: answer.status, intent: answer.intent, blocks: answerBlocks(answer), citations: answer.citations, artifact: answer.artifact ?? null });
-  db.raw.prepare('UPDATE flow_items SET chat_id = ? WHERE flow_id = ? AND story_key = ?').run(chatId, flowId, key);
   const report = db.uatStates(app.id).get(key);
   event(db, flowId, null, 'analysed', `UAT analyst checked ${key}: ${report ? `${report.covered} of ${report.total} criteria covered` : 'report saved'}.`, key);
   return { chatId };
