@@ -56,8 +56,24 @@ export function stepsFor(criterion: string): string[] {
 /** A story is a UAT candidate once Jira says it is ready for UAT (or further along); earlier states are flagged (R06). */
 export const isUatCandidate = (status: string) => /\b(uat|done|release|accept)/i.test(status);
 
+/** What the server knows about where evidence can come from. */
+export interface UatContext {
+  /** Components of the story whose repository is scanned through GitHub only, with no clone, no CI target and no recorded run (R24). */
+  scanOnly?: { component: string; repo: string }[];
+}
+
+/** R24: one sentence saying that automated evidence cannot arrive for these components. */
+export function scanOnlyCaveat(scanOnly: UatContext['scanOnly']): string {
+  if (!scanOnly?.length) return '';
+  const names = scanOnly.map((s) => `${s.component} (${s.repo})`);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const one = scanOnly.length === 1;
+  return `${list} ${one ? 'is' : 'are'} scanned through GitHub only: no clone, no CI target and no recorded pipeline run, so no automated test result can arrive for ${one ? 'it' : 'them'} here and its criteria cannot count as covered by automation. Sign-off rests on manual UAT results unless that repository's CI pushes results to Catalyzt.`;
+}
+
 /** What a UAT analysis of a ticket produces, given what Hexa knows about each criterion. */
-export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artifact: UatArtifact; covered: number; gaps: number; notRun: number; failing: number } {
+export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[], ctx: UatContext = {}): { artifact: UatArtifact; covered: number; gaps: number; notRun: number; failing: number } {
+  const caveat = scanOnlyCaveat(ctx.scanOnly);
   const criteria = t.acceptanceCriteria.map((text, i) => ({
     id: `AC${i + 1}`,
     text,
@@ -74,7 +90,7 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
       id: `uat-${t.key.toLowerCase()}`,
       kind: 'uat',
       title: `UAT readiness · ${t.key}`,
-      subtitle: `${t.summary}${t.fixVersion ? ` · ${t.fixVersion}` : ''} · ${criteria.length} acceptance criteria${isUatCandidate(t.status) ? '' : ` · ${t.status} in Jira, not a UAT candidate yet`}`,
+      subtitle: `${t.summary}${t.fixVersion ? ` · ${t.fixVersion}` : ''} · ${criteria.length} acceptance criteria${isUatCandidate(t.status) ? '' : ` · ${t.status} in Jira, not a UAT candidate yet`}${caveat ? ' · scan-only repository, no automated evidence' : ''}`,
       cardLabel: 'UAT report',
       ticketKey: t.key,
       criteria,
@@ -86,7 +102,7 @@ export function buildUatAnalysis(t: Ticket, coverage: CriterionInput[]): { artif
         criterion: c.id,
         steps: stepsFor(c.text),
       })),
-      note: `Acceptance criteria are read from ${t.key} in Jira. Coverage comes from the tests linked to each criterion in Hexa, read against the latest merge-commit run of each test's repository (named in the evidence)${t.requirements.length ? `; requirements: ${t.requirements.join(', ')}` : ''}. A criterion counts as covered only when a linked automated test passed in that run; an earlier pass, a skipped test or a test missing from the run does not count.`,
+      note: `Acceptance criteria are read from ${t.key} in Jira. Coverage comes from the tests linked to each criterion in Hexa, read against the latest merge-commit run of each test's repository (named in the evidence)${t.requirements.length ? `; requirements: ${t.requirements.join(', ')}` : ''}. A criterion counts as covered only when a linked automated test passed in that run; an earlier pass, a skipped test or a test missing from the run does not count.${caveat ? ` ${caveat}` : ''}`,
     },
   };
 }
@@ -99,8 +115,9 @@ const joinParts = (xs: string[]) => {
 };
 
 /** The UAT analyst's answer for a ticket: run summary, prose, report, approval for the gaps, follow-ups. */
-export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: AssistantMessage; artifact: UatArtifact } {
-  const { artifact, covered, gaps, notRun, failing } = buildUatAnalysis(t, coverage);
+export function uatAnswer(t: Ticket, coverage: CriterionInput[], ctx: UatContext = {}): { answer: AssistantMessage; artifact: UatArtifact } {
+  const { artifact, covered, gaps, notRun, failing } = buildUatAnalysis(t, coverage, ctx);
+  const caveat = scanOnlyCaveat(ctx.scanOnly);
   const n = artifact.criteria.length;
   const parts: string[] = [];
   if (covered) parts.push(`${plural(covered, 'is', 'are')} covered by tests that passed in the latest pipeline run [2]`);
@@ -115,7 +132,8 @@ export function uatAnswer(t: Ticket, coverage: CriterionInput[]): { answer: Assi
         gaps ? `I drafted ${plural(gaps, 'UAT test case', 'UAT test cases')} for the gaps.` : failing ? 'Fix the failing tests before sign-off.' : 'Run the remaining tests before sign-off.'
       }`;
   // R06: a story that Jira still has in progress is not a UAT candidate, whatever the coverage says.
-  const summary = candidate ? core : `\`${t.key}\` is still ${t.status} in Jira [1], so it is not a UAT candidate yet. ${core}`;
+  const flagged = candidate ? core : `\`${t.key}\` is still ${t.status} in Jira [1], so it is not a UAT candidate yet. ${core}`;
+  const summary = caveat ? `${flagged}\n\n${caveat}` : flagged;
 
   const builds = [...new Map(coverage.flatMap((c) => (c.builds ?? []).map((b) => [b.label, b] as const))).values()];
   const linked = artifact.criteria.filter((c) => c.status !== 'no-test').length;

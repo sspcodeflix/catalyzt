@@ -612,6 +612,28 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
   return { source: getSource(db, app, id)!, notice };
 }
 
+/**
+ * The components among `names` whose repository can deliver no automated test result (R24): it is
+ * scanned through GitHub only (an App Context repository source with no local clone, so no local
+ * CI target can run it) and no pipeline run has ever been recorded for it. A repository Catalyzt has
+ * no source for, or one with any recorded run, is not claimed either way.
+ */
+export function scanOnlyComponents(db: HorizonDb, app: string, names: string[]): { component: string; repo: string }[] {
+  const out: { component: string; repo: string }[] = [];
+  const comp = db.raw.prepare('SELECT name, repo FROM components WHERE application_id = ? AND LOWER(name) = LOWER(?)');
+  const src = db.raw.prepare("SELECT location FROM context_sources WHERE application_id = ? AND type = 'Repository' AND (subtitle = ? OR subtitle LIKE ? ESCAPE '\\') LIMIT 1");
+  const ran = db.raw.prepare('SELECT 1 FROM test_runs WHERE application_id = ? AND repo = ? LIMIT 1');
+  for (const name of new Set(names)) {
+    const c = comp.get(app, name) as { name: string; repo: string | null } | undefined;
+    if (!c?.repo) continue;
+    const head = `GitHub · ${c.repo}`;
+    const s = src.get(app, head, `${head.replace(/[\\%_]/g, (m) => `\\${m}`)} · %`) as { location: string | null } | undefined;
+    if (!s || s.location || ran.get(app, c.repo)) continue;
+    out.push({ component: c.name, repo: c.repo });
+  }
+  return out;
+}
+
 /* ---------- Retrieval ---------- */
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);

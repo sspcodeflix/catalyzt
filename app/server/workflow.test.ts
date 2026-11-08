@@ -4,6 +4,8 @@ import type { Ticket } from '../src/lib/types';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import type { HorizonDb } from './db';
 import type { DeepSeekConfig } from './deepseek';
+import { seedContext } from './context';
+import { seedWorkspace } from './db';
 import { fixtureDb, fixtureWithDocs, seedRefundTests } from './fixture';
 import { runWorkflow } from './workflow';
 
@@ -165,6 +167,33 @@ describe('sub-agents', () => {
     expect(artifact.kind === 'uat' && artifact.criteria.map((c) => c.status)).toEqual(['passing', 'passing', 'not-run', 'no-test']);
     expect(artifact.kind === 'uat' && artifact.proposedCases).toHaveLength(1);
     expect(db.listTests('ABCD', { kind: 'proposed' }).rows[0].links).toEqual(expect.arrayContaining([{ type: 'criterion', ref: 'ABCD-1001#AC4' }]));
+  });
+
+  it('R24: the UAT answer for a story on a scan-only repository says automated evidence cannot arrive', async () => {
+    const { db, ws } = fixtureWithDocs();
+    const ws2 = {
+      ...ws,
+      teams: ws.teams.map((t) =>
+        t.id === 'ABCD'
+          ? {
+              ...t,
+              repos: [...t.repos, { name: 'portal', github: 'acme/portal', clone: false, languages: ['TypeScript'], testFrameworks: ['Mocha'] }],
+              components: [...t.components, { name: 'customer-portal', manager: 'u-sourav', workspace: 'storefront', repo: 'portal', path: '.', language: 'TypeScript', tests: 'Mocha' }],
+            }
+          : t,
+      ),
+    };
+    seedWorkspace(db, ws2);
+    seedContext(db, ws2);
+    const portal = { ...ticketOf(db, 'ABCD-1002'), components: ['customer-portal'] };
+    const { events } = await run(req(db, 'Is ABCD-1002 ready for UAT?', { syncedTickets: [portal] }), null, db, true);
+    const a = events.find((e) => e.type === 'answer') as Extract<WorkflowEvent, { type: 'answer' }>;
+    const prose = a.blocks.find((b) => b.kind === 'prose');
+    expect(prose?.kind === 'prose' && prose.text).toContain('customer-portal (acme/portal) is scanned through GitHub only');
+    // The cloned repository's story carries no such caveat.
+    const other = await run(req(db, 'Is ABCD-1001 ready for UAT?'), null, db, true);
+    const b = other.events.find((e) => e.type === 'answer') as Extract<WorkflowEvent, { type: 'answer' }>;
+    expect(JSON.stringify(b.blocks)).not.toContain('scanned through GitHub only');
   });
 
   it('Clarifier asks when the router is unsure', async () => {

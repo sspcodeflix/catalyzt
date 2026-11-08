@@ -7,7 +7,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { addConfluence, addUploads, chunkDocs, collectDocs, ensureFts, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, seedContext, syncSource, testQuestion } from './context';
+import { addConfluence, addUploads, chunkDocs, collectDocs, ensureFts, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, scanOnlyComponents, seedContext, syncSource, testQuestion } from './context';
+import { seedWorkspace } from './db';
 import { fixtureWithDocs, REFUNDS_DOC, SHOP_README } from './fixture';
 import { decide, getItem, listItems } from './huddle';
 import { embedPending, embeddingCounts, fakeModels, RetrievalService, type RetrievalModels } from './retrieval';
@@ -61,6 +62,31 @@ describe('passages', () => {
     const r = syncSource(db, 'ABCD', id);
     expect(r.source.content).toBe(`${r.source.chunks} passages from 2 documentation files and 5 build files`);
     expect(listChunks(db, 'ABCD', id).some((c) => c.locator === '.travis.yml ¶1' && c.text.includes('mvn -B test'))).toBe(true);
+  });
+});
+
+describe('scan-only repositories (R24)', () => {
+  it('names a component whose repository has no clone and no recorded run, and stops once a run arrives', () => {
+    const { db, ws } = fixtureWithDocs();
+    const ws2 = {
+      ...ws,
+      teams: ws.teams.map((t) =>
+        t.id === 'ABCD'
+          ? {
+              ...t,
+              repos: [...t.repos, { name: 'portal', github: 'acme/portal', clone: false, languages: ['TypeScript'], testFrameworks: ['Mocha'], note: 'Scanned through GitHub only; not cloned.' }],
+              components: [...t.components, { name: 'customer-portal', manager: 'u-sourav', workspace: 'storefront', repo: 'portal', path: '.', language: 'TypeScript', tests: 'Mocha' }],
+            }
+          : t,
+      ),
+    };
+    seedWorkspace(db, ws2);
+    seedContext(db, ws2);
+    expect(scanOnlyComponents(db, 'ABCD', ['customer-portal', 'checkoutservice', 'nonexistent'])).toEqual([{ component: 'customer-portal', repo: 'acme/portal' }]);
+    db.raw
+      .prepare("INSERT INTO test_runs (id, application_id, source, repo, status, total, passed, failed, skipped, ingested_at) VALUES ('run-portal', 'ABCD', 'webhook', 'acme/portal', 'passed', 1, 1, 0, 0, '2026-11-08T00:00:00Z')")
+      .run();
+    expect(scanOnlyComponents(db, 'ABCD', ['customer-portal'])).toEqual([]);
   });
 });
 

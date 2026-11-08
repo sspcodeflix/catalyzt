@@ -4,7 +4,42 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { isUatCandidate, shortTitle, stepsFor } from './uat';
+import type { Ticket } from './types';
+import { isUatCandidate, shortTitle, stepsFor, uatAnswer } from './uat';
+
+describe('scan-only repository caveat (R24)', () => {
+  const t: Ticket = {
+    key: 'IBGM-1015',
+    summary: 'Customer login on the Juice Shop portal',
+    type: 'Story',
+    status: 'Ready for UAT',
+    fixVersion: '',
+    components: ['customer-portal'],
+    assignee: '',
+    updated: '2026-11-08T00:00:00Z',
+    description: '',
+    acceptanceCriteria: ['Login returns 200', 'A wrong password returns 401'],
+    requirements: [],
+    uat: { state: 'not-analysed', covered: 0, total: 2 },
+  };
+  const coverage = [
+    { status: 'not-run' as const, evidence: 'Manual test, no result yet' },
+    { status: 'no-test' as const, evidence: 'No test linked to this criterion' },
+  ];
+  it('says automated evidence cannot arrive, in the prose, the report subtitle and its note', () => {
+    const { answer, artifact } = uatAnswer(t, coverage, { scanOnly: [{ component: 'customer-portal', repo: 'juice-shop/juice-shop' }] });
+    const prose = answer.blocks.find((b) => b.kind === 'prose');
+    expect(prose?.kind === 'prose' && prose.text).toMatch(/customer-portal \(juice-shop\/juice-shop\) is scanned through GitHub only: no clone, no CI target and no recorded pipeline run, so no automated test result can arrive/);
+    expect(artifact.subtitle).toContain('scan-only repository, no automated evidence');
+    expect(artifact.note).toContain('scanned through GitHub only');
+  });
+  it('says nothing when every repository can deliver results', () => {
+    const { answer, artifact } = uatAnswer(t, coverage);
+    const prose = answer.blocks.find((b) => b.kind === 'prose');
+    expect(prose?.kind === 'prose' && prose.text).not.toMatch(/scanned through GitHub/);
+    expect(artifact.subtitle).not.toContain('scan-only');
+  });
+});
 
 describe('proposed UAT cases', () => {
   it('keeps a short criterion as the title and cuts a long one at a word', () => {
