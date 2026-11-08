@@ -839,4 +839,58 @@ export const MIGRATIONS: string[] = [
     INSERT INTO source_chunks_fts(rowid, text, locator) VALUES (new.rowid, new.text, new.locator);
   END;
   `,
+  // 18: a durable job/outbox record (criterion 6). One row per operation identity (`key`, the
+  //     idempotency key): enqueueing the same key again never makes a second job. A worker claims a
+  //     job with a lease; a lease that expires (the process died) is recovered at the next start, and
+  //     a failure is retried with backoff until max_attempts. `rerun` remembers a request that arrived
+  //     while the job was running, so it runs once more instead of being lost or duplicated.
+  `
+  CREATE TABLE jobs (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    application_id TEXT REFERENCES applications(id),
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    next_attempt_at TEXT NOT NULL,
+    lease_owner TEXT,
+    lease_until TEXT,
+    rerun INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    result TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+  );
+  CREATE INDEX jobs_due ON jobs (status, next_attempt_at);
+  CREATE INDEX jobs_kind ON jobs (kind, status);
+  `,
+  // 19: stable cursors for growing lists (hardening: conversation and Huddle growth). Recent chats page
+  //     by (updated_at, id), Huddle items by (created_at, id); a chat's messages already page by seq.
+  `
+  CREATE INDEX IF NOT EXISTS chats_recent ON chats (application_id, created_by, updated_at, id);
+  CREATE INDEX IF NOT EXISTS huddle_items_page ON huddle_items (application_id, created_at, id);
+  `,
+  // 20: retention keeps usage totals. Model-call detail older than the retention window is folded into
+  //     one row per application, day, agent, model, person, purpose and status before it is removed
+  //     (scripts/retention.ts), and usage totals read both.
+  `
+  CREATE TABLE model_call_daily (
+    application_id TEXT,
+    day TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    model TEXT NOT NULL,
+    user_id TEXT REFERENCES users(id),
+    purpose TEXT NOT NULL,
+    status TEXT NOT NULL,
+    calls INTEGER NOT NULL,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    unreported INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE UNIQUE INDEX model_call_daily_key ON model_call_daily (COALESCE(application_id, ''), day, agent, model, COALESCE(user_id, ''), purpose, status);
+  `,
 ];

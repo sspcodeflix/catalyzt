@@ -15,10 +15,11 @@
  * Nothing here talks to the database except the embedding job, which embeds passages that have
  * no vector for the configured model, in batches, outside request transactions.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import type { HorizonDb } from './db';
+import { claim, complete, enqueue, fail, getJob, heartbeat, recoverExpired } from './jobs';
 
 /* ---------- Model interfaces ---------- */
 
@@ -506,7 +507,7 @@ export function forgetCounts(db: HorizonDb) {
  * embedded is not written with the old vector (F25); the next pass embeds the new text. Returns how
  * many were embedded. Safe to run again at any time.
  */
-export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { app?: string; log?: (line: string) => void; signal?: AbortSignal } = {}): Promise<{ embedded: number; failed: number }> {
+export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { app?: string; log?: (line: string) => void; signal?: AbortSignal; onBatch?: () => void } = {}): Promise<{ embedded: number; failed: number }> {
   backfillTextSha(db);
   const pick = db.raw.prepare(
     `SELECT c.id, c.text, c.text_sha FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
@@ -547,6 +548,7 @@ export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { ap
     }
     const written = store(rows, vectors, new Date().toISOString());
     embedded += written;
+    opts.onBatch?.();
     // Nothing written twice in a row (passages keep changing under us): stop; the next schedule() continues.
     idlePasses = written ? 0 : idlePasses + 1;
     if (idlePasses >= 3) break;
@@ -567,16 +569,26 @@ export interface RetrievalStatus {
   embedded: number;
   pending: number;
   error: string | null;
+  /** The durable embedding job (jobs table), when there is one. */
+  job?: { status: string; attempts: number; lastError: string | null; updatedAt: string } | null;
 }
 
+/** The durable job behind the embedding work of one embedding model (server/jobs.ts). */
+export const embedJobKey = (model: string) => `embed:${model}`;
+const EMBED_LEASE_MS = 2 * 60_000;
+
 /**
- * Owns the models and the background embedding job for one server. `schedule()` coalesces: one
- * run at a time, and a call during a run queues exactly one more.
+ * Owns the models and the background embedding job for one server. The work is a durable job
+ * (`jobs` table, key `embed:<model>`), so it is visible, survives a restart (an expired lease is
+ * recovered and the job runs again) and is never duplicated: `schedule()` enqueues idempotently and
+ * coalesces; one run at a time in this process, and a call during a run queues exactly one more.
  */
 export class RetrievalService {
   private running: Promise<void> | null = null;
   private again = false;
   private lastError: string | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly owner = `embed-${process.pid}-${randomUUID().slice(0, 8)}`;
 
   constructor(
     readonly models: RetrievalModels,
@@ -586,7 +598,14 @@ export class RetrievalService {
 
   /** Embeds whatever is pending, in the background. Resolves when this and any queued run finished. */
   schedule(): Promise<void> {
-    if (!this.models.embedder) return Promise.resolve();
+    const embedder = this.models.embedder;
+    if (!embedder) return Promise.resolve();
+    const key = embedJobKey(embedder.id);
+    try {
+      enqueue(this.getDb(), { key, kind: 'embed', payload: { model: embedder.id }, rearm: true, maxAttempts: 5 });
+    } catch (e) {
+      this.log(`[retrieval] could not record the embedding job: ${(e as Error).message}`);
+    }
     if (this.running) {
       this.again = true;
       return this.running;
@@ -594,9 +613,23 @@ export class RetrievalService {
     this.running = (async () => {
       do {
         this.again = false;
+        const db = this.getDb();
         try {
-          const r = await embedPending(this.getDb(), this.models.embedder!, { log: this.log });
-          this.lastError = r.failed ? 'The embedding model could not run; retrieval is keyword-only until it does.' : null;
+          recoverExpired(db);
+          const next = () => claim(db, { kinds: ['embed'], keys: [key], owner: this.owner, leaseMs: EMBED_LEASE_MS });
+          for (let job = next(); job; job = next()) {
+            const id = job.id;
+            try {
+              const r = await embedPending(db, embedder, { log: this.log, onBatch: () => heartbeat(db, id, this.owner, EMBED_LEASE_MS) });
+              this.lastError = r.failed ? 'The embedding model could not run; retrieval is keyword-only until it does.' : null;
+              if (this.lastError) this.afterFailure(fail(db, id, this.owner, this.lastError), key);
+              else complete(db, id, this.owner, r);
+            } catch (e) {
+              this.lastError = (e as Error).message;
+              this.log(`[retrieval] embedding job failed: ${this.lastError}`);
+              this.afterFailure(fail(db, id, this.owner, this.lastError), key);
+            }
+          }
         } catch (e) {
           this.lastError = (e as Error).message;
           this.log(`[retrieval] embedding job failed: ${this.lastError}`);
@@ -605,6 +638,26 @@ export class RetrievalService {
       this.running = null;
     })();
     return this.running;
+  }
+
+  /** A failed run is retried after the job's backoff; a timer wakes the worker then (it never keeps the process alive). */
+  private afterFailure(status: string | null, key: string) {
+    if (status !== 'pending' || this.retryTimer) return;
+    const job = getJob(this.getDb(), key);
+    if (!job) return;
+    const wait = Math.max(0, Date.parse(job.nextAttemptAt) - Date.now());
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.schedule();
+    }, wait);
+    this.retryTimer.unref?.();
+  }
+
+  /** The durable job's state for the status line: pending, running, done or failed, with attempts and the last error. */
+  job(db: HorizonDb) {
+    const e = this.models.embedder;
+    const j = e ? getJob(db, embedJobKey(e.id)) : null;
+    return j ? { status: j.status, attempts: j.attempts, lastError: j.lastError, updatedAt: j.updatedAt } : null;
   }
 
   /** For tests and shutdown: resolves when no job is running. */
@@ -629,6 +682,7 @@ export class RetrievalService {
       embedded: counts.embedded,
       pending: counts.pending,
       error: loader?.error ?? this.lastError,
+      job: this.job(db),
     };
   }
 }
