@@ -16,7 +16,7 @@ import type { Workspace } from './workspace';
 export const STATUSES = ['To Do', 'In Progress', 'Ready for UAT', 'Done'] as const;
 export type StoryStatus = (typeof STATUSES)[number];
 export const STORY_TYPES = ['Story', 'Bug', 'Task'] as const;
-export type Role = 'member' | 'app_owner' | 'component_manager' | 'security_champion';
+export type Role = 'member' | 'app_owner' | 'component_manager' | 'security_champion' | 'sre_lead' | 'product_owner' | 'uat_tester' | 'automation_engineer';
 
 export interface JiraFilter {
   project: string;
@@ -1910,8 +1910,16 @@ export function seedWorkspace(h: HorizonDb, ws: Workspace) {
       if (ws.teams.some((x) => x.id === p.app)) {
         db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(p.id, p.app, 'member');
         if (p.role !== 'member') db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(p.id, p.app, p.role);
+        for (const r of p.roles ?? []) db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(p.id, p.app, r);
       }
     }
+    // Roles a team's team.json gives its people (sre_lead, security_champion, product_owner), for any application.
+    for (const team of ws.teams)
+      for (const r of team.roles ?? [])
+        if (ws.people.some((p) => p.id === r.user)) {
+          db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(r.user, team.id, 'member');
+          db.prepare('INSERT OR IGNORE INTO memberships (user_id, application_id, role) VALUES (?, ?, ?)').run(r.user, team.id, r.role);
+        }
     for (const team of ws.teams) {
       for (const c of team.components) {
         const repo = team.repos.find((r) => r.name === c.repo);

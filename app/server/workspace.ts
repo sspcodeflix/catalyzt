@@ -12,8 +12,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-export type WorkspaceRole = 'app_owner' | 'component_manager' | 'member';
-const ROLES: WorkspaceRole[] = ['app_owner', 'component_manager', 'member'];
+export type WorkspaceRole = 'app_owner' | 'component_manager' | 'member' | 'security_champion' | 'sre_lead' | 'product_owner' | 'uat_tester' | 'automation_engineer';
+const ROLES: WorkspaceRole[] = ['app_owner', 'component_manager', 'member', 'security_champion', 'sre_lead', 'product_owner', 'uat_tester', 'automation_engineer'];
 
 export interface WorkspacePerson {
   id: string;
@@ -22,6 +22,8 @@ export interface WorkspacePerson {
   email: string;
   app: string;
   role: WorkspaceRole;
+  /** Further roles in the same application (personas.json "roles"), e.g. ["sre_lead"]. */
+  roles?: WorkspaceRole[];
 }
 
 export interface WorkspaceRepo {
@@ -74,6 +76,8 @@ export interface WorkspaceTeam {
   /** Path of the Octane CSV, if present. */
   manualTestsCsv: string | null;
   dir: string;
+  /** Further roles in this application from team.json, e.g. {"sre_lead": ["u-karim"], "security_champion": ["u-sayeer"]}. */
+  roles?: { user: string; role: WorkspaceRole }[];
 }
 
 export interface Workspace {
@@ -120,6 +124,11 @@ export function loadWorkspace(root: string): Workspace | null {
       email: str(r.email, `people[${i}].email`),
       app: str(r.app, `people[${i}].app`),
       role: role as WorkspaceRole,
+      roles: strs(r.roles).filter((x): x is WorkspaceRole => {
+        if (ROLES.includes(x as WorkspaceRole)) return true;
+        warnings.push(`people[${i}].roles: "${x}" is not one of ${ROLES.join(', ')}; ignored`);
+        return false;
+      }),
     };
   });
   const ids = new Set<string>();
@@ -201,6 +210,20 @@ export function loadWorkspace(root: string): Workspace | null {
       });
     }
 
+    // Optional team roles (Huddle deciders by domain): {"sre_lead": ["u-…"], "security_champion": [...], "product_owner": [...]}.
+    const teamRoles: { user: string; role: WorkspaceRole }[] = [];
+    const rawRoles = t.roles && typeof t.roles === 'object' && !Array.isArray(t.roles) ? (t.roles as Record<string, unknown>) : {};
+    for (const [role, users] of Object.entries(rawRoles)) {
+      if (!ROLES.includes(role as WorkspaceRole) || role === 'app_owner') {
+        warnings.push(`${id}: roles."${role}" is not a role a team can give; ignored`);
+        continue;
+      }
+      for (const u of strs(users)) {
+        if (!ids.has(u)) warnings.push(`${id}: roles.${role} names unknown person "${u}"`);
+        else teamRoles.push({ user: u, role: role as WorkspaceRole });
+      }
+    }
+
     const csv = join(dir, 'manual-tests.csv');
     teams.push({
       id,
@@ -214,6 +237,7 @@ export function loadWorkspace(root: string): Workspace | null {
       stories,
       manualTestsCsv: existsSync(csv) ? csv : null,
       dir,
+      roles: teamRoles,
     });
   }
   if (teams.length === 0) throw new WorkspaceError(`${root} has no <APP>/team.json folders`);

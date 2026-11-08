@@ -17,8 +17,8 @@ interface SidebarProps {
 
 const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? 'on' : undefined);
 
-const ROLE_LABEL: Record<string, string> = { app_owner: 'App owner', component_manager: 'Component manager', security_champion: 'Security champion', member: 'Member' };
-const roleOf = (roles: string[]) => ROLE_LABEL[roles.find((r) => r !== 'member') ?? 'member'];
+const ROLE_LABEL: Record<string, string> = { app_owner: 'App owner', component_manager: 'Component manager', security_champion: 'Security champion', sre_lead: 'SRE lead', product_owner: 'Product owner', uat_tester: 'UAT tester', automation_engineer: 'Automation engineer', member: 'Member' };
+const roleOf = (roles: string[]) => ROLE_LABEL[roles.find((r) => r !== 'member') ?? 'member'] ?? 'Member';
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const session = useSession();
