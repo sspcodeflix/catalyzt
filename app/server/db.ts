@@ -246,6 +246,8 @@ function migrate(db: Database.Database) {
 
 /** Component ids are "<application>/<name>", so two applications can both have a "frontend". */
 export const componentId = (app: string, name: string) => `${app}/${name}`;
+/** Requirement rows are "<application>/<external id>" for the same reason (F23). */
+export const requirementUid = (app: string, externalId: string) => `${app}/${externalId}`;
 
 /** A write that would cross an application or chat boundary. The API turns it into a 404 or 409. */
 export class OwnershipError extends Error {}
@@ -289,7 +291,7 @@ export function openDb(path: string) {
   const q = {
     criteria: db.prepare('SELECT text FROM story_criteria WHERE story_key = ? ORDER BY seq'),
     components: db.prepare('SELECT c.name FROM story_components sc JOIN components c ON c.id = sc.component_id WHERE sc.story_key = ? ORDER BY c.name'),
-    requirements: db.prepare('SELECT requirement_id AS r FROM story_requirements WHERE story_key = ? ORDER BY requirement_id'),
+    requirements: db.prepare('SELECT r.external_id AS r FROM story_requirements sr JOIN requirements r ON r.uid = sr.requirement_uid WHERE sr.story_key = ? ORDER BY r.external_id'),
     story: db.prepare('SELECT * FROM stories WHERE key = ?'),
     user: db.prepare('SELECT id, name, initials, email FROM users WHERE id = ?'),
     componentByName: db.prepare('SELECT id FROM components WHERE application_id = ? AND name = ?'),
@@ -387,11 +389,12 @@ export function openDb(path: string) {
       const c = q.componentByName.get(app, name) as { id: string } | undefined;
       if (c) sc.run(key, c.id);
     }
-    const req = db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)');
-    const sr = db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_id) VALUES (?, ?)');
+    // F23: a requirement number is scoped to the application; FR-0231 in ABCD and FR-0231 in IBGM are two records.
+    const req = db.prepare('INSERT OR IGNORE INTO requirements (uid, application_id, external_id) VALUES (?, ?, ?)');
+    const sr = db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_uid) VALUES (?, ?)');
     for (const r of requirements) {
-      req.run(r, app);
-      sr.run(key, r);
+      req.run(requirementUid(app, r), app, r);
+      sr.run(key, requirementUid(app, r));
     }
   }
 
@@ -970,7 +973,7 @@ export function openDb(path: string) {
               link.run(id, 'criterion', ref);
             } else if (storyExists.get(ref, o.app)) link.run(id, 'story', ref);
             else if (/^N?FR-\d+$/.test(ref)) {
-              db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)').run(ref, o.app);
+              db.prepare('INSERT OR IGNORE INTO requirements (uid, application_id, external_id) VALUES (?, ?, ?)').run(requirementUid(o.app, ref), o.app, ref);
               link.run(id, 'requirement', ref);
             } else if (q.componentByName.get(o.app, ref)) link.run(id, 'component', componentId(o.app, ref));
             else problems.push({ row: 0, message: `"${x.name}" covers "${ref}", which is not a known story, requirement or component of this application; not linked.` });
@@ -1048,7 +1051,7 @@ export function openDb(path: string) {
         db.prepare(
           `INSERT INTO test_runs (id, application_id, source, repo, workflow, external_run_id, attempt, run_url, event, branch, sha, pr_number, is_merge, status, total, passed, failed, skipped, duration_ms, started_at, ingested_by, ingested_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).run(runId, meta.app, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.attempt, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, runAt, userId, t);
+        ).run(runId, meta.app, meta.source, meta.repo, meta.workflow, meta.externalRunId, meta.attempt, meta.runUrl, meta.event, meta.branch, meta.sha, meta.prNumber, meta.isMerge ? 1 : 0, counts.failed ? 'failed' : 'passed', total, counts.passed, counts.failed, counts.skipped, duration, meta.startedAt ?? null, userId, t);
         const res = db.prepare('INSERT INTO test_results (run_id, test_case_id, status, duration_ms, message) VALUES (?, ?, ?, ?, ?)');
         const last = db.prepare('UPDATE test_cases SET last_result = ?, last_run_at = ?, updated_at = ? WHERE id = ? AND (last_run_at IS NULL OR last_run_at <= ?)');
         for (const r of seen.values()) {
@@ -1164,10 +1167,14 @@ export function openDb(path: string) {
      * attempt), or the latest run of any kind when no merge run was recorded. Null when nothing ran.
      */
     targetBuild(app: string, repo: string | null): EvidenceBuild | null {
+      // F17: a run with authoritative timing always outranks one without; among untimed runs only the
+      // delivery order is known, and the label says so. Arrival never makes an untimed run the target
+      // over a timed one.
       const r = db
         .prepare(
-          `SELECT id, repo, sha, branch, pr_number, external_run_id, attempt, COALESCE(started_at, ingested_at) AS at
-           FROM test_runs WHERE application_id = ? AND repo IS ? ORDER BY is_merge DESC, at DESC, attempt DESC, rowid DESC LIMIT 1`,
+          `SELECT id, repo, sha, branch, pr_number, external_run_id, attempt, started_at, COALESCE(started_at, ingested_at) AS at
+           FROM test_runs WHERE application_id = ? AND repo IS ?
+           ORDER BY is_merge DESC, (started_at IS NOT NULL) DESC, at DESC, attempt DESC, rowid DESC LIMIT 1`,
         )
         .get(app, repo) as Row | undefined;
       if (!r) return null;
@@ -1175,7 +1182,7 @@ export function openDb(path: string) {
       const attempt = Number(r.attempt ?? 1);
       const sha = (r.sha as string) ?? null;
       const branch = (r.branch as string) ?? null;
-      const where = [sha ? sha.slice(0, 7) : null, branch].filter(Boolean).join(', ');
+      const where = [sha ? sha.slice(0, 7) : null, branch, r.started_at ? null : 'timed by delivery'].filter(Boolean).join(', ');
       const label = `${pr ? `PR #${pr}` : `run ${(r.external_run_id as string) ?? String(r.id).slice(0, 7)}`}${attempt > 1 ? ` attempt ${attempt}` : ''}${where ? ` (${where})` : ''}`;
       return { runId: String(r.id), repo: (r.repo as string) ?? null, sha, branch, prNumber: pr, attempt, at: String(r.at), label };
     },
@@ -1736,8 +1743,8 @@ export function seedWorkspace(h: HorizonDb, ws: Workspace) {
         const sc = db.prepare('INSERT OR IGNORE INTO story_components (story_key, component_id) VALUES (?, ?)');
         for (const name of s.components ?? []) if (team.components.some((c) => c.name === name)) sc.run(key, componentId(team.id, name));
         for (const r of s.requirements ?? []) {
-          db.prepare('INSERT OR IGNORE INTO requirements (id, application_id) VALUES (?, ?)').run(r, team.id);
-          db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_id) VALUES (?, ?)').run(key, r);
+          db.prepare('INSERT OR IGNORE INTO requirements (uid, application_id, external_id) VALUES (?, ?, ?)').run(requirementUid(team.id, r), team.id, r);
+          db.prepare('INSERT OR IGNORE INTO story_requirements (story_key, requirement_uid) VALUES (?, ?)').run(key, requirementUid(team.id, r));
         }
         counts.stories++;
       }

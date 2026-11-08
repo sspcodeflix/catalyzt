@@ -734,4 +734,72 @@ export const MIGRATIONS: string[] = [
   UPDATE approvals SET status = 'expired', outcome = '{"ok":false,"text":"Expired on upgrade: this approval predates frozen payloads. Analyse the story again for a current proposal."}'
     WHERE status = 'pending' AND action = 'add_uat_cases' AND (payload IS NULL OR payload = '{}');
   `,
+  // 14: requirement identity is scoped to the application (F23). A requirement row is
+  //     "<application>/<external id>", unique per application and external id; story links point at
+  //     that row, so FR-0231 in two applications never shares a record. Existing links are re-created
+  //     under each story's own application. Triggers refuse any relationship that would join two
+  //     applications: a story and a requirement or component, a chat and a workspace, a run and a test,
+  //     a test and a story or criterion or component (the brief's tenant-relationship hardening).
+  `
+  CREATE TABLE requirements_v14 (
+    uid TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    source_id TEXT,
+    UNIQUE (application_id, external_id)
+  );
+  INSERT OR IGNORE INTO requirements_v14 (uid, application_id, external_id, title, source_id)
+    SELECT r.application_id || '/' || r.id, r.application_id, r.id, r.title, r.source_id FROM requirements r;
+  INSERT OR IGNORE INTO requirements_v14 (uid, application_id, external_id)
+    SELECT s.application_id || '/' || sr.requirement_id, s.application_id, sr.requirement_id FROM story_requirements sr JOIN stories s ON s.key = sr.story_key;
+  CREATE TABLE story_requirements_v14 (
+    story_key TEXT NOT NULL REFERENCES stories(key) ON DELETE CASCADE,
+    requirement_uid TEXT NOT NULL REFERENCES requirements_v14(uid),
+    PRIMARY KEY (story_key, requirement_uid)
+  );
+  INSERT OR IGNORE INTO story_requirements_v14 (story_key, requirement_uid)
+    SELECT sr.story_key, s.application_id || '/' || sr.requirement_id FROM story_requirements sr JOIN stories s ON s.key = sr.story_key;
+  DROP TABLE story_requirements;
+  DROP TABLE requirements;
+  ALTER TABLE requirements_v14 RENAME TO requirements;
+  ALTER TABLE story_requirements_v14 RENAME TO story_requirements;
+
+  CREATE TRIGGER story_requirements_same_app BEFORE INSERT ON story_requirements
+  BEGIN
+    SELECT RAISE(ABORT, 'The requirement belongs to another application than the story.')
+    WHERE (SELECT application_id FROM stories WHERE key = NEW.story_key) IS NOT (SELECT application_id FROM requirements WHERE uid = NEW.requirement_uid);
+  END;
+  CREATE TRIGGER story_components_same_app BEFORE INSERT ON story_components
+  BEGIN
+    SELECT RAISE(ABORT, 'The component belongs to another application than the story.')
+    WHERE (SELECT application_id FROM stories WHERE key = NEW.story_key) IS NOT (SELECT application_id FROM components WHERE id = NEW.component_id);
+  END;
+  CREATE TRIGGER chats_workspace_same_app BEFORE INSERT ON chats
+  BEGIN
+    SELECT RAISE(ABORT, 'The workspace belongs to another application than the chat.')
+    WHERE NEW.workspace_id IS NOT NULL AND (SELECT application_id FROM workspaces WHERE id = NEW.workspace_id) IS NOT NEW.application_id;
+  END;
+  CREATE TRIGGER chats_workspace_same_app_update BEFORE UPDATE OF workspace_id ON chats
+  BEGIN
+    SELECT RAISE(ABORT, 'The workspace belongs to another application than the chat.')
+    WHERE NEW.workspace_id IS NOT NULL AND (SELECT application_id FROM workspaces WHERE id = NEW.workspace_id) IS NOT NEW.application_id;
+  END;
+  CREATE TRIGGER test_results_same_app BEFORE INSERT ON test_results
+  BEGIN
+    SELECT RAISE(ABORT, 'The test belongs to another application than the run.')
+    WHERE (SELECT application_id FROM test_runs WHERE id = NEW.run_id) IS NOT (SELECT application_id FROM test_cases WHERE id = NEW.test_case_id);
+  END;
+  CREATE TRIGGER test_case_links_same_app BEFORE INSERT ON test_case_links
+  BEGIN
+    SELECT RAISE(ABORT, 'The story belongs to another application than the test.')
+    WHERE NEW.entity_type IN ('story', 'criterion')
+      AND (SELECT application_id FROM stories WHERE key = CASE WHEN instr(NEW.entity_ref, '#') > 0 THEN substr(NEW.entity_ref, 1, instr(NEW.entity_ref, '#') - 1) ELSE NEW.entity_ref END) IS NOT NULL
+      AND (SELECT application_id FROM stories WHERE key = CASE WHEN instr(NEW.entity_ref, '#') > 0 THEN substr(NEW.entity_ref, 1, instr(NEW.entity_ref, '#') - 1) ELSE NEW.entity_ref END)
+          != (SELECT application_id FROM test_cases WHERE id = NEW.test_case_id);
+    SELECT RAISE(ABORT, 'The component belongs to another application than the test.')
+    WHERE NEW.entity_type = 'component' AND instr(NEW.entity_ref, '/') > 0
+      AND substr(NEW.entity_ref, 1, instr(NEW.entity_ref, '/') - 1) != (SELECT application_id FROM test_cases WHERE id = NEW.test_case_id);
+  END;
+  `,
 ];

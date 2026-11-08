@@ -15,6 +15,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+import { containsSecret } from '../src/lib/guardrails';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import { createItem } from './huddle';
@@ -39,6 +40,8 @@ const MAX_DOC_BYTES = 512 * 1024;
 const MAX_CHUNKS_PER_SOURCE = 400;
 const MIN_CHUNK_CHARS = 40;
 const TARGET_CHUNK_CHARS = 900;
+/** The exclusion reason of a passage that holds what looks like a secret; a decision never lifts it (F05). */
+export const SECRET_REASON = 'Contains what looks like a password, key or token';
 
 export type SourceType = 'Repository' | 'Jira' | 'Confluence' | 'Text' | 'PDF' | 'Word' | 'Image' | 'ZIP' | 'File';
 /** Trust order: Confluence > Jira > code > team uploads. There is no Fabric here. */
@@ -315,7 +318,8 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
     chunks.forEach((c, i) => {
       const id = `${sourceId}#${i + 1}`;
       const h = textSha(c.text);
-      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? null, i + 1, version, c.text.length, h);
+      // F05: a passage that holds what looks like a secret is kept out of retrieval, whatever else is decided about it.
+      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? (containsSecret(c.text) ? SECRET_REASON : null), i + 1, version, c.text.length, h);
       for (const v of byText.get(h) ?? []) insVec.run(id, v.model, v.dims, v.vector, h, iso(at));
     });
     db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
@@ -454,6 +458,11 @@ export async function addUploads(db: HorizonDb, store: BlobStore, app: AppRecord
     const id = `src-${randomUUID().slice(0, 8)}`;
     const key = `${app.id}/${id}`;
     const { text, mime, status, note } = extractText(name, f.data);
+    // F05: a file that holds what looks like a secret is not kept at all.
+    if (text && containsSecret(text)) {
+      errors.push(`${name}: contains what looks like a password, key or token, so it was not kept. Remove it (and rotate it if it is real), then upload again.`);
+      continue;
+    }
     try {
       await store.put(key, f.data);
     } catch (e) {
@@ -765,7 +774,7 @@ export function resolveConflictForItem(db: HorizonDb, itemId: string, keepsUploa
   const sourceId = str(r.source_id);
   db.raw.transaction(() => {
     db.raw.prepare("UPDATE conflicts SET status = 'resolved', resolution = ?, resolved_at = ? WHERE id = ?").run(keepsUpload ? 'use_upload' : 'keep_higher', iso(at), r.id);
-    if (keepsUpload) db.raw.prepare('UPDATE source_chunks SET excluded_reason = NULL WHERE source_id = ?').run(sourceId);
+    if (keepsUpload) db.raw.prepare('UPDATE source_chunks SET excluded_reason = NULL WHERE source_id = ? AND excluded_reason IS NOT ?').run(sourceId, SECRET_REASON);
     db.raw.prepare('UPDATE context_sources SET status = ?, updated_at = ? WHERE id = ?').run(finalStatus(r.type as SourceType), iso(at), sourceId);
   })();
   return getConflict(db, str(r.application_id), str(r.id));

@@ -56,6 +56,7 @@ jobs:
           HEXA_INGEST_TOKEN: ${{ secrets.HEXA_INGEST_TOKEN }}
           HEXA_APP: ${{ vars.HEXA_APP }}
           GH_TOKEN: ${{ github.token }}
+          RUN_STARTED_AT: ${{ github.run_started_at }}
         run: |
           if [ -z "$HORIZON_URL" ] || [ -z "$HEXA_INGEST_TOKEN" ] || [ -z "$HEXA_APP" ]; then
             echo "HORIZON_URL, HEXA_INGEST_TOKEN or HEXA_APP not set; skipping the push (the artifact is still there)."
@@ -73,6 +74,7 @@ jobs:
               "workflow": os.environ["GITHUB_WORKFLOW"],
               "runUrl": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
               "prNumber": int(pr) if pr.isdigit() else None, "mergeCommit": pr.isdigit(),
+              "startedAt": os.environ.get("RUN_STARTED_AT"),  # F17: the run's own start time, so a late delivery never looks newer than it is
               "framework": "JUnit",  # optional: what Hexa records as the tests' framework (JUnit, Jest, go test, pytest…)
               # Each file may be a string, or {"path", "xml"} so Hexa keeps the module the report came from.
               "junit": [{"path": f, "xml": open(f, encoding="utf-8").read()} for f in glob.glob("test-results/**/*.xml", recursive=True)],

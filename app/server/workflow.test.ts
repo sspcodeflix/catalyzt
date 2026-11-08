@@ -373,3 +373,27 @@ describe('token ledger in a run', () => {
     expect(db.usage('ABCD').allTime.total).toBe(912);
   });
 });
+
+describe('secret boundary before the model (F05)', () => {
+  const SECRET = 'AKIAABCDEFGHIJKLMNOP';
+
+  it('an assistant turn in the browser-sent history that holds a secret is dropped before any model call', async () => {
+    const db = fixtureDb();
+    const f = stubDeepSeek({ ...ok, capability: 'analysis' }, ['Fine. ']);
+    await run(req(db, 'What did we decide about the webhook retries?', { history: [{ role: 'user', text: 'Earlier question about retries' }, { role: 'assistant', text: `Use key ${SECRET} for the webhook` }] }), cfg, db);
+    expect(f.mock.calls.length).toBeGreaterThan(0);
+    for (const c of f.mock.calls) expect(String((c[1] as RequestInit).body)).not.toContain(SECRET);
+  });
+
+  it('a source that holds a secret is withheld from the model, and the run says so', async () => {
+    const { db } = fixtureWithDocs();
+    db.raw
+      .prepare("INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES ('ABCD-repo-shop#99', 'ABCD-repo-shop', 'docs/ops.md ¶1', ?, NULL, 99, 1, 90, 'x')")
+      .run(`Refund window operations: the refund service token is ${SECRET} and partial refunds settle in 45 days.`);
+    const f = stubDeepSeek({ ...ok, capability: 'analysis' }, ['Fine. ']);
+    const { agents } = await run(req(db, 'What is the refund window for partial refunds?'), cfg, db, true);
+    expect(f.mock.calls.length).toBeGreaterThan(0);
+    for (const c of f.mock.calls) expect(String((c[1] as RequestInit).body)).not.toContain(SECRET);
+    expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.some((s) => /^Withheld 1 source that contains/.test(s.label))).toBe(true);
+  });
+});

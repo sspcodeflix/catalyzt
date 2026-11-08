@@ -6,6 +6,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 
+import { containsSecret } from '../src/lib/guardrails';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import type { BlobStore } from './storage';
 
@@ -137,6 +138,11 @@ export async function addAttachments(db: HorizonDb, store: BlobStore, app: AppRe
     const id = `att-${randomUUID()}`;
     const key = `${app.id}/${id}`;
     const { text, mime, status, note } = extractText(filename, f.data);
+    // F05: a file that holds what looks like a secret is not kept at all; the bytes never reach the store.
+    if (text && containsSecret(text)) {
+      errors.push(`${filename}: contains what looks like a password, key or token, so it was not kept. Remove it (and rotate it if it is real), then attach the file again.`);
+      continue;
+    }
     try {
       await store.put(key, f.data);
     } catch (e) {

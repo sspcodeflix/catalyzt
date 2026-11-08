@@ -186,8 +186,10 @@ export interface RepoTestFiles {
   sha: string;
   treeSha: string;
   htmlUrl: string;
-  /** Every test file in the tree (the caller decides how many to read). */
+  /** Every readable test file in the tree (the caller decides how many to read). */
   files: { path: string; size: number }[];
+  /** Test files over the size limit: listed, never read; their tests are kept as they were (F12). */
+  skipped: { path: string; size: number }[];
   /** True when GitHub cut the tree listing short, so `files` is not the whole repository. */
   truncated: boolean;
 }
@@ -207,8 +209,8 @@ export async function listTestFiles(r: RepoRef, token?: string, signal?: AbortSi
     token,
     signal,
   );
-  const files = tree.tree.filter((t) => t.type === 'blob' && isTestFile(t.path) && (t.size ?? 0) <= MAX_BYTES).map((t) => ({ path: t.path, size: t.size ?? 0 }));
-  return { ref, sha: commit.sha, treeSha: tree.sha, htmlUrl: meta.html_url, files, truncated: !!tree.truncated };
+  const all = tree.tree.filter((t) => t.type === 'blob' && isTestFile(t.path)).map((t) => ({ path: t.path, size: t.size ?? 0 }));
+  return { ref, sha: commit.sha, treeSha: tree.sha, htmlUrl: meta.html_url, files: all.filter((f) => f.size <= MAX_BYTES), skipped: all.filter((f) => f.size > MAX_BYTES), truncated: !!tree.truncated };
 }
 
 /** Fetches one file's text at a commit. */

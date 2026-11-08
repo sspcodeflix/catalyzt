@@ -166,6 +166,14 @@ const boundedInt = (v: string | null, def: number, max: number, min = 1) => {
   return v != null && v !== '' && Number.isFinite(n) && n >= min ? Math.min(Math.trunc(n), max) : def;
 };
 
+/** A CI run's start time, or null when it is missing, unparsable, more than five minutes ahead or before 2000. */
+export const validStartedAt = (v: unknown): string | null => {
+  if (!isStr(v)) return null;
+  const t = Date.parse(v);
+  if (Number.isNaN(t) || t > Date.now() + 5 * 60_000 || t < Date.parse('2000-01-01T00:00:00Z')) return null;
+  return new Date(t).toISOString();
+};
+
 /** Reads HEXA_INGEST_TOKEN_<APP> variables into { APP: token }. */
 export function ingestTokensFromEnv(env: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -279,7 +287,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
               sha: isStr(b.sha) && /^[0-9a-f]{7,40}$/i.test(b.sha) ? b.sha : null,
               prNumber: Number.isInteger(pr) && pr > 0 ? pr : null,
               isMerge: b.mergeCommit === true || (Number.isInteger(pr) && pr > 0),
-              startedAt: isStr(b.startedAt) && !Number.isNaN(Date.parse(b.startedAt)) ? new Date(b.startedAt).toISOString() : null,
+              // F17: run timing comes from CI; a missing, unparsable, future or ancient value counts as missing, never as "now".
+              startedAt: validStartedAt(b.startedAt),
             },
             owner,
           ),

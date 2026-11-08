@@ -323,3 +323,23 @@ describe('vectors follow the text they were computed from (F25)', () => {
     expect(r.mode).toBe('keyword');
   });
 });
+
+describe('secrets never become context (F05)', () => {
+  const SECRET = 'AKIAABCDEFGHIJKLMNOP';
+
+  it('refuses an upload that holds a secret, and excludes a repository passage that does', async () => {
+    const { db, cloneDir } = fixtureWithDocs();
+    const r = await addUploads(db, new MemoryBlobStore(), app(db, 'ABCD'), user(db, 'u-sourav'), [{ filename: 'creds.md', data: Buffer.from(`token ${SECRET} is used for refunds in the refund window`) }], 'app', undefined);
+    expect(r.sources).toEqual([]);
+    expect(r.errors[0]).toMatch(/creds\.md.*not kept/);
+    writeFileSync(join(cloneDir, 'docs', 'ops.md'), `# Ops\n\nThe refund window service uses key ${SECRET} to call the bank, and partial refunds take 45 days to settle.\n`);
+    const repo = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!;
+    syncSource(db, 'ABCD', repo.id);
+    const chunk = listChunks(db, 'ABCD', repo.id).find((c) => c.text.includes(SECRET))!;
+    expect(chunk.excludedReason).toMatch(/password, key or token/);
+    const hits = await retrieveContext(db, 'ABCD', 'refund window bank key');
+    expect(hits.passages.some((p) => p.text.includes(SECRET))).toBe(false);
+    const shown = await testQuestion(db, app(db, 'ABCD'), 'refund window bank key');
+    expect(shown.results.find((x) => x.text.includes(SECRET))?.used ?? false).toBe(false);
+  });
+});

@@ -216,8 +216,9 @@ export async function runWorkflow(
     check({ label: 'Request passed the policy checks' });
     guard.finish('done', { result: 'Passed' });
 
-    // History comes from the browser, so it is untrusted: drop earlier user turns that break a policy.
-    req = { ...req, history: req.history.filter((h) => h.role !== 'user' || checkInput(h.text).allowed) };
+    // History comes from the browser, so it is untrusted: drop earlier user turns that break a policy and
+    // any turn, whoever wrote it, that holds what looks like a secret (F05).
+    req = { ...req, history: req.history.filter((h) => (h.role === 'user' ? checkInput(h.text).allowed : !containsSecret(h.text))) };
 
     // 2. Router: intent, plus the model's own policy check.
     const intentReq: IntentRequest = {
@@ -377,6 +378,12 @@ export async function runWorkflow(
       return end('done', `Routed with rules · ${total()}`);
     }
 
+    // F05: the last boundary before the model. Whatever a source is (attachment, passage, Hexa fact),
+    // one that holds what looks like a secret is withheld, and the run says so.
+    const safeSources = sources.filter((s) => !containsSecret(s.text));
+    const withheld = sources.length - safeSources.length;
+    if (withheld) specialist.step('rule', `Withheld ${withheld} source${withheld === 1 ? '' : 's'} that contain${withheld === 1 ? 's' : ''} what looks like a secret`)({ detail: 'Not sent to the model; remove the secret from the source and rotate it if it is real' });
+
     const write = specialist.step('model', 'Writing the answer');
     const tickets = intent.tickets.map((k) => req.syncedTickets.find((t) => t.key === k)).filter((t) => t !== undefined);
     let raw = '';
@@ -385,7 +392,7 @@ export async function runWorkflow(
     let thinking = false;
     const t0 = performance.now();
     try {
-      for await (const ev of streamChat(cfg, chatMessages({ text: req.text, intent, scope: req.scope, history: req.history, tickets, sources }), signal)) {
+      for await (const ev of streamChat(cfg, chatMessages({ text: req.text, intent, scope: req.scope, history: req.history, tickets, sources: safeSources }), signal)) {
         if (ev.type === 'reasoning') thinking = true;
         else if (ev.type === 'usage') usage = { promptTokens: ev.promptTokens, completionTokens: ev.completionTokens };
         else if (ev.type === 'text') {

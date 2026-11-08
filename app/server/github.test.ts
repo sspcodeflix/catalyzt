@@ -92,6 +92,21 @@ describe('listTestFiles (F12)', () => {
     expect(await fetchFile({ owner: 'acme', repo: 'shop' }, l.sha, 'a.test.ts')).toContain('works');
   });
 
+  it('lists oversized test files as skipped instead of hiding them (F12)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const j = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+        if (url.endsWith('/repos/acme/shop')) return j({ default_branch: 'main', html_url: 'https://github.com/acme/shop', private: false });
+        if (url.includes('/commits/')) return j({ sha: COMMIT, commit: { tree: { sha: TREE } } });
+        return j({ sha: TREE, truncated: false, tree: [{ path: 'small.test.ts', type: 'blob', size: 10 }, { path: 'huge.test.ts', type: 'blob', size: 300 * 1024 }] });
+      }),
+    );
+    const l = await listTestFiles({ owner: 'acme', repo: 'shop' });
+    expect(l.files.map((f) => f.path)).toEqual(['small.test.ts']);
+    expect(l.skipped).toEqual([{ path: 'huge.test.ts', size: 300 * 1024 }]);
+  });
+
   it('reports a listing GitHub cut short', async () => {
     vi.stubGlobal(
       'fetch',

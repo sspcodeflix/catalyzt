@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Block, UatArtifact } from '../src/lib/types';
 import type { WorkflowEvent } from '../src/lib/workflow';
+import { validStartedAt } from './api';
 import { RunRefused, startApi, type TestApi } from './api-harness';
 import { seedContext } from './context';
 import { openDb, seedWorkspace, type HorizonDb } from './db';
@@ -281,6 +282,8 @@ describe('F17: CI results reach the right application, once per run attempt', ()
     runUrl: 'https://github.com/acme/shop/actions/runs/7001',
     prNumber: 1482,
     mergeCommit: true,
+    // The Action sends the run's own start time (F17); without it a delivery never outranks a timed run.
+    startedAt: new Date().toISOString(),
     junit: [junit(true)],
     ...over,
   });
@@ -688,5 +691,54 @@ describe('R15: a newer analysis of the same story supersedes older pending propo
     // Another story's analysis leaves it alone.
     await sourav.run(uatRun('ABCD-1002', ids('3')));
     expect(db.getApproval(a2)?.status).toBe('pending');
+  });
+});
+
+describe('F17: run timing comes from CI, never from arrival', () => {
+  let ci: TestApi;
+  beforeEach(async () => {
+    ci = await startApi(db, null, { ingestToken: 't-global' });
+  });
+  afterEach(() => ci.close());
+  const junit = (failing: boolean) => `<testsuite name="payments.PartialRefundsTest">
+    <testcase classname="payments.PartialRefundsTest" name="aRefundAboveTheOriginalAmountIsRejectedWithAClearMessage" time="0.3">${failing ? '<failure message="expected 422"/>' : ''}</testcase>
+  </testsuite>`;
+  const post = (over: Record<string, unknown>) =>
+    ci.anonymous().post('/api/hexa/results', { app: 'ABCD', repo: 'acme/shop', sha: 'abc1234', branch: 'main', event: 'push', attempt: 1, workflow: 'Tests', prNumber: 1482, mergeCommit: true, ...over }, { Authorization: 'Bearer t-global' });
+
+  it('a delivery without run timing never displaces a timed one; future or garbage times count as missing', async () => {
+    expect((await post({ runId: '8002', startedAt: new Date(Date.now() - 60_000).toISOString(), junit: [junit(false)] })).status).toBe(200);
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+    // Arrives later, carries no timing: it must not become the target build.
+    expect((await post({ runId: '8001', junit: [junit(true)] })).status).toBe(200);
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+    expect(db.targetBuild('ABCD', 'acme/shop')?.label).not.toContain('timed by delivery');
+    // A time in the future or nonsense is treated as missing, not as "now".
+    expect((await post({ runId: '8003', startedAt: '2999-01-01T00:00:00Z', junit: [junit(true)] })).status).toBe(200);
+    expect((await post({ runId: '8004', startedAt: 'yesterday-ish', junit: [junit(true)] })).status).toBe(200);
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+    expect(validStartedAt('2999-01-01T00:00:00Z')).toBeNull();
+    expect(validStartedAt('1999-12-31T00:00:00Z')).toBeNull();
+    expect(validStartedAt('2026-11-08T03:00:00Z')).toBe('2026-11-08T03:00:00.000Z');
+  });
+
+  it('with only untimed runs, the latest delivery is the target and its label says it was timed by delivery', async () => {
+    db.raw.prepare("DELETE FROM test_runs WHERE application_id = 'ABCD'").run();
+    expect((await post({ runId: '8010', junit: [junit(true)] })).status).toBe(200);
+    expect((await post({ runId: '8011', junit: [junit(false)] })).status).toBe(200);
+    expect(db.targetBuild('ABCD', 'acme/shop')?.label).toContain('timed by delivery');
+    expect(db.coverageFor('ABCD-1001')[1].status).toBe('passing');
+  });
+});
+
+describe('F05: files that hold a secret are refused, not stored', () => {
+  it('an attachment with a key in it is not kept and leaves no trace', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const res = await sourav.post('/api/attachments', { files: [{ filename: 'creds.md', contentBase64: Buffer.from(`deploy key ${SECRET} for prod`).toString('base64') }, { filename: 'ok.md', contentBase64: Buffer.from('Nothing secret in here, just notes about refunds.').toString('base64') }] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { attachments: { filename: string }[]; errors: string[] };
+    expect(body.attachments.map((a) => a.filename)).toEqual(['ok.md']);
+    expect(body.errors[0]).toMatch(/creds\.md.*not kept/);
+    expect(dump(db)).not.toContain(SECRET);
   });
 });

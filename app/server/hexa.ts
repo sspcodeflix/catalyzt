@@ -37,8 +37,9 @@ export function startRepoScan(db: HorizonDb, app: string, input: string, userId:
       current = step('Listing the repository tree', 'github.get_tree');
       const listing = await listTestFiles(ref, token);
       const toRead = listing.files.slice(0, MAX_FILES);
-      const truncated = listing.truncated || listing.files.length > MAX_FILES;
-      current('done', `${listing.files.length} test files at ${listing.sha.slice(0, 7)}${truncated ? ` · reading the first ${toRead.length}` : ''}${listing.truncated ? ' · the listing was cut short by GitHub' : ''}`);
+      // Files over the size limit stay in the inventory of listed paths (F12): a scan never treats "not read" as "gone".
+      const truncated = listing.truncated || listing.files.length > MAX_FILES || listing.skipped.length > 0;
+      current('done', `${listing.files.length + listing.skipped.length} test files at ${listing.sha.slice(0, 7)}${listing.files.length > MAX_FILES ? ` · reading the first ${toRead.length}` : ''}${listing.skipped.length ? ` · ${listing.skipped.length} over the size limit, not read (${listing.skipped[0].path})` : ''}${listing.truncated ? ' · the listing was cut short by GitHub' : ''}`);
 
       current = step(`Reading ${toRead.length} test files at ${listing.sha.slice(0, 7)}`, 'github.read_files');
       const found: (FoundTest & { path: string })[] = [];
@@ -76,12 +77,12 @@ export function startRepoScan(db: HorizonDb, app: string, input: string, userId:
         ref: listing.ref,
         sha: listing.sha,
         htmlUrl: listing.htmlUrl,
-        filesFound: listing.files.length,
+        filesFound: listing.files.length + listing.skipped.length,
         filesScanned: readPaths.length,
         filesFailed: failed.length,
         truncated: truncated || failed.length > 0,
         readPaths,
-        listedPaths: listing.truncated ? null : listing.files.map((f) => f.path),
+        listedPaths: listing.truncated ? null : [...listing.files, ...listing.skipped].map((f) => f.path),
         tests: found,
         userId,
       });

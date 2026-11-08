@@ -188,7 +188,7 @@ async function runTarget(app: string, repo: string, github: string, cloneDir: st
     return { app, repo, target: t.name, status: exit === 0 ? 'no-results' : 'failed', seconds, files: 0, detail };
   }
   const junit = xml.map((f) => ({ path: f, xml: readFileSync(join(outDir, f), 'utf8') }));
-  const payload = { app, repo: github, sha, branch, event: 'push', runId, attempt, workflow: `local ci · ${t.name}`, framework: FRAMEWORK[t.kind], runUrl: null, prNumber: pr, mergeCommit: pr !== null, junit };
+  const payload = { app, repo: github, sha, branch, event: 'push', runId, attempt, workflow: `local ci · ${t.name}`, framework: FRAMEWORK[t.kind], runUrl: null, prNumber: pr, mergeCommit: pr !== null, startedAt: new Date(started).toISOString(), junit };
   const ingest = await deliver(payload);
   console.log(`   ${xml.length} JUnit file(s) in ${seconds}s → ${JSON.stringify(ingest).slice(0, 200)}`);
   return { app, repo, target: t.name, status: 'delivered', seconds, files: xml.length, detail: `${xml.length} files`, ingest };
@@ -206,7 +206,7 @@ async function deliver(payload: Record<string, unknown>): Promise<unknown> {
     const r = await ingestJUnit(
       boot.db,
       (payload.junit as { path: string; xml: string }[]).map((j, i) => ({ filename: j.path || `results-${i + 1}.xml`, xml: j.xml })),
-      { app: String(payload.app), source: 'webhook', repo: String(payload.repo), workflow: String(payload.workflow), framework: (payload.framework as string) ?? null, externalRunId: runId, attempt: Number(payload.attempt), runUrl: null, event: 'push', branch: String(payload.branch), sha: String(payload.sha), prNumber: (payload.prNumber as number | null) ?? null, isMerge: payload.mergeCommit === true, startedAt: null },
+      { app: String(payload.app), source: 'webhook', repo: String(payload.repo), workflow: String(payload.workflow), framework: (payload.framework as string) ?? null, externalRunId: runId, attempt: Number(payload.attempt), runUrl: null, event: 'push', branch: String(payload.branch), sha: String(payload.sha), prNumber: (payload.prNumber as number | null) ?? null, isMerge: payload.mergeCommit === true, startedAt: (payload.startedAt as string) ?? null },
       owner,
     );
     boot.db.raw.close();
