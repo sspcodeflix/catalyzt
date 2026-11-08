@@ -16,3 +16,4 @@ server-dist/
 .myworkspace/*/log/review-shots/
 app/tsconfig.tsbuildinfo
 .claude/
+.myworkspace/*/log/review-2-shots/
