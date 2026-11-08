@@ -23,11 +23,13 @@ Two scheduled reviews appended to the brief after stage D: a workflow review (F1
 cases of F05–F17) and a data-model and scalability review (F23–F28 plus hardening directions). The
 follow-up table in [docs/FINDINGS.md](docs/FINDINGS.md) tracks them. Done so far: F18, F19, F21,
 F22, F23, F25, F26, F27, F28 and the residuals of F05, F06, F07, F08, F09, F10, F12, F15, F16, F17,
-each with a regression test (227 unit and API tests across 19 files; browser suite at 75 checks).
+each with a regression test (236 unit and API tests across 20 files; browser suite at 75 checks).
 Also done: F20 (immutable passage versions behind citations), F24 (bounded retrieval through an FTS5
 index and in-memory vectors) and the hardening items for story hydration, ingestion lookups, usage
-summaries and indexes. Still open: Huddle and chat paging, retention and quota policy, explicit
-repository interfaces, and a repeatable load-test profile with agreed response-time objectives.
+summaries and indexes. A disposable load profile (`npm run load-profile`) records the timings in
+`docs/DEPLOYMENT.md`. Still open: Huddle and chat paging, an enforced retention and quota policy
+(the policy is written down, nothing deletes yet), explicit repository interfaces (the migration
+note now says what they must be), and agreed response-time objectives.
 
 ## Known limits (stated, not hidden)
 - Retrieval in App Context is hybrid: keyword overlap plus a local embedding model (all-MiniLM-L6-v2, 384 dimensions) fused by rank, then a local cross-encoder reranker (ms-marco-MiniLM-L-6-v2), both run on the CPU by transformers.js and cached under `app/data/models` (46 MB, downloaded once). Until a passage has a vector, or without the models (`HORIZON_RETRIEVAL=keyword`), it is keyword-only and the page, the API and the answer's step say so. Candidates come from an FTS5 index (lexical) and an in-memory pass over the application's vectors (semantic), so a question loads a few hundred passages at most; the vector pass is a scan, fine to tens of thousands of passages per application. PDF, Word, images and ZIP uploads are kept but not read. Confluence and a knowledge fabric are not connected; the UI and API say so.

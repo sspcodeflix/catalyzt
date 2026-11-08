@@ -50,6 +50,7 @@ backup tools. The future-migration note is [docs/MIGRATION_NOTE.md](docs/MIGRATI
 cd app
 npm test                         # unit and API tests (vitest)
 ./e2e/run.sh                     # browser checks (Playwright for Python) against a throwaway server
+npm run load-profile             # disposable load profile: 50k passages, 25k tests, 100k model calls, timings
 ```
 The review findings and what fixed them: [docs/FINDINGS.md](docs/FINDINGS.md).
 

@@ -29,9 +29,20 @@ database now, and nothing should be until the move is authorised.
 
 ## Repository and storage boundaries
 
-- All SQL is in `server/db.ts` (plus the App Context and Huddle modules, which use `db.raw`). HTTP
-  handlers, the workflow, guardrails and the shared answer reducer never build SQL. A new database
-  means a new implementation of these methods with the same signatures and the same tests.
+- All SQL is in `server/db.ts` (plus the App Context, Huddle and retrieval modules, which use
+  `db.raw`). HTTP handlers, the workflow, guardrails and the shared answer reducer never build SQL.
+- "Same signatures" understates the work, as the data-model review pointed out: `HorizonDb` is
+  `ReturnType<typeof openDb>`, every method is synchronous (better-sqlite3), and transactions are
+  `db.raw.transaction(fn)`. A client/server database is asynchronous, so the move needs, before any
+  SQL is ported: an explicit repository interface per area (people and scope, conversations, Hexa,
+  App Context, Huddle, usage) with the application id as a required parameter, `async` methods,
+  and a transaction contract (`withTransaction(fn)`) that callers use instead of `db.raw`. The
+  SQLite implementation then satisfies that interface first, with the current tests unchanged;
+  only after that does a second implementation make sense. Do not start the second implementation
+  until the interface exists and the signals below are measured.
+- Triggers added in migration 14 (same-application guards) and the FTS5 index of migration 17 are
+  SQLite-side invariants; the target database needs the equivalent constraints and a full-text
+  index of its own, and the retrieval candidate query is one of the SQL statements to port.
 - Uploaded bytes go through `server/storage.ts` (`BlobStore`): local disk today, an object store
   later, without touching callers.
 - Business rules that must survive the move are tested through the API harness

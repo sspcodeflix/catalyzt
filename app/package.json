@@ -15,7 +15,8 @@
     "start": "node server-dist/main.mjs",
     "backup": "vite-node scripts/backup.ts",
     "restore-check": "vite-node scripts/restore-check.ts",
-    "validate-workspace": "vite-node scripts/validate-workspace.ts"
+    "validate-workspace": "vite-node scripts/validate-workspace.ts",
+    "load-profile": "vite-node scripts/load-profile.ts"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

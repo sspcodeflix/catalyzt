@@ -19,7 +19,7 @@ import { containsSecret } from '../src/lib/guardrails';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import { createItem } from './huddle';
-import { embeddingCounts, embedQuery, fromBlob, NO_MODELS, rank, textSha, vectorCandidates, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
+import { embeddingCounts, embedQuery, forgetCounts, fromBlob, NO_MODELS, rank, textSha, vectorCandidates, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
 import type { BlobStore } from './storage';
 import type { Workspace } from './workspace';
 
@@ -351,6 +351,7 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
     });
     db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
   })();
+  forgetCounts(db);
   return { chunks: chunks.length, version, changed };
 }
 

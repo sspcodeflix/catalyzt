@@ -358,6 +358,25 @@ interface VectorSet {
 }
 /** Per database: the current vectors of each application and model, as one matrix, rebuilt when they change. */
 const VECTORS = new WeakMap<object, Map<string, VectorSet>>();
+/** The change stamp of an application's vectors is a join over them all; it is re-read at most every two seconds. */
+const STAMPS = new WeakMap<object, Map<string, { at: number; stamp: string }>>();
+
+function vectorStamp(db: HorizonDb, app: string, model: string): string {
+  const cache = STAMPS.get(db) ?? new Map<string, { at: number; stamp: string }>();
+  STAMPS.set(db, cache);
+  const key = `${app}/${model}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < COUNTS_TTL_MS) return hit.stamp;
+  const st = db.raw
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(MAX(e.rowid), 0) AS m FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id JOIN context_sources s ON s.id = c.source_id
+       WHERE e.model = ? AND s.application_id = ? AND c.retired_at IS NULL AND e.text_sha = c.text_sha`,
+    )
+    .get(model, app) as { n: number; m: number };
+  const stamp = `${st.n}/${st.m}`;
+  cache.set(key, { at: Date.now(), stamp });
+  return stamp;
+}
 
 /**
  * The passages whose vectors are closest to the question: the application's current vectors are held
@@ -369,13 +388,7 @@ export function vectorCandidates(db: HorizonDb, app: string, embedder: Embedder 
   const sets = VECTORS.get(db) ?? new Map<string, VectorSet>();
   VECTORS.set(db, sets);
   const key = `${app}/${embedder.id}`;
-  const st = db.raw
-    .prepare(
-      `SELECT COUNT(*) AS n, COALESCE(MAX(e.rowid), 0) AS m FROM chunk_embeddings e JOIN source_chunks c ON c.id = e.chunk_id JOIN context_sources s ON s.id = c.source_id
-       WHERE e.model = ? AND s.application_id = ? AND c.retired_at IS NULL AND e.text_sha = c.text_sha`,
-    )
-    .get(embedder.id, app) as { n: number; m: number };
-  const stamp = `${st.n}/${st.m}`;
+  const stamp = vectorStamp(db, app, embedder.id);
   let set = sets.get(key);
   if (!set || set.stamp !== stamp) {
     const rows = db.raw
@@ -392,17 +405,19 @@ export function vectorCandidates(db: HorizonDb, app: string, embedder: Embedder 
     sets.set(key, set);
   }
   if (set.rowids.length === 0 || set.dims !== q.length) return [];
+  // One pass of dot products; only passages above the floor are sorted, which is a small fraction.
+  const above: number[] = [];
   const scores = new Float32Array(set.rowids.length);
   for (let i = 0; i < set.rowids.length; i++) {
     let s = 0;
     const off = i * set.dims;
     for (let d = 0; d < set.dims; d++) s += set.matrix[off + d] * q[d];
     scores[i] = s;
+    if (s >= 0.1) above.push(i);
   }
-  return Array.from(scores.keys())
+  return above
     .sort((a, b) => scores[b] - scores[a])
     .slice(0, k)
-    .filter((i) => scores[i] >= 0.1)
     .map((i) => set!.rowids[i]);
 }
 
@@ -458,15 +473,31 @@ function backfillTextSha(db: HorizonDb) {
   }
 }
 
-/** Passages with a vector computed from their current text, for the status line. */
+/** Counts over tens of thousands of passages cost tens of milliseconds; the status line can be two seconds old. */
+const COUNTS = new WeakMap<object, Map<string, { at: number; value: { embedded: number; pending: number } }>>();
+const COUNTS_TTL_MS = 2000;
+
+/** Passages with a vector computed from their current text, for the status line (cached briefly per application). */
 export function embeddingCounts(db: HorizonDb, model: string | null, app?: string): { embedded: number; pending: number } {
+  const cache = COUNTS.get(db) ?? new Map<string, { at: number; value: { embedded: number; pending: number } }>();
+  COUNTS.set(db, cache);
+  const key = `${app ?? '*'}/${model ?? ''}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < COUNTS_TTL_MS) return hit.value;
   const where = app ? 'WHERE s.application_id = ?' : '';
   const args = app ? [app] : [];
   const live = `${where ? `${where} AND` : 'WHERE'} c.retired_at IS NULL`;
   const total = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id ${live}`).get(...args) as { n: number }).n;
-  if (!model) return { embedded: 0, pending: total };
-  const embedded = (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha ${live}`).get(model, ...args) as { n: number }).n;
-  return { embedded, pending: total - embedded };
+  const embedded = model ? (db.raw.prepare(`SELECT COUNT(*) AS n FROM source_chunks c JOIN context_sources s ON s.id = c.source_id JOIN chunk_embeddings e ON e.chunk_id = c.id AND e.model = ? AND e.text_sha = c.text_sha ${live}`).get(model, ...args) as { n: number }).n : 0;
+  const value = { embedded, pending: total - embedded };
+  cache.set(key, { at: Date.now(), value });
+  return value;
+}
+
+/** Forgets the cached counts and vector stamps, so a write is seen at once (the embedding job and re-indexing call this). */
+export function forgetCounts(db: HorizonDb) {
+  COUNTS.get(db)?.clear();
+  STAMPS.get(db)?.clear();
 }
 
 /**
@@ -520,7 +551,10 @@ export async function embedPending(db: HorizonDb, embedder: Embedder, opts: { ap
     idlePasses = written ? 0 : idlePasses + 1;
     if (idlePasses >= 3) break;
   }
-  if (embedded) opts.log?.(`[retrieval] embedded ${embedded} passage${embedded === 1 ? '' : 's'} with ${embedder.id} in ${Date.now() - t0} ms`);
+  if (embedded) {
+    forgetCounts(db);
+    opts.log?.(`[retrieval] embedded ${embedded} passage${embedded === 1 ? '' : 's'} with ${embedder.id} in ${Date.now() - t0} ms`);
+  }
   return { embedded, failed };
 }
 

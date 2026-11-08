@@ -123,9 +123,41 @@ start applies migrations if the backup predates the current schema.
   SQLite; a restart marks it stopped and the person runs it again. Embedding passages for App
   Context also runs inside the process (a few milliseconds per passage on one CPU core); a restart
   simply continues with the passages that have no vector yet.
-- Vector search is a scan over every vector of the application (cosine over float32 BLOBs); it is
-  fast at thousands of passages per application and would want an index (for example sqlite-vec)
-  at tens of thousands. The first request after a start pays the model load (one to two seconds).
+- Retrieval is bounded: an FTS5 index supplies the lexical candidates and the application's current
+  vectors are held in memory (about 1.5 KB per passage) for the semantic ones; a question loads a
+  few hundred passages at most. The vector pass is still a scan over the application's vectors in
+  memory: about 75 ms for 50,000 passages on one core, and it blocks the event loop for that long
+  (see the load profile below). An approximate index (for example sqlite-vec) is the next step if a
+  single application grows well past that. The first request after a start pays the model load
+  (one to two seconds) and the first vector pass pays the matrix build (about half a second at
+  50,000 passages).
+- Retention is not automatic. Runs and results, model calls, answer revisions, audit events,
+  uploads, retired passage versions and vectors of a model no longer configured all accumulate.
+  Nothing references the rows a cleanup would remove except history views, so the policy is an
+  operational decision: when a quota is set, delete oldest-first per application, never a row an
+  answer, approval or evaluation still cites (citations, approvals and artifacts are the references
+  to keep), and vacuum into a new file during a maintenance window. Until then, watch the sizes
+  the load profile and `restore-check` report.
+
+## Load profile
+
+`npm run load-profile` builds a disposable database at the sizes the scalability review measured and
+times the hot operations on this machine. It touches no real data and calls no model. Observed on the
+development machine (one run, 8 November 2026; synthetic passages with random unit vectors, so the
+semantic side is representative of cost, not of relevance):
+
+| Operation at 50,000 passages, 25,000 tests, 100,000 model calls (207 MB) | p50 | p95 |
+|---|---|---|
+| Retrieval, keyword only | 41 ms | 50 ms |
+| Retrieval, hybrid (first call builds the vector matrix: 467 ms) | 74 ms | 75 ms |
+| Test search (`listTests` with a query) | 14 ms | 16 ms |
+| Usage totals (first call 97 ms, then cached for 5 s) | 0 ms | 0 ms |
+| Coverage of a story, UAT states of an application | < 1 ms | < 1 ms |
+| Longest event-loop block during hybrid retrievals | 74 ms | 179 ms (max) |
+
+Before the bounded candidates, the same keyword retrieval took about 620 ms at this size (the
+review's measurement). These are observations, not capacity or user-count claims; agree response-time
+and recovery objectives against them before calling scalability done.
 - Not externally validated here: the GitHub Actions push against a real GitHub workflow (the
   payload and its handling are tested against the API), and a real sign-in proxy (the header mode
   is tested with synthetic requests).
