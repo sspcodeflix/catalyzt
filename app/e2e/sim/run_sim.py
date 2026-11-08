@@ -276,6 +276,44 @@ def reload_checks(persona: Persona, chat_url: str | None):
     log.act(f'{persona.name} reloaded a chat: ok')
 
 
+def finished_report(persona: Persona):
+    """A story whose latest UAT analysis is saved: (chat id, story key), or None."""
+    st, data = persona.api('GET', '/api/stories')
+    for s in data.get('stories', []) if st == 200 else []:
+        u = s.get('uat') or {}
+        if u.get('chatId') and u.get('state') in ('gaps', 'ready'):
+            return u['chatId'], s['key']
+    return None
+
+
+def phone_session(browser, owner_p: Persona):
+    """R23: the owner on a phone opens a finished UAT report, so the step never leaves a stopped run.
+    Only when nothing has been analysed yet does it start an analysis, and then it waits for the
+    answer before switching tabs and closing."""
+    mob = Persona(browser, APP, owner, log, mobile=True)
+    mob.sign_in()
+    done = finished_report(mob)
+    if done:
+        chat_id, key = done
+        mob.goto(f'/chat/{chat_id}/artifact/uat-{key.lower()}', '.turn .msgactions')
+    else:
+        mob.goto('/tickets', 'table.tickets')
+        mob.page.click('table.tickets tbody tr:first-child button.btn.small')
+        mob.page.wait_for_url(re.compile(r'/chat/'), timeout=20000)
+        if wait_answer(mob) is None:
+            log.add('bug', mob.page.url, 'the phone analysis did not finish', owner_p.name)
+            mob.close()
+            return
+    try:
+        mob.page.wait_for_selector('.mobiletabs [role=tab]', timeout=10000)
+        mob.page.click('.mobiletabs [role=tab]:has-text("Chat")')
+        mob.check_text('phone chat')
+        log.act(f'{owner.get("name")} on a phone: chat/report tabs work ({"opened a finished report" if done else "analysed and waited for the answer"})')
+    except Exception:
+        log.add('bug', mob.page.url, 'no chat/report tabs on a phone', owner_p.name)
+    mob.close()
+
+
 def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -315,19 +353,7 @@ def main():
         owner_p.check_text('/hexa')
         # A phone-sized owner session: report/chat tabs and the drawer.
         if keys:
-            mob = Persona(browser, APP, owner, log, mobile=True)
-            mob.sign_in()
-            mob.goto('/tickets', 'table.tickets')
-            mob.page.click('table.tickets tbody tr:first-child button.btn.small')
-            mob.page.wait_for_url(re.compile(r'/chat/'), timeout=20000)
-            try:
-                mob.page.wait_for_selector('.mobiletabs [role=tab]', timeout=10000)
-                mob.page.click('.mobiletabs [role=tab]:has-text("Chat")')
-                mob.check_text('phone chat')
-                log.act(f'{owner.get("name")} on a phone: chat/report tabs work')
-            except Exception:
-                log.add('bug', mob.page.url, 'no chat/report tabs on a phone', owner_p.name)
-            mob.close()
+            phone_session(browser, owner_p)
         st, usage = owner_p.api('GET', '/api/usage')
         summary['tokens_all_time'] = usage.get('allTime', {}).get('total') if st == 200 else None
         for mp in mgr_personas:
