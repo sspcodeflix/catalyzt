@@ -106,18 +106,23 @@ export function Home() {
         </nav>
       )}
 
-      <div className="caps">
-        {capabilities.map((c) => (
-          <button key={c.id} type="button" className="cap" onClick={() => setDraft(exampleFor(c.id, c.example))}>
-            <span className="tile">
-              <Icon name={c.icon} />
-            </span>
-            <b>{c.name}</b>
-            <span>{c.summary}</span>
-            <em>“{exampleFor(c.id, c.example)}”</em>
-          </button>
-        ))}
-      </div>
+      {/* One example per capability, as a short row: a click puts it in the message box to edit or send. The
+          capabilities themselves are also in the composer's agent picker. */}
+      <section className="tryrow" aria-labelledby="try-label">
+        <span id="try-label" className="trylabel">
+          Try asking
+        </span>
+        <ul className="chips">
+          {capabilities.map((c) => (
+            <li key={c.id}>
+              <button type="button" className="chip" title={`${c.name}: ${c.summary}`} onClick={() => setDraft(exampleFor(c.id, c.example))}>
+                <Icon name={c.icon} small />
+                <span>{exampleFor(c.id, c.example)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       <div className="fine">
         <b>{BRAND.name}</b> · AI Quality &amp; Reliability Engineering

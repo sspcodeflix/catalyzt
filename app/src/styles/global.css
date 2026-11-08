@@ -87,7 +87,12 @@ svg.sm { width: 15px; height: 15px; }
 .hero h1 { margin: 8px 0 0; font: 400 42px/1.15 var(--hz-font-display); letter-spacing: -.015em; }
 .hero p { margin: 0; color: var(--hz-text-secondary); font-size: 16px; }
 .home .composer { max-width: 720px; }
-.caps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; width: 100%; max-width: 980px; }
+/* Home: example questions as one quiet row under the entry cards. */
+.tryrow { width: 100%; max-width: 980px; display: flex; align-items: baseline; gap: 12px; }
+.trylabel { flex: none; font-size: 12.5px; font-weight: 500; color: var(--hz-text-muted); }
+.tryrow .chips { margin: 0; padding: 0; list-style: none; }
+.tryrow .chip { min-height: 32px; font-size: 13px; color: var(--hz-text-secondary); text-align: left; }
+.tryrow .chip svg { color: var(--hz-text-muted); }
 .cap { text-align: left; padding: 14px; border: 1px solid var(--hz-border); border-radius: var(--hz-radius-lg); background: var(--hz-surface); display: flex; flex-direction: column; gap: 6px; min-height: 132px; }
 .cap:hover { border-color: var(--hz-border-strong); }
 .tile { width: 34px; height: 34px; border-radius: var(--hz-radius-md); background: var(--hz-surface-muted); display: inline-flex; align-items: center; justify-content: center; color: var(--hz-text-secondary); flex-shrink: 0; }
@@ -113,7 +118,7 @@ svg.sm { width: 15px; height: 15px; }
   .composerwrap { padding: 10px 12px 14px; }
   .wide { display: none; }
   .short { display: inline; }
-  .caps { grid-template-columns: 1fr 1fr; }
+  .tryrow { flex-direction: column; gap: 8px; }
   .page { padding: 18px 16px 28px; }
   .hero h1 { font-size: 32px; }
 }
