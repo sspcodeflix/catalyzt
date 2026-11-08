@@ -1,0 +1,78 @@
+{
+  "note": "The CATZ backlog: stories about Catalyzt's own features, written as a product owner would in Jira. UAT flows draft manual cases from these criteria; nothing here looks at existing tests.",
+  "stories": [
+    {
+      "key": "CATZ-1001",
+      "summary": "Approve the drafted cases of several stories at once",
+      "description": "When two or more stories in a test flow wait on the same person's review, the person should be able to tick them and approve in one go, from the flow page and from the flow's card in chat.",
+      "type": "Story",
+      "status": "Ready for UAT",
+      "fixVersion": "demo",
+      "components": ["flows"],
+      "assignee": "u-brijesh",
+      "purpose": "uat",
+      "updatedDaysAgo": 1,
+      "acceptanceCriteria": [
+        "When two or more stories wait on my review, a panel under Waiting on you lists them with a checkbox each, all ticked.",
+        "Select all and Clear change the selection, and the Approve button counts the selection.",
+        "Approving decides each selected story exactly as if approved alone; a story that also needs another approver keeps waiting on them.",
+        "After approving, a line says which stories moved on, which still wait on whom, and which were skipped and why.",
+        "The same panel appears in the flow's card in chat."
+      ]
+    },
+    {
+      "key": "CATZ-1002",
+      "summary": "A story signed off in a UAT flow reads Signed off everywhere",
+      "description": "Once the assignee signs a story off in a UAT flow, the story should no longer show the gaps its analysis found; Jira Stories, Search, the story panel and the Start page should show the sign-off instead.",
+      "type": "Story",
+      "status": "Ready for UAT",
+      "fixVersion": "demo",
+      "components": ["stories", "flows"],
+      "assignee": "u-sourav",
+      "purpose": "uat",
+      "updatedDaysAgo": 2,
+      "acceptanceCriteria": [
+        "After a sign-off, Jira Stories shows the story with the pill Signed off, when, and by whom.",
+        "The Jira Stories filter has a Signed off entry that lists such stories.",
+        "On the Start a test flow page a signed-off story is marked and is left out of Select all, but can still be picked.",
+        "A new analysis after the sign-off shows the analysis state again, not the sign-off."
+      ]
+    },
+    {
+      "key": "CATZ-1003",
+      "summary": "Open a test flow in the chat's side pane",
+      "description": "From a chat about a story in a flow, opening the flow should not leave the conversation: the whole flow opens in the right pane, with every control, and a link to the full page.",
+      "type": "Story",
+      "status": "Ready for UAT",
+      "fixVersion": "demo",
+      "components": ["chat", "flows"],
+      "assignee": "u-brijesh",
+      "purpose": "uat",
+      "updatedDaysAgo": 1,
+      "acceptanceCriteria": [
+        "The flow's title in the bar above the reply box and Open the whole flow in a flow card open the flow in the right pane, and the chat stays on the left.",
+        "The pane shows the same steps, Waiting on you, stories and timeline as the flow page, and the same buttons work there.",
+        "The pane has a Full page link to the flow page and a close control that returns to the chat.",
+        "On a phone the pane stacks under the chat and the tabs read Chat and Flow."
+      ]
+    },
+    {
+      "key": "CATZ-1004",
+      "summary": "Cues after a readiness answer match the story's state",
+      "description": "The suggested next questions under a UAT readiness answer should only offer what the assistant can answer, and in a flow the next action for the person should come first.",
+      "type": "Story",
+      "status": "Ready for UAT",
+      "fixVersion": "demo",
+      "components": ["chat"],
+      "assignee": "u-sourav",
+      "purpose": "uat",
+      "updatedDaysAgo": 3,
+      "acceptanceCriteria": [
+        "A story with drafted cases offers Write automation for the gaps and Which tests cover this story?",
+        "What changed since the story was last analysed? is offered only when an earlier analysis exists, and the answer names the earlier analyses and what moved.",
+        "In a chat about a story in a flow, the first cues under the last answer are the next actions for me, and each does its action in the chat.",
+        "No pair of cues repeats a question."
+      ]
+    }
+  ]
+}

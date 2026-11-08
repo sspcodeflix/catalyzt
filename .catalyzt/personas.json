@@ -1,9 +1,9 @@
 {
-  "note": "The people of the Saleor demonstration workspace. Catalyzt seeds users and memberships from this file. Emails are placeholders.",
+  "note": "The people of the Catalyzt demonstration workspace (Catalyzt itself is the application under test). Catalyzt seeds users and memberships from this file. Emails are placeholders.",
   "people": [
-    { "id": "u-ram",     "name": "Ram Kumar", "initials": "RK", "email": "ram.kumar@example.com", "app": "SALR", "role": "app_owner" },
-    { "id": "u-brijesh", "name": "Brijesh",   "initials": "BJ", "email": "brijesh@example.com",   "app": "SALR", "role": "component_manager" },
-    { "id": "u-sourav",  "name": "Sourav",    "initials": "SV", "email": "sourav@example.com",    "app": "SALR", "role": "component_manager" },
-    { "id": "u-nandini", "name": "Nandini",   "initials": "ND", "email": "nandini@example.com",   "app": "SALR", "role": "product_owner" }
+    { "id": "u-ram",     "name": "Ram Kumar", "initials": "RK", "email": "ram.kumar@example.com", "app": "CATZ", "role": "app_owner" },
+    { "id": "u-brijesh", "name": "Brijesh",   "initials": "BJ", "email": "brijesh@example.com",   "app": "CATZ", "role": "component_manager" },
+    { "id": "u-sourav",  "name": "Sourav",    "initials": "SV", "email": "sourav@example.com",    "app": "CATZ", "role": "component_manager" },
+    { "id": "u-nandini", "name": "Nandini",   "initials": "ND", "email": "nandini@example.com",   "app": "CATZ", "role": "product_owner" }
   ]
 }

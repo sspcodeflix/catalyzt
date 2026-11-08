@@ -1,0 +1,34 @@
+{
+  "id": "CATZ",
+  "name": "Catalyzt",
+  "description": "Catalyzt itself as the application under test: its own repository is the knowledge base (docs, components), and catalyzt-ui-tests is the automation repository whose Playwright tests, one folder per capability, the regression flow scans and reads results from.",
+  "jiraProject": "CATZ",
+  "owner": "u-ram",
+  "workspaces": ["catalyzt"],
+  "repos": [
+    {
+      "name": "catalyzt",
+      "github": "sspcodeflix/catalyzt",
+      "clone": true,
+      "languages": ["TypeScript"],
+      "testFrameworks": ["Vitest", "Playwright"]
+    },
+    {
+      "name": "ui-tests",
+      "github": "sspcodeflix/catalyzt-ui-tests",
+      "clone": true,
+      "languages": ["TypeScript"],
+      "testFrameworks": ["Playwright"]
+    }
+  ],
+  "roles": { "product_owner": ["u-nandini"] },
+  "components": [
+    { "name": "home",        "manager": "u-brijesh", "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/home",        "language": "TypeScript", "tests": "Playwright" },
+    { "name": "chat",        "manager": "u-brijesh", "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/chat",        "language": "TypeScript", "tests": "Playwright" },
+    { "name": "flows",       "manager": "u-brijesh", "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/flows",       "language": "TypeScript", "tests": "Playwright" },
+    { "name": "stories",     "manager": "u-sourav",  "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/stories",     "language": "TypeScript", "tests": "Playwright" },
+    { "name": "hexa",        "manager": "u-sourav",  "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/hexa",        "language": "TypeScript", "tests": "Playwright" },
+    { "name": "app-context", "manager": "u-sourav",  "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/app-context", "language": "TypeScript", "tests": "Playwright" },
+    { "name": "huddle",      "manager": "u-sourav",  "workspace": "catalyzt", "repo": "ui-tests", "path": "tests/huddle",      "language": "TypeScript", "tests": "Playwright" }
+  ]
+}
