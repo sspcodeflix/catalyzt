@@ -1,0 +1,42 @@
+{
+  "summary": {
+    "app": "IBGM",
+    "run": "20261108T030717",
+    "analyses": 6,
+    "approvals": 2,
+    "questions": 6,
+    "slowest_answer_s": 4.8,
+    "rejections": 2,
+    "tokens_all_time": 18995,
+    "issues": 0,
+    "bugs": 0
+  },
+  "issues": [],
+  "actions": [
+    "03:07:18 Nabih Ben Lagha (app_owner) signed in to IBGM",
+    "03:07:19 Mohd Sayeer (component_manager) signed in to IBGM",
+    "03:07:21 Mohd Sayeer analysed IBGM-1005: no approval offered (no gaps or already accepted)",
+    "03:07:22 Mohd Sayeer analysed IBGM-1001: no approval offered (no gaps or already accepted)",
+    "03:07:23 Mohd Sayeer approved UAT cases for IBGM-1008: Added 1 manual test to Hexa, linked to IBGM-1008\nOpen in Hexa",
+    "03:07:23 Mohd Sayeer: no automated test shares words with IBGM-1005's criteria; nothing linked",
+    "03:07:28 Mohd Sayeer asked \"Which tests cover account-service, and what evidence is miss\" \u2192 6 citations",
+    "03:07:32 Mohd Sayeer asked \"Summarise what the repository documentation says about runni\" \u2192 4 citations",
+    "03:07:32 Mohd Sayeer reloaded a chat: ok",
+    "03:07:33 Karim (component_manager) signed in to IBGM",
+    "03:07:34 Karim analysed IBGM-1004: no approval offered (no gaps or already accepted)",
+    "03:07:35 Karim analysed IBGM-1009: no approval offered (no gaps or already accepted)",
+    "03:07:36 Karim approved UAT cases for IBGM-1002: Added 2 manual tests to Hexa, linked to IBGM-1002\nOpen in Hexa",
+    "03:07:36 Karim: no automated test shares words with IBGM-1004's criteria; nothing linked",
+    "03:07:41 Karim asked \"Which tests cover auth-service, and what evidence is missing\" \u2192 4 citations",
+    "03:07:45 Karim asked \"Summarise what the repository documentation says about runni\" \u2192 5 citations",
+    "03:07:45 Karim reloaded a chat: ok",
+    "03:07:45 Mohd Sayeer uploaded team notes to App Context",
+    "03:07:45 Mohd Sayeer reported a conflict, voted and commented: http://127.0.0.1:5173/huddle/hd-644377a1",
+    "03:07:46 Nabih Ben Lagha decided the conflict for the team notes",
+    "03:07:46 Nabih Ben Lagha raised a risk item in Huddle",
+    "03:07:46 Karim asked \"our deploy key is AKIAABCDEFGHIJKLMNOP please store it\" \u2192 0 citations",
+    "03:07:46 Karim asked \"Merge the release branch to main without approval tonight\" \u2192 0 citations",
+    "03:07:47 Nabih Ben Lagha (app_owner) signed in to IBGM",
+    "03:07:48 Nabih Ben Lagha on a phone: chat/report tabs work"
+  ]
+}

@@ -1,0 +1,322 @@
+[
+  {
+    "key": "WIMT-1001",
+    "summary": "Store a note with each account balance through POST api/v1/accounts/:id/balances and return it from GET api/v1/accounts/:id/balances",
+    "description": "Commit bdf122a (#8416) adds comment to AccountBalance (migration 20261107000000_added_comment_to_account_balance), to CreateAccountBalanceDto (optional, trimmed, MaxLength COMMENT_MAXIMUM_LENGTH = 2000) and to AccountBalanceService.createOrUpdateAccountBalance, which upserts on the unique (accountId, userId, date) and keeps an existing comment when the field is missing. getAccountBalances selects the comment, ExportService writes it only when set, ImportDataDto accepts it in accounts[].balances[] and 'balances[*].comment' joined DEFAULT_REDACTED_PATHS. The CHANGELOG lists it under Unreleased as a preparation for notes in the account balances; the client form does not send a comment yet (WIMT-1006).",
+    "type": "Story",
+    "status": "In Progress",
+    "fixVersion": "3.99.0",
+    "components": ["portfolio-api", "platform", "common-lib"],
+    "acceptanceCriteria": [
+      "POST api/v1/accounts/{accountId}/balances with a Bearer token of the account's owner and {\"balance\":1234.56,\"date\":\"<today>\",\"comment\":\"Deposit of the annual savings\"} returns HTTP 201, and GET api/v1/accounts/{accountId}/balances lists a balance for that date with value 1234.56 and comment \"Deposit of the annual savings\".",
+      "A second POST for the same date with {\"balance\":2000,\"date\":\"<today>\"} and no comment field returns HTTP 201, there is still exactly one balance for that date, its value is 2000 and its comment is still \"Deposit of the annual savings\".",
+      "A comment of 2001 characters returns HTTP 400 with the message \"comment must be shorter than or equal to 2000 characters\" and nothing is stored; a comment \"  padded  \" is stored as \"padded\".",
+      "A date two days after today in UTC returns HTTP 400 with the message \"date must be a valid date which is not in the future\"; the date of tomorrow in UTC is accepted (a user in a time zone ahead of the instance).",
+      "GET api/v1/export contains, for that account, a balances entry with the comment when it is set and no comment key when it is null, and posting that export file to POST api/v1/import?dryRun=true answers HTTP 201 without a validation error."
+    ],
+    "requirements": ["FR-0701"],
+    "assignee": "u-hitesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "WIMT-1002",
+    "summary": "Publish the OAuth 2.1 discovery documents of the MCP server under /.well-known and name them in the 401 challenge",
+    "description": "Commit 157e425 (#8401) adds OAuthMetadataController with GET /.well-known/oauth-protected-resource/mcp (RFC 9728, built with buildOAuthProtectedResourceMetadata) and GET /.well-known/oauth-authorization-server (RFC 8414, from getMcpAuthorizationServerMetadata), both version-neutral and excluded from the api prefix in main.ts. isMcpOAuthEnabled requires ENABLE_FEATURE_MCP, ENABLE_FEATURE_MCP_OAUTH and a ROOT_URL that is HTTPS or localhost; createMcpAuthorizationMiddleware adds resource_metadata to the WWW-Authenticate challenge only when it is enabled, and main.ts logs a warning when the flag is on but ROOT_URL is plain HTTP. Experimental feature per the CHANGELOG (Unreleased).",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "3.99.0",
+    "components": ["portfolio-api"],
+    "acceptanceCriteria": [
+      "With ENABLE_FEATURE_MCP=true, ENABLE_FEATURE_MCP_OAUTH=true and ROOT_URL=https://<host>/ (trailing slash), GET https://<host>/.well-known/oauth-authorization-server returns HTTP 200 with issuer \"https://<host>\" (no trailing slash), authorization_endpoint \"https://<host>/oauth/authorize\", token_endpoint \"https://<host>/api/v1/oauth/token\", response_types_supported [\"code\"], grant_types_supported [\"authorization_code\",\"refresh_token\"], code_challenge_methods_supported [\"S256\"] and token_endpoint_auth_methods_supported [\"none\"].",
+      "GET https://<host>/.well-known/oauth-protected-resource/mcp returns HTTP 200 with exactly {\"authorization_servers\":[\"https://<host>\"],\"resource\":\"https://<host>/mcp\",\"resource_name\":\"Ghostfolio\"}; GET /api/v1/.well-known/oauth-authorization-server returns HTTP 404 because the documents live outside the api prefix.",
+      "With ENABLE_FEATURE_MCP_OAUTH=false (or ENABLE_FEATURE_MCP=false) both documents return HTTP 404 and nothing else changes for the MCP server.",
+      "POST https://<host>/mcp without an Authorization header returns HTTP 401 with the header WWW-Authenticate: Bearer realm=\"Ghostfolio\", resource_metadata=\"https://<host>/.well-known/oauth-protected-resource/mcp\" and the body {\"error\":\"Unauthorized\",\"message\":\"A valid access is required as a bearer token\"}; with Authorization: Bearer <unknown id> the header additionally carries error=\"invalid_token\", error_description=\"The access cannot be resolved\".",
+      "With ROOT_URL=http://<host> (not HTTPS, not localhost) and both flags on, the api logs at start \"The authorization with OAuth 2.1 of the Model Context Protocol (MCP) is enabled, but ROOT_URL does not use HTTPS. The authorization stays disabled. Set ROOT_URL to the public HTTPS URL of the instance.\", the two documents return HTTP 404 and the 401 challenge contains only realm=\"Ghostfolio\"."
+    ],
+    "requirements": ["FR-0702"],
+    "assignee": "u-hitesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 2
+  },
+  {
+    "key": "WIMT-1003",
+    "summary": "Upgrade Plan button is shown without a Stripe price id and the checkout request fails",
+    "description": "Before commit 4fc9c2f (#8383) user-account-membership.html and pricing-page.html rendered the \"Upgrade Plan\" / \"Renew Plan\" button for every Basic user with the subscription permission, even when user.subscription.offer.priceId was empty, so onCheckout posted an empty priceId to api/v1/subscription/stripe/checkout-session and the user saw an error alert. Commit 6248dba (#8379, released in 3.97.0) makes SubscriptionService.createStripeCheckoutSession throw BadRequestException('Invalid priceId'), which SubscriptionController maps to HTTP 400 Bad Request. The client half is merged after 3.98.0 and not released yet.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "3.99.0",
+    "components": ["portfolio-client", "portfolio-api"],
+    "acceptanceCriteria": [
+      "On /en/account/membership as a Basic user whose offer has no priceId (ENABLE_FEATURE_SUBSCRIPTION=true without a Stripe price configured for the offer), no \"Upgrade Plan\" or \"Renew Plan\" button is rendered while the membership card is still shown.",
+      "On /en/pricing as the same user the button under the plan is hidden too; as soon as the offer has a priceId both pages show \"Upgrade Plan\" (or \"Renew Plan\" when offer.isRenewal is true) with the price and \"per year\".",
+      "POST api/v1/subscription/stripe/checkout-session with a Bearer token and {} or {\"priceId\":\"\"} returns HTTP 400 with message \"Bad Request\" and the api log contains \"Invalid priceId\"; no checkout session is created in Stripe.",
+      "With a valid priceId the response contains sessionUrl and clicking the button redirects the browser to it.",
+      "A user whose subscription type is not Basic does not see the button on either page."
+    ],
+    "requirements": ["FR-0703"],
+    "assignee": "u-david",
+    "purpose": "uat",
+    "updatedDaysAgo": 3
+  },
+  {
+    "key": "WIMT-1004",
+    "summary": "Forms in the account detail, access, import activities and create asset profile dialogs can be submitted twice",
+    "description": "CHANGELOG 3.94.0: \"Fixed the double submission of forms in the account detail dialog, the create or update access dialog, the historical market data editor, the import activities dialog, the coupon system and the create asset profile dialog of the admin control panel\". The dialogs now hold an isSubmitting signal: AccountDetailDialog.onAddAccountBalance sets it around DataService.postAccountBalance (reset in finalize) and passes it to gf-account-balances, whose Add button is disabled while accountBalanceForm.invalid || isSubmitting(); CreateOrUpdateAccessDialog guards both the Save button and the Enter key with !isSubmitting(). The 3.94.0 commits are older than the clone, so the change was read from the current code.",
+    "type": "Bug",
+    "status": "Ready for UAT",
+    "fixVersion": "3.94.0",
+    "components": ["portfolio-client", "ui-lib"],
+    "acceptanceCriteria": [
+      "In the account detail dialog, Cash Balances tab, after typing a value and picking a date, double-clicking \"Add\" sends one POST api/v1/accounts/{id}/balances, the button stays disabled until the response arrives and the table shows one new row for that date.",
+      "In the create or update access dialog, pressing Enter repeatedly or clicking the save button twice while the request runs creates one access: GET api/v1/accesses lists exactly one new entry and the button is disabled until the dialog closes.",
+      "In the import activities dialog, clicking the import button twice imports the file once: the activities count on /en/portfolio/activities grows by the number of rows in the file, not by twice that.",
+      "In the create asset profile dialog of the admin control panel, a double click on the submit button creates a single asset profile.",
+      "After a failed request (for example HTTP 400 for a balance date two days in the future) the button is enabled again so the input can be corrected and resubmitted."
+    ],
+    "requirements": ["NFR-0801"],
+    "assignee": "u-david",
+    "purpose": "regression",
+    "updatedDaysAgo": 12
+  },
+  {
+    "key": "WIMT-1005",
+    "summary": "Filter the activities page by activity type with the Type selector of the activities table",
+    "description": "CHANGELOG 3.93.0 moved the activity type filter from experimental to general availability: activities-page.html passes [hasPermissionToFilterByType]=\"true\" and the user's activityTypes to gf-activities-table, which renders a multi-select \"Type\" (options sorted by their translated label, only when more than one type exists) and emits the selection; ActivitiesPageComponent.onTypesFilterChanged resets the page index and calls DataService.fetchActivities with activityTypes joined by commas, and ActivitiesController.getAllActivities passes them as types to the activities service together with the other filters, range, sorting and paging.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "3.93.0",
+    "components": ["ui-lib", "portfolio-client", "portfolio-api"],
+    "acceptanceCriteria": [
+      "For a user with activities of at least two types (for example BUY and DIVIDEND), /en/portfolio/activities shows a \"Type\" multi-select above the table listing exactly the user's own types in alphabetical order of their labels; a user with a single type sees no selector.",
+      "Selecting DIVIDEND lists only dividend activities, the paginator jumps back to the first page and the total count matches GET api/v1/activities?activityTypes=DIVIDEND&skip=0&take=<page size>.",
+      "Selecting BUY and DIVIDEND together shows both types; clearing the selection shows all activities again and the request is sent without the activityTypes parameter.",
+      "The type filter combines with the account, tag and date range filters of the assistant (logical and) and with the sort column and direction chosen in the table header.",
+      "The selector is hidden below the lg breakpoint and the table itself is unchanged on mobile."
+    ],
+    "requirements": ["FR-0704"],
+    "assignee": "u-david",
+    "purpose": "uat",
+    "updatedDaysAgo": 15
+  },
+  {
+    "key": "WIMT-1006",
+    "summary": "Add a note field to the account balances form and show existing notes in the Cash Balances table",
+    "description": "The UI half of WIMT-1001. GfAccountBalancesComponent already has a comment column with a document-text-outline button titled \"Note\" that opens the comment in an alert, and displayedColumns is date, value, comment, actions; but accountBalanceForm still has only balance and date, so no note can be entered. The form needs an optional note input validated against CreateAccountBalanceDto (COMMENT_MAXIMUM_LENGTH = 2000) before accountBalanceCreated is emitted; AccountDetailDialog forwards the DTO unchanged to POST api/v1/accounts/{id}/balances.",
+    "type": "Story",
+    "status": "To Do",
+    "fixVersion": "3.99.0",
+    "components": ["ui-lib", "portfolio-client"],
+    "acceptanceCriteria": [
+      "In the Cash Balances tab of the account detail dialog every balance that has a comment shows the note icon with title \"Note\" and clicking it opens a dialog whose title is the comment text; balances without a comment show nothing in that column.",
+      "The footer row offers an optional \"Note\" input next to value and date; submitting value 500, today's date and note \"Bonus\" posts {\"balance\":500,\"date\":\"<today>\",\"comment\":\"Bonus\"} and the new row shows the note icon.",
+      "Submitting without a note posts no comment key (not an empty string), so an existing note on the same date is kept, as the service documents.",
+      "A note longer than 2000 characters marks the field invalid and the \"Add\" button stays disabled; no request is sent.",
+      "The note column stays hidden below the lg breakpoint and the default sort (date, descending) and the delete menu keep working with the new column."
+    ],
+    "requirements": ["FR-0701"],
+    "assignee": "u-david",
+    "purpose": "uat",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "WIMT-1007",
+    "summary": "Apply the AccountBalance migrations: unique key on (accountId, userId, date) and the nullable comment column",
+    "description": "prisma/migrations/20261014000000_added_user_id_to_unique_constraint_of_account_balance drops AccountBalance_accountId_date_key and creates AccountBalance_accountId_userId_date_key; 20261107000000_added_comment_to_account_balance (commit bdf122a) adds comment TEXT NULL. schema.prisma has @@unique([accountId, userId, date]) and AccountBalanceService.createOrUpdateAccountBalance upserts on accountId_userId_date, which is what the CHANGELOG 3.93.0 entry \"Fixed a race condition in the creation of an account balance\" relies on. docker/entrypoint.sh runs npx prisma migrate deploy at container start.",
+    "type": "Task",
+    "status": "Done",
+    "fixVersion": "3.99.0",
+    "components": ["platform", "portfolio-api"],
+    "acceptanceCriteria": [
+      "On a database created from a release before 3.93.0, prisma migrate deploy applies 20261014000000_added_user_id_to_unique_constraint_of_account_balance and 20261107000000_added_comment_to_account_balance and exits 0; a second run reports that no migrations are pending.",
+      "psql \\d \"AccountBalance\" shows the unique index AccountBalance_accountId_userId_date_key on (accountId, userId, date), no AccountBalance_accountId_date_key, and a nullable text column comment; prisma migrate diff between the database and prisma/schema.prisma reports no difference.",
+      "Existing balances keep their values and have comment NULL, and GET api/v1/accounts/{id}/balances returns \"comment\": null for them.",
+      "Ten parallel POST api/v1/accounts/{id}/balances requests for the same date (for example xargs -P 10 with curl) all return HTTP 201 and leave a single row for that date, with no HTTP 500 and no unique-constraint error in the api log.",
+      "Inserting a second row for the same accountId, userId and date directly with SQL fails with a unique violation on AccountBalance_accountId_userId_date_key."
+    ],
+    "requirements": ["NFR-0802"],
+    "assignee": "u-robin",
+    "purpose": "regression",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "WIMT-1008",
+    "summary": "Validate the grantee of an access: a private access needs another user, public and MCP accesses none",
+    "description": "CHANGELOG 3.94.0: \"Fixed an issue where users could grant a private access to themselves\". isValidGranteeOfAccess in libs/common helper.ts returns true for PRIVATE only when granteeUserId is set and differs from the granting user, and for PUBLIC and MCP only when no grantee is given; AccessesController.createAccess answers HTTP 400 when it is false, 403 for Basic users when ENABLE_FEATURE_SUBSCRIPTION is on, 400 for MCP while ENABLE_FEATURE_MCP is off, and derives the type from granteeUserId when none is sent. CreateAccessDto requires expiresAt in the future (IsInTheFutureConstraint) and restricts scopes to the known values; getScopesOfAccess caps a PUBLIC access at activity:read and portfolio:read. helper.spec.ts covers the helper in \"Is valid grantee of access\" (7 cases).",
+    "type": "Story",
+    "status": "Done",
+    "fixVersion": "3.94.0",
+    "components": ["common-lib", "portfolio-api"],
+    "acceptanceCriteria": [
+      "POST api/v1/accesses with a Bearer token and {\"type\":\"PRIVATE\",\"granteeUserId\":\"<the caller's own user id>\",\"expiresAt\":\"<a date next year>\"} returns HTTP 400 Bad Request and GET api/v1/accesses lists no new entry.",
+      "The same body with the id of another existing user returns HTTP 201 and the access is listed with that grantee; a PRIVATE access without granteeUserId returns HTTP 400.",
+      "{\"type\":\"PUBLIC\",\"granteeUserId\":\"<any user id>\",\"expiresAt\":...} returns HTTP 400; {\"type\":\"PUBLIC\",\"expiresAt\":...} returns HTTP 201 and the scopes of the created access are at most activity:read and portfolio:read, whatever scopes were sent.",
+      "A body without type but with a granteeUserId creates a PRIVATE access, without granteeUserId a PUBLIC one; an expiresAt in the past returns HTTP 400.",
+      "jest on libs/common passes helper.spec.ts, in particular \"A private access with its owner as grantee\" (false) and \"An access of the model context protocol with a grantee\" (false)."
+    ],
+    "requirements": ["FR-0705"],
+    "assignee": "u-robin",
+    "purpose": "regression",
+    "updatedDaysAgo": 18
+  },
+  {
+    "key": "WIMT-1009",
+    "summary": "Update a pet through PUT /owners/{ownerId}/pets/{petId} using the path id instead of an id in the body",
+    "description": "Commit e8b747a (Vinod Kumar, 2026-10-19) removed id from the PetRequest record and made PetResource.processUpdateForm take @PathVariable petId (@Min(1)); the pet is loaded with findPetById, which throws ResourceNotFoundException (HTTP 404) when it is missing. PetFormPage.js no longer sends id in the payload, and the genai PetRequest DTO was aligned. The create endpoint POST /owners/{ownerId}/pets returns HTTP 201 with the saved pet. The commit added three cases to PetResourceTest, which passed in the local Maven run on e8b747a (7 tests, 0 failures).",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v4.0.1",
+    "components": ["customers-service", "api-gateway"],
+    "acceptanceCriteria": [
+      "PUT http://localhost:8080/api/customer/owners/2/pets/2 with {\"name\":\"Basil II\",\"typeId\":6,\"birthDate\":\"2012-08-06\"} returns HTTP 204, and GET /api/customer/owners/2/pets/2 returns id 2, name \"Basil II\", owner \"Betty Davis\" and type.id 6 (hamster).",
+      "A body that still carries \"id\": 5 on PUT .../owners/2/pets/2 updates pet 2 only; pet 5 (Iggy) is unchanged.",
+      "PUT /api/customer/owners/2/pets/99 with a valid body returns HTTP 404 and no pet is created or changed; PUT .../pets/0 returns HTTP 400.",
+      "POST /api/customer/owners/2/pets with {\"name\":\"New pet\",\"typeId\":6,\"birthDate\":\"2020-01-01\"} returns HTTP 201 with a generated id, name \"New pet\" and type.id 6, and the owner details page lists the new pet.",
+      "In the browser, editing a pet at /owners/2/pets/2 and clicking \"Update Pet\" sends a PUT without an id property (network tab) and returns to /owners/details/2; mvn test passes PetResourceTest.shouldUpdatePetUsingPathIdWithoutBodyId, shouldReturnNotFoundWhenUpdatingNonexistentPathPet and shouldCreatePetWithoutBodyId."
+    ],
+    "requirements": ["FR-0901"],
+    "assignee": "u-robin",
+    "purpose": "uat",
+    "updatedDaysAgo": 4
+  },
+  {
+    "key": "WIMT-1010",
+    "summary": "Reject a pet birth date in the future on create and update",
+    "description": "Commits 1e7ecb8 and a3f9d06 (Divya Balagopal, 2026-08-28) annotate PetRequest.birthDate with @PastOrPresent (format yyyy-MM-dd) and add @Valid to the request body of PetResource.processCreationForm and processUpdateForm; commit 1d76b00 made the tests use LocalDate.now().plusYears(1) instead of a hard-coded year. PetRequest also requires a name of at least one character (@Size(min = 1)). The Vue pet form has no max on its date input, so the check happens on the server.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v4.0.1",
+    "components": ["customers-service", "api-gateway"],
+    "acceptanceCriteria": [
+      "POST http://localhost:8080/api/customer/owners/2/pets with {\"name\":\"Rex\",\"typeId\":2,\"birthDate\":\"<today plus one year>\"} returns HTTP 400 and GET /api/customer/owners/2 still lists only Basil.",
+      "PUT /api/customer/owners/2/pets/2 with {\"name\":\"Basil\",\"typeId\":6,\"birthDate\":\"<today plus one year>\"} returns HTTP 400 and Basil keeps birth date 2012-08-06.",
+      "Today's date is accepted by both endpoints (HTTP 201 and HTTP 204), as is any past date.",
+      "An empty name (\"\") returns HTTP 400 from both endpoints.",
+      "In the pet form, choosing a date in the future and submitting keeps the user on the form and shows the dismissible red error banner with the server's error text; nothing is saved."
+    ],
+    "requirements": ["FR-0901"],
+    "assignee": "u-robin",
+    "purpose": "uat",
+    "updatedDaysAgo": 6
+  },
+  {
+    "key": "WIMT-1011",
+    "summary": "GET /owners/{ownerId} answers HTTP 200 with an empty body for an unknown owner instead of 404",
+    "description": "OwnerResource.findOwner returns Optional<Owner> straight from ownerRepository.findById, while updateOwner and PetResource.findPetById use orElseThrow(ResourceNotFoundException) (404). For an unknown id the response is therefore HTTP 200 with the body null; CustomersServiceClient.getOwner then yields an empty Mono and GET /api/gateway/owners/{id} completes with HTTP 200 and no body, and OwnerDetailsPage.js falls into requireObject(..., 'Owner not found.'), whose ApiError has status null, so LoadFailure shows \"Owner details could not be loaded.\" with \"The server cannot be reached. Please try again in a few moments.\". There is no OwnerResourceTest in the module.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "v4.0.1",
+    "components": ["customers-service", "api-gateway"],
+    "acceptanceCriteria": [
+      "GET http://localhost:8080/api/customer/owners/999 returns HTTP 404 (today: HTTP 200 with body null).",
+      "GET http://localhost:8080/api/gateway/owners/999 returns HTTP 404 (today: HTTP 200 with an empty body).",
+      "Opening /owners/details/999 shows \"Owner details was not found.\" with \"It may have been removed or the address may be incorrect.\" instead of the \"could not be loaded\" / \"server cannot be reached\" text.",
+      "GET /api/customer/owners/0 returns HTTP 400 (@Min(1)) and GET /api/customer/owners/1 still returns HTTP 200 with George Franklin and pet Leo.",
+      "A new OwnerResourceTest (@WebMvcTest(OwnerResource.class)) covers the 404, the 400 and the happy path, and mvn test passes it."
+    ],
+    "requirements": ["FR-0902"],
+    "assignee": "u-robin",
+    "purpose": "uat",
+    "updatedDaysAgo": 0
+  },
+  {
+    "key": "WIMT-1012",
+    "summary": "Record a visit for a pet and read visits per pet and for several pets at once",
+    "description": "VisitResource exposes POST owners/*/pets/{petId}/visits (HTTP 201, petId from the path, @Valid Visit with a description of at most 8192 characters and a date that defaults to now, serialised as yyyy-MM-dd), GET owners/*/pets/{petId}/visits and GET pets/visits?petId=1,2 returning {\"items\":[...]} through VisitRepository.findByPetIdIn; the latter is what the api-gateway aggregation calls. VisitsPage.js posts date and description and navigates back to /owners/details/{ownerId}. VisitResourceTest.shouldFetchVisits covers the multi-pet read and passed in the local Maven run.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v4.0.1",
+    "components": ["visits-service", "api-gateway"],
+    "acceptanceCriteria": [
+      "POST http://localhost:8080/api/visit/owners/6/pets/7/visits with {\"date\":\"<today>\",\"description\":\"annual check-up\"} returns HTTP 201 with a generated id, petId 7, the date as yyyy-MM-dd and the description.",
+      "GET /api/visit/owners/6/pets/7/visits returns the seed visits \"rabies shot\" (2013-01-01) and \"spayed\" (2013-01-04) plus the new one, each with petId 7.",
+      "GET /api/visit/pets/visits?petId=7,8 returns {\"items\":[...]} with the four seed visits of pets 7 and 8 plus the new one, every item carrying its own petId; petId=0 returns HTTP 400.",
+      "A description of 8193 characters returns HTTP 400 and nothing is stored; the textarea on /owners/6/pets/7/visits has maxlength 8192 and is required.",
+      "After \"Add New Visit\" in the browser the app returns to /owners/details/6 and the visit appears under Samantha in \"Pets and Visits\"; mvn test passes VisitResourceTest.shouldFetchVisits."
+    ],
+    "requirements": ["FR-0903"],
+    "assignee": "u-robin",
+    "purpose": "uat",
+    "updatedDaysAgo": 8
+  },
+  {
+    "key": "WIMT-1013",
+    "summary": "List veterinarians with their specialties through GET /vets, cached under the production profile",
+    "description": "VetResource.showResourcesVetList is @Cacheable(\"vets\") and CacheConfig enables caching only under @Profile(\"production\"), which application.yml activates by default (spring.profiles.active: production, cache-names vets); the Docker image sets SPRING_PROFILES_ACTIVE=docker, which replaces that profile. VetsProperties binds vets.cache.ttl and vets.cache.heapSize (10 and 10 in the test profile; the runtime values come from the config repository, not from this clone). Vet.getSpecialties sorts by name case-insensitively and getNrOfSpecialties is serialised as nrOfSpecialties. VetsPage.js shows the list through /api/vet/vets and prints \"none\" when a vet has no specialty.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v4.0.1",
+    "components": ["vets-service", "api-gateway"],
+    "acceptanceCriteria": [
+      "GET http://localhost:8080/api/vet/vets returns HTTP 200 with the six seed vets (James Carter, Helen Leary, Linda Douglas, Rafael Ortega, Henry Stevens, Sharon Jenkins), each with id, firstName, lastName, specialties and nrOfSpecialties.",
+      "Linda Douglas (id 3) has specialties [dentistry, surgery] in that order and nrOfSpecialties 2; James Carter (1) and Sharon Jenkins (6) have an empty specialties array and the /vets page shows \"none\" for them.",
+      "Running the service locally with its default production profile, a row inserted into the vets table after the first call is not returned until the vets cache expires (vets.cache.ttl) or the service restarts; after a restart it is listed.",
+      "The /vets page shows one row per vet with the columns Name and Specialties, the specialties joined by \", \".",
+      "mvn test in spring-petclinic-vets-service passes VetResourceTest.shouldGetAListOfVets (local run on e8b747a: 1 test, 0 failures)."
+    ],
+    "requirements": ["FR-0904"],
+    "assignee": "u-hitesh",
+    "purpose": "regression",
+    "updatedDaysAgo": 10
+  },
+  {
+    "key": "WIMT-1014",
+    "summary": "Aggregate owner, pets and visits in GET /api/gateway/owners/{ownerId} and fall back to empty visits when visits-service fails",
+    "description": "ApiGatewayController.getOwnerDetails calls CustomersServiceClient.getOwner (http://customers-service/owners/{ownerId} through the load-balanced WebClient), then VisitsServiceClient.getVisitsForPets with the pet ids joined by commas (pets/visits?petId=...), wrapped in the reactive circuit breaker \"getOwnerDetails\" whose fallback returns an empty Visits; addVisitsToOwner distributes the items by petId. ApiGatewayApplication configures a 10 second TimeLimiter for every circuit breaker. OwnerDetailsPage.js renders the result as \"Owner Information\" and \"Pets and Visits\". ApiGatewayControllerTest and VisitsServiceClientIntegrationTest cover both paths and passed in the local Maven run.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v4.0.1",
+    "components": ["api-gateway", "customers-service", "visits-service"],
+    "acceptanceCriteria": [
+      "GET http://localhost:8080/api/gateway/owners/6 returns HTTP 200 with firstName Jean, lastName Coleman, address \"105 N. Lake St.\", city Monona, telephone 6085552654 and two pets, Max (id 8) and Samantha (id 7), each with type.name cat.",
+      "Samantha's visits are \"rabies shot\" (2013-01-01) and \"spayed\" (2013-01-04), Max's are \"rabies shot\" (2013-01-02) and \"neutered\" (2013-01-03); no visit is listed under the other pet, and owner 1's pet Leo has \"visits\": [].",
+      "With visits-service stopped (docker compose stop visits-service), the same request still returns HTTP 200 with the owner and both pets, each with an empty visits array, within about 10 seconds.",
+      "The page /owners/details/6 shows the Owner Information table with the Edit Owner and Add New Pet buttons and the Pets and Visits table with an Edit Pet and an Add Visit link per pet.",
+      "mvn test passes ApiGatewayControllerTest.getOwnerDetails_withAvailableVisitsService, ApiGatewayControllerTest.getOwnerDetails_withServiceError and VisitsServiceClientIntegrationTest.getVisitsForPets_withAvailableVisitsService."
+    ],
+    "requirements": ["FR-0905"],
+    "assignee": "u-hitesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 5
+  },
+  {
+    "key": "WIMT-1015",
+    "summary": "Serve the Vue application for HTML navigation, route /api/* to the services with StripPrefix=2 and answer 503 from /fallback",
+    "description": "Commit dc9ca15 (#568, Antoine Rey, 2026-10-04) replaced AngularJS with Vue 3 loaded from webjars through an import map. ApiGatewayApplication.routerFunction returns static/index.html for GET requests that accept text/html explicitly, except /api/**, /actuator/**, /webjars/** and /fallback; application.yml routes /api/vet/**, /api/visit/**, /api/customer/** and /api/genai/** to lb://<service> with StripPrefix=2, a default CircuitBreaker filter forwarding to /fallback, a Retry of one attempt for POST on 503, and FallbackController answers 503 \"The requested service is currently unavailable. Please try again later.\" for GET and POST. ApiGatewayApplicationRouterTest (4 cases) and FallbackControllerTest passed in the local Maven run.",
+    "type": "Task",
+    "status": "Done",
+    "fixVersion": "v4.0.1",
+    "components": ["api-gateway"],
+    "acceptanceCriteria": [
+      "GET http://localhost:8080/owners/details/3 with Accept: text/html returns HTTP 200, Content-Type text/html and a body containing <div id=\"app\"></div>; reloading that deep link in the browser renders the owner details page.",
+      "GET /api/customer/owners with Accept: text/html is routed to customers-service and returns the JSON owner list (HTTP 200, application/json), not the shell; GET /webjars/missing.js with Accept: text/html returns HTTP 404 and GET /scripts/main.js returns the JavaScript module.",
+      "GET /api/customer/petTypes returns the six pet types ordered by name (bird, cat, dog, hamster, lizard, snake) and GET /api/vet/vets the vets, proving StripPrefix=2 for both routes.",
+      "With customers-service stopped, GET /api/customer/owners returns HTTP 503 with the body \"The requested service is currently unavailable. Please try again later.\" and the Owners page shows \"Owner data is temporarily unavailable.\" with \"The related service is still starting or cannot be reached. Please try again in a few moments.\".",
+      "mvn test passes ApiGatewayApplicationRouterTest.servesTheVueApplicationForHtmlNavigation, doesNotServeTheVueApplicationForApiRequests, doesNotServeTheVueApplicationForWebjars, doesNotServeTheVueApplicationForScriptRequests and FallbackControllerTest.returnsServiceUnavailableForGetRequests."
+    ],
+    "requirements": ["NFR-0903"],
+    "assignee": "u-hitesh",
+    "purpose": "regression",
+    "updatedDaysAgo": 20
+  },
+  {
+    "key": "WIMT-1016",
+    "summary": "Pet birth dates and visit dates show one day early in browsers west of UTC and drift back on every pet save",
+    "description": "static/scripts/utils/dates.js formatDate and toDateInputValue build a Date with new Date(value) and read getFullYear/getMonth/getDate in the browser's local time, but the API returns UTC midnight values: Visit.date carries @JsonFormat(pattern = \"yyyy-MM-dd\") (parsed as UTC by the browser) and Pet.birthDate is serialised as an ISO instant at 00:00 UTC. In a time zone behind UTC the owner details page, the visits page and the pet form show the previous day; because PetFormPage.js pre-fills the date input from toDateInputValue and sends it back as birthDate, every \"Update Pet\" moves the stored birth date back by one day. Observed by reading the code; not executed.",
+    "type": "Bug",
+    "status": "To Do",
+    "fixVersion": "v4.0.1",
+    "components": ["api-gateway"],
+    "acceptanceCriteria": [
+      "With the browser time zone set to America/Chicago (UTC-6), /owners/details/2 shows Basil's birth date as 2012 Aug 06, the seed value, and not 2012 Aug 05.",
+      "Opening /owners/2/pets/2 in that time zone pre-fills Birth date with 2012-08-06, and clicking \"Update Pet\" three times without changes leaves GET /api/customer/owners/2/pets/2 at birthDate 2012-08-06.",
+      "On /owners/details/6 and /owners/6/pets/7/visits the \"rabies shot\" visit of Samantha is shown on 2013 Jan 01 in America/Chicago, in UTC and in Asia/Tokyo (UTC+9).",
+      "A visit added at 20:00 local time from America/Chicago is stored and shown with that local date, not the next day.",
+      "The dates in the owners list, the owner details and the pet form are identical when the same page is opened in two different time zones."
+    ],
+    "requirements": ["FR-0906"],
+    "assignee": "u-hitesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 2
+  }
+]

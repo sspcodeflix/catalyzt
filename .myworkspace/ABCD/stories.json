@@ -1,0 +1,322 @@
+[
+  {
+    "key": "ABCD-1001",
+    "summary": "Switch the shop currency from the header and keep it in the shop_currency cookie for 48 hours",
+    "description": "setCurrencyHandler validates currency_code with validator.SetCurrencyPayload (iso4217), sets the shop_currency cookie with MaxAge 172800 and redirects to the Referer. getCurrencies filters currencyservice's GetSupportedCurrencies through whitelistedCurrencies (USD, EUR, CAD, JPY, GBP, TRY); every price, the shipping quote and the cart total go through CurrencyService.Convert and renderMoney prefixes $, €, ¥, £ or ₺ (CAD also shows $). The default is USD and logoutHandler expires every cookie.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["frontend"],
+    "acceptanceCriteria": [
+      "The currency dropdown in the header of /, /product/{id} and /cart lists exactly EUR, USD, JPY, GBP, TRY and CAD in that order, and a fresh session has USD selected with Sunglasses at $19.99 and Mug at $8.99.",
+      "POST /setCurrency with currency_code=EUR from the home page answers HTTP 302 to the Referer with Set-Cookie shop_currency=EUR; Max-Age=172800, and the home page then shows Sunglasses as €17.68 and Mug as €7.95.",
+      "With the cookie set to JPY the cart page shows the shipping line as ¥1005.16 and the Total as the JPY lines plus shipping, each rendered with two decimals by renderMoney.",
+      "POST /setCurrency with currency_code=ABC or $ answers HTTP 422 with the error page text \"Field 'Currency' is invalid: iso4217\" (\"required\" when empty) and the cookie keeps its previous value.",
+      "GET /logout answers HTTP 302 to / and expires shop_currency and shop_session-id; the next page shows USD prices and a different session-id in the footer."
+    ],
+    "requirements": ["FR-0701"],
+    "assignee": "u-sourav",
+    "purpose": "uat",
+    "updatedDaysAgo": 3
+  },
+  {
+    "key": "ABCD-1002",
+    "summary": "Add a product to the cart with a quantity of 1 to 10, see line totals plus shipping on /cart and empty the cart",
+    "description": "addToCartHandler validates AddToCartPayload (Quantity required, 1 to 10; ProductID required), looks the product up and calls CartService.AddItem. cartservice RedisCartStore keeps one CartItem per product id and adds the quantity to an existing line, GetCart returns an empty Cart for an unknown user and EmptyCart stores an empty cart; Startup.ConfigureServices picks the store from REDIS_ADDR, SPANNER_PROJECT or SPANNER_CONNECTION_STRING, ALLOYDB_PRIMARY_IP, else an in-memory distributed cache. viewCartHandler multiplies the converted price with money.MultiplySlow, adds the shipping quote and shows up to four recommendations.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["frontend", "cartservice"],
+    "acceptanceCriteria": [
+      "POST /cart with product_id=OLJCESPC7Z and quantity=2 answers HTTP 302 to /cart, and the cart page shows Cart (2), one Sunglasses line at $39.98, Shipping $8.99 and Total $48.97.",
+      "Posting product_id=OLJCESPC7Z with quantity=3 again keeps a single Sunglasses line, now with quantity 5, and the header badge shows 5 (CartService.AddItem adds to the existing line instead of creating a second one).",
+      "quantity=0, quantity=11 or a missing product_id answer HTTP 422 with \"Field 'Quantity' is invalid: gte\", \"Field 'Quantity' is invalid: lte\" or \"Field 'ProductID' is invalid: required\" and the cart is unchanged.",
+      "product_id=NOPE with quantity=1 answers HTTP 500 and the error page contains \"could not retrieve product\" and \"no product with ID NOPE\".",
+      "POST /cart/empty answers HTTP 302 to /, GET /cart then shows \"Your shopping cart is empty!\", and a brand-new session also gets \"Your shopping cart is empty!\" because GetCart answers a Cart with no items for an unknown user_id."
+    ],
+    "requirements": ["FR-0702"],
+    "assignee": "u-sourav",
+    "purpose": "uat",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "ABCD-1003",
+    "summary": "Checkout form rejects non-numeric postal codes and labels expiry month 12 as January",
+    "description": "placeOrderHandler parses zip_code with strconv.ParseInt into an int64 that PlaceOrderPayload marks required, and cart.html restricts the input with pattern=\"\\d{4,5}\", so SW1A 1AA or K1A 0B1 can never reach checkout and 02134 is sent to checkoutservice as 2134 (pb.Address.zip_code is an int32). In the same form the last option of credit_card_expiration_month has value 12 but the label January (cart.html line 188). Fixing the postal code needs Address.zip_code to become a string in protos/demo.proto and in the checkout, shipping and email services.",
+    "type": "Bug",
+    "status": "To Do",
+    "fixVersion": "v0.11.0",
+    "components": ["frontend"],
+    "acceptanceCriteria": [
+      "The expiry month dropdown on /cart lists January to December in order with December as value 12 and no label appears twice.",
+      "The zip code field accepts SW1A 1AA and K1A 0B1 without a browser validation error, and POST /cart/checkout with such a value answers HTTP 200 with the order confirmation instead of HTTP 422 \"Field 'ZipCode' is invalid: required\".",
+      "A postal code with a leading zero such as 02134 appears unchanged in the rendered order confirmation e-mail, not as 2134.",
+      "An empty zip code still answers HTTP 422 naming the ZipCode field, and the default value 94043 keeps working end to end.",
+      "TestPlaceOrderFailsValidation keeps its case for the missing postal code and a new case accepts an alphanumeric one; both pass with go test in src/frontend/validator."
+    ],
+    "requirements": ["FR-0703"],
+    "assignee": "u-sourav",
+    "purpose": "uat",
+    "updatedDaysAgo": 12
+  },
+  {
+    "key": "ABCD-1004",
+    "summary": "A declined card ends in an HTTP 500 error page instead of a checkout message naming the card problem",
+    "description": "charge.js rejects cards with CreditCardError subclasses (InvalidCreditCard \"Credit card info is invalid\", UnacceptedCreditCard \"Sorry, we cannot process <type> credit cards. Only VISA or MasterCard is accepted.\", ExpiredCreditCard \"Your credit card (ending <last 4>) expired on <month>/<year>\") whose code is 400, which is not a gRPC status code. checkoutService.chargeCard wraps the failure as codes.Internal \"failed to charge card\" and placeOrderHandler renders it through renderHTTPError as HTTP 500 \"failed to complete the order\", so the shopper sees \"Uh, oh!\" with the raw rpc error chain. paymentservice has no tests in the repository.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "v0.10.8",
+    "components": ["paymentservice", "checkoutservice", "frontend"],
+    "acceptanceCriteria": [
+      "Paying with the AMEX test number 378282246310005 (it passes the frontend Luhn check) answers HTTP 400 instead of 500 and the page shows \"Sorry, we cannot process amex credit cards. Only VISA or MasterCard is accepted.\" without an rpc error chain.",
+      "Paying with the default VISA 4432801561520454 and expiry 1/2020 answers HTTP 400 with \"Your credit card (ending 0454) expired on 1/2020\", and the cart is still full afterwards.",
+      "paymentservice answers Charge for an invalid, unaccepted or expired card with gRPC INVALID_ARGUMENT (code 3) and the message above, and the checkoutservice log no longer reports those cases as \"failed to charge card\" at Internal level.",
+      "A valid VISA or MasterCard number with a future expiry still returns a transaction_id in UUID form and the paymentservice log contains \"Transaction processed: visa ending 0454\" with the amount.",
+      "A unit test in src/paymentservice (none exists today) covers the four charge outcomes: valid card, invalid number, unaccepted type and expired card."
+    ],
+    "requirements": ["FR-0704"],
+    "assignee": "u-sourav",
+    "purpose": "uat",
+    "updatedDaysAgo": 0
+  },
+  {
+    "key": "ABCD-1005",
+    "summary": "Convert Money between the 33 ECB currencies with EUR as the pivot and keep the nine catalog prices stable through a USD round trip",
+    "description": "currencyservice server.js loads data/currency_conversion.json (33 codes; EUR 1.0, USD 1.1305, JPY 126.40, GBP 0.85970, CAD 1.5128, TRY 6.1247), GetSupportedCurrencies returns its keys and Convert divides units and nanos by the source rate, carries fractions with _carry, rounds the EUR nanos, multiplies by the target rate and floors. The frontend converts every price even from USD to USD because avoidNoopCurrencyConversionRPC is false, so a rounding slip would show on the home page. The service has no tests in the repository.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.7",
+    "components": ["currencyservice"],
+    "acceptanceCriteria": [
+      "GetSupportedCurrencies returns 33 currency_codes beginning EUR, USD, JPY and including GBP, TRY, CAD, CHF, INR and ZAR, in the order of data/currency_conversion.json.",
+      "Convert {currency_code USD, units 19, nanos 990000000} to EUR returns units 17 and nanos 682441398 (rendered €17.68); to JPY units 2235 and nanos 60592707 (¥2235.06); to GBP units 15 and nanos 201594869 (£15.20).",
+      "Converting each of the nine catalog prices from USD to USD returns the input units and nanos unchanged, so the home page shows $19.99, $18.99, $109.99, $89.99, $24.99, $18.99, $18.49, $5.49 and $8.99.",
+      "Converting the shipping quote 8.99 USD to EUR gives units 7 and nanos 952233525 (€7.95) and to CAD units 12 and nanos 30138876 ($12.03).",
+      "The service listens on PORT 7000, Health.Check returns SERVING, each conversion logs \"conversion request successful\" and DISABLE_PROFILER=1 logs \"Profiler disabled.\" at start-up."
+    ],
+    "requirements": ["FR-0705"],
+    "assignee": "u-sourav",
+    "purpose": "regression",
+    "updatedDaysAgo": 9
+  },
+  {
+    "key": "ABCD-1006",
+    "summary": "Flat USD 8.99 shipping quote for any non-empty cart, zero for an empty cart, and an 18-character tracking id from ShipOrder",
+    "description": "GetQuote sums the item quantities and CreateQuoteFromCount returns 8.99 for a count above zero and 0 otherwise, returned as Money {USD, 8, 990000000}; the address and the quantities do not change the price. ShipOrder builds the salt \"<street>, <city>, <state>\" and CreateTrackingId returns two letters, a dash, the salt length plus three digits, a dash, half the salt length plus seven digits. The 15 go tests in shippingservice_test.go pass in the local CI run at c7cb6d5 (Hexa run b2a2ee32fd7637b1).",
+    "type": "Story",
+    "status": "Done",
+    "fixVersion": "v0.10.7",
+    "components": ["shippingservice"],
+    "acceptanceCriteria": [
+      "GetQuote with items 23 x1 and 46 x3 and a London address returns cost_usd with currency_code USD, units 8 and nanos 990000000, and the same items with no address return the same quote (TestGetQuote).",
+      "GetQuote with an empty items list returns units 0 and nanos 0 (TestGetQuoteEmptyCart); the cart page still requests a quote for an empty cart and shows \"Your shopping cart is empty!\".",
+      "ShipOrder for \"Muffin Man, London, \" returns an 18-character tracking_id matching ^[A-Z]{2}-\\d+-\\d+$, and 50 calls with the same salt give at least two distinct ids (TestShipOrder, TestTrackingIdFormat, TestTrackingIdUniqueness).",
+      "CreateQuoteFromFloat maps 0, 10.0, 8.99, 0.50 and 100.01 to $0.00, $10.00, $8.99, $0.50 and $100.01 (TestCreateQuoteFromFloat subtests zero, whole dollars, with cents, small value, large value).",
+      "On /cart the Shipping line reads $8.99 for one Mug and still $8.99 with ten Watches added, and the order confirmation shows a Tracking # in the same format, 18 characters long for the default address."
+    ],
+    "requirements": ["FR-0706"],
+    "assignee": "u-sourav",
+    "purpose": "regression",
+    "updatedDaysAgo": 20
+  },
+  {
+    "key": "ABCD-1007",
+    "summary": "Run the frontend validator, the two money packages and the cartservice xUnit tests in the local CI next to shippingservice and productcatalogservice",
+    "description": "The local CI (ci.json) runs go test only in src/shippingservice and src/productcatalogservice, which delivered 15 and 4 results to Hexa at c7cb6d5. The upstream workflow .github/workflows/ci-pr.yaml also runs go test in src/frontend/validator and dotnet test src/cartservice/ (xunit 2.9.3 on net10.0), and src/frontend/money and src/checkoutservice/money carry money_test.go files that no pipeline runs. Add those targets so Hexa shows their results next to the existing ones.",
+    "type": "Task",
+    "status": "To Do",
+    "fixVersion": "v0.10.8",
+    "components": ["frontend", "checkoutservice", "cartservice"],
+    "acceptanceCriteria": [
+      "A go target for src/frontend/validator delivers TestPlaceOrderPassesValidation, TestPlaceOrderFailsValidation (11 subtests), TestAddToCartPassesValidation, TestAddToCartFailsValidation, TestSetCurrencyPassesValidation and TestSetCurrencyFailsValidation to Hexa as passed.",
+      "go targets for src/frontend/money and src/checkoutservice/money each deliver TestIsValid, TestIsZero, TestIsPositive, TestIsNegative, TestAreSameCurrency, TestAreEquals, TestNegate, TestMust_pass, TestMust_panic and TestSum.",
+      "A .NET target runs dotnet test src/cartservice/ in mcr.microsoft.com/dotnet/sdk:10.0 and delivers GetItem_NoAddItemBefore_EmptyCartReturned, AddItem_ItemExists_Updated and AddItem_New_Inserted.",
+      "A rerun at c7cb6d5 still reports the 4 productcatalogservice and 15 shippingservice results, so the microservices-demo run in Hexa grows from 19 results to the new total with 0 failed.",
+      "ci.json lists the services that still have no tests in the repository (paymentservice, currencyservice, emailservice, recommendationservice, adservice) so the gap stays visible."
+    ],
+    "requirements": ["NFR-0801"],
+    "assignee": "u-sourav",
+    "purpose": "regression",
+    "updatedDaysAgo": 6
+  },
+  {
+    "key": "ABCD-1008",
+    "summary": "PlaceOrder totals the cart in the shopper's currency, charges the card, ships, empties the cart and sends the confirmation",
+    "description": "checkoutService.PlaceOrder creates a UUID order id; prepareOrderItemsAndShippingQuoteFromCart reads the cart, converts each product price and the shipping quote to user_currency and sums shipping plus cost times quantity with money.Sum and MultiplySlow. It then calls PaymentService.Charge, ShippingService.ShipOrder, CartService.EmptyCart (error ignored) and EmailService.SendOrderConfirmation (failure only logged). placeOrderHandler renders order.html with Confirmation #, Tracking # and Total Paid plus up to four recommendations.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["checkoutservice", "paymentservice", "shippingservice", "emailservice"],
+    "acceptanceCriteria": [
+      "With Sunglasses x2 in the cart and currency USD, submitting the default checkout form (someone@example.com, 1600 Amphitheatre Parkway, 94043, Mountain View, CA, United States, VISA 4432801561520454, CVV 672) answers HTTP 200 with a Confirmation # in UUID form, a Tracking # matching ^[A-Z]{2}-\\d+-\\d+$ and Total Paid $48.97.",
+      "With the currency set to EUR the same cart shows €35.36 plus Shipping €7.95 = Total €43.31 on /cart and Total Paid €43.31 after the order, and the checkoutservice log reads [PlaceOrder] user_id=\"<session>\" user_currency=\"EUR\".",
+      "Right after the order GET /cart shows \"Your shopping cart is empty!\" and the header badge is gone.",
+      "The checkoutservice log contains \"payment went through (transaction_id: <uuid>)\" and \"order confirmation email sent to \\\"someone@example.com\\\"\", and the emailservice log contains \"A request to send order confirmation email to someone@example.com has been received.\"",
+      "With emailservice scaled to 0 the order still answers HTTP 200 and the checkoutservice log shows \"failed to send order confirmation to \\\"someone@example.com\\\"\"; with shippingservice scaled to 0 PlaceOrder fails with gRPC Unavailable \"shipping error\" and the frontend shows HTTP 500 \"failed to complete the order\"."
+    ],
+    "requirements": ["FR-0703"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 2
+  },
+  {
+    "key": "ABCD-1009",
+    "summary": "Serve the 9-product catalog from products.json with case-insensitive search, NotFound for unknown ids, USR1 reloading and EXTRA_LATENCY",
+    "description": "productCatalog.ListProducts, GetProduct and SearchProducts read parseCatalog(), which loads products.json once, or on every call after SIGUSR1 sets reloadCatalog (SIGUSR2 clears it), or AlloyDB when ALLOYDB_CLUSTER_NAME is set. GetProduct answers codes.NotFound \"no product with ID %s\", SearchProducts matches the query against name and description in lower case, and every RPC first sleeps EXTRA_LATENCY (time.ParseDuration). The 4 go tests in product_catalog_test.go pass in the local CI run at c7cb6d5 (Hexa run e7893507f54a6a93).",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["productcatalogservice"],
+    "acceptanceCriteria": [
+      "ListProducts returns 9 products with ids OLJCESPC7Z, 66VCHSJNUP, 1YMWWN1N4O, L9ECAV7KIM, 2ZYFJ3GM2N, 0PUK6V6EV0, LS4PSXUNUM, 9SIQT8TOJO and 6E92ZMYYFZ, each priced in USD with a picture under /static/img/products/ (TestListProducts checks the count).",
+      "GetProduct OLJCESPC7Z returns name Sunglasses, price_usd units 19 and nanos 990000000 and categories [accessories]; GetProduct abc005 returns gRPC NOT_FOUND with \"no product with ID abc005\" (TestGetProductExists, TestGetProductNotFound).",
+      "SearchProducts is case-insensitive over name and description: query MUG returns only 6E92ZMYYFZ, query kitchen returns LS4PSXUNUM and 9SIQT8TOJO, and query glass returns OLJCESPC7Z and 9SIQT8TOJO (TestSearchProducts covers the name match).",
+      "After kill -USR1 1 in the container the log prints \"Enable catalog reloading\" and then \"loading catalog from local products.json file...\" on every RPC, so an edited products.json shows on the next home page load; kill -USR2 1 prints \"Disable catalog reloading\" and the file is no longer re-read.",
+      "With EXTRA_LATENCY=2s the log prints \"extra latency enabled (duration: 2s)\" and every RPC takes at least 2 s; EXTRA_LATENCY=fast makes the container exit with \"failed to parse EXTRA_LATENCY\"."
+    ],
+    "requirements": ["FR-0707"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 4
+  },
+  {
+    "key": "ABCD-1010",
+    "summary": "Serve up to two ads by product category with a random fallback, shown on the home and product pages",
+    "description": "AdServiceImpl.getAds collects adsMap entries for each context key (clothing: Tank top; accessories: Watch; footwear: Loafers; hair: Hairdryer; decor: Candle holder; kitchen: Bamboo glass jar and Mug) and falls back to getRandomAds (MAX_ADS_TO_SERVE = 2, drawn with replacement) when no key matches or none is given. The frontend asks with the product's categories (an empty list on the home page) under a 100 ms deadline and shows one of the returned ads at random through ad.html; the service listens on PORT 9555 by default. adservice has no unit tests although its Gradle build is set up for them.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["adservice"],
+    "acceptanceCriteria": [
+      "GetAds with context_keys [kitchen] returns exactly two ads: \"Bamboo glass jar for sale. 10% off.\" redirecting to /product/9SIQT8TOJO and \"Mug for sale. Buy two, get third one for free\" redirecting to /product/6E92ZMYYFZ.",
+      "GetAds with context_keys [accessories] returns the single Watch ad \"Watch for sale. Buy one, get second kit for free\" (/product/1YMWWN1N4O), so the Sunglasses and Watch product pages always show that ad.",
+      "GetAds with context_keys [tops] or with no context keys returns two ads drawn from the seven; across 20 calls at least three different ads appear.",
+      "The ad block on / and /product/{id} reads \"Ad\" followed by the ad text as a link that opens the redirect URL in a new tab; with adservice scaled to 0 the pages still render with no ad block and the frontend logs \"failed to retrieve ads\".",
+      "GetAds answers within the frontend's 100 ms deadline in the demo cluster; an answer slower than that drops the ad for that page view with a context deadline exceeded warning in the frontend log."
+    ],
+    "requirements": ["FR-0708"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 7
+  },
+  {
+    "key": "ABCD-1011",
+    "summary": "Order confirmation template prints a broken shipping address and \"8. 99 USD\" for the shipping cost",
+    "description": "templates/confirmation.html reads order.shipping_address.street_address_1 and street_address_2, which do not exist on pb.Address (street_address, city, state, country, zip_code), so Jinja2 renders \", , Mountain View, United States 94043\" and never prints the state; the shipping cost line has a space after the dot (\"{{ units }}. {{ nanos }}\") and items are listed by product id only. The template is loaded at start-up but only rendered by EmailService, which start() never instantiates (dummy_mode is always true), and there is no pytest in src/emailservice.",
+    "type": "Bug",
+    "status": "In Progress",
+    "fixVersion": "v0.10.8",
+    "components": ["emailservice"],
+    "acceptanceCriteria": [
+      "Rendering confirmation.html with an OrderResult for the default checkout address prints \"1600 Amphitheatre Parkway, Mountain View, CA, United States 94043\".",
+      "The shipping line prints \"8.99 USD\" with no space, an item with cost units 19 and nanos 990000000 prints \"19.99 USD\", and nanos 50000000 prints \"19.05 USD\".",
+      "Each item row keeps the product id and quantity, and the Order ID and Shipping rows keep their # prefix before the order id and the tracking id.",
+      "A pytest in src/emailservice renders the template with a sample order of two items and asserts the three lines above; it passes with python -m pytest from that folder.",
+      "In dummy mode the service still logs \"A request to send order confirmation email to someone@example.com has been received.\" for each order and Health.Check returns SERVING on PORT 8080."
+    ],
+    "requirements": ["FR-0709"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 1
+  },
+  {
+    "key": "ABCD-1012",
+    "summary": "Recommend up to five random catalog products that are not already on the page, shown as \"You May Also Like\"",
+    "description": "RecommendationService.ListRecommendations lists the catalog through PRODUCT_CATALOG_SERVICE_ADDR, removes request.product_ids, draws min(5, remaining) ids with random.sample and logs \"[Recv ListRecommendations] product_ids=[...]\". The frontend passes the product id on /product/{id}, the cart's ids on /cart and nothing after checkout, resolves each id with GetProduct and keeps the first four for recommendations.html. The service has no tests in the repository.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v0.10.8",
+    "components": ["recommendationservice"],
+    "acceptanceCriteria": [
+      "ListRecommendations with product_ids [OLJCESPC7Z] returns 5 distinct catalog ids none of which is OLJCESPC7Z; with an empty list it also returns 5.",
+      "/product/OLJCESPC7Z shows \"You May Also Like\" with 4 products, none of them Sunglasses, and reloading the page changes the selection.",
+      "/cart holding 6 distinct products shows the 3 remaining products under \"You May Also Like\", and a cart holding all 9 products shows no such section.",
+      "The recommendationservice log contains \"[Recv ListRecommendations] product_ids=\" followed by the returned ids for every call.",
+      "Starting the container without PRODUCT_CATALOG_SERVICE_ADDR exits with \"PRODUCT_CATALOG_SERVICE_ADDR environment variable not set\"; with recommendationservice scaled to 0 the product page still renders and the frontend logs \"failed to get product recommendations\"."
+    ],
+    "requirements": ["FR-0710"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 5
+  },
+  {
+    "key": "ABCD-1013",
+    "summary": "Writer encodes Nacha records as ISO-8859-1 so an é stays one byte and every line is 94 bytes",
+    "description": "Commit 3f6ca97 (#1915, in v1.68.0) added encodeNachaRecord: ASCII lines take the identity path, runes up to U+00FF become one Latin-1 byte, anything above fails with ErrNonLatin1 (\"character cannot be encoded as a single-byte Nacha character\") and a wrong length with ErrRecordLength (\"record is not 94 bytes\"); Writer.BypassValidation still writes the UTF-8 line. ff3a098 (#1920, after v1.68.0) writes ASCII lines with WriteString and only builds the Latin-1 slice for non-ASCII lines. In-memory fields stay UTF-8 and the reader keeps accepting UTF-8 and windows-1252 input. Regression scope for the v1.68.0 release.",
+    "type": "Task",
+    "status": "Done",
+    "fixVersion": "v1.68.0",
+    "components": ["ach-core"],
+    "acceptanceCriteria": [
+      "Writing a PPD file whose Addenda05 PaymentRelatedInformation is \"TXP*12345678é*94105*260901*1*100\\\\\" produces only 94-byte lines, one of them containing the byte E9 and none containing C3 A9 (TestWriter_Latin1Addenda05).",
+      "Reading that output back returns the é as UTF-8, and the IAT round trip with \"John¦Smith\", \"My¦Bank\" and US*10036\\\\ keeps every addenda field (TestExtendedCharacters/IAT_File and ACH_File).",
+      "A line containing a character above U+00FF such as € fails Write with an error wrapping ErrNonLatin1 (\"character cannot be encoded as a single-byte Nacha character: U+20AC\"); with Writer.BypassValidation the UTF-8 line is written anyway (TestWriter_writeLine/non_Latin-1 and bypass_non_Latin-1).",
+      "A line that is not 94 bytes fails with ErrRecordLength (\"record is not 94 bytes: got 95\") unless BypassValidation is set (TestWriter_writeLine/wrong_length and bypass_wrong_length).",
+      "ASCII-only output is unchanged: test/testdata/ppd-debit.ach read and written again still has 94-byte records, and go test ./... passes (2,211 results, 0 failed, at c7025ec in Hexa run 1d41591ab25b6fc4)."
+    ],
+    "requirements": ["FR-0901"],
+    "assignee": "u-brijesh",
+    "purpose": "regression",
+    "updatedDaysAgo": 5
+  },
+  {
+    "key": "ABCD-1014",
+    "summary": "File.Create numbers batches 1..n in write order unless PreserveBatchNumbers, and Validate requires ascending IAT and ADV batch numbers",
+    "description": "151651f (#1883) and 12199c8 (#1885) made File.Create assign batch numbers 1, 2, 3 ... to the domestic batches and then the IAT batches on every call, so a batch added after a first Create no longer collides with the IAT batch numbered earlier; ValidateOpts.PreserveBatchNumbers (JSON preserveBatchNumbers, HTTP query ?preserveBatchNumbers=true on POST /files/create and /files/{id}/validate) keeps caller numbers. b7a40f7 (#1911) extended isSequenceAscending to IAT batches (ascending among themselves and distinct from domestic numbers) and ADV batches, skipped with AllowUnorderedBatchNumbers or CustomTraceNumbers; 471ba1d (#1914) skips the lookup map when the file has no IAT batches. All shipped in v1.68.0.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v1.68.0",
+    "components": ["ach-core"],
+    "acceptanceCriteria": [
+      "A file with one PPD and one IAT batch, Create, AddBatch(PPD), Create again ends with header and control batch numbers 1, 2, 3 (PPD, PPD, IAT) and Control.BatchCount 3 (TestFile__CreateAgainAfterAddBatch/IAT_batch).",
+      "With SetValidation(&ValidateOpts{PreserveBatchNumbers: true}) batches numbered 5, 7 and IAT 9 keep those numbers through Create (TestFile__CreateAgainAfterAddBatch/PreserveBatchNumbers_keeps_caller_numbers).",
+      "Validate on a preserved file whose IAT batches are numbered 2, 2, or 3, 2, or reuse domestic number 2, fails with ErrFileBatchNumberAscending (\"Batch numbers must be in ascending order, batch 2 is less than or equal to the previous batch: 2\" for the repeated case), while ValidateWith(&ValidateOpts{AllowUnorderedBatchNumbers: true}) accepts it (TestFile__IATBatchNumbersAscendApartFromDomestic).",
+      "Two ADV batches both numbered 1 fail Validate with NewErrFileBatchNumberAscending(1, 1) and pass with AllowUnorderedBatchNumbers (TestFile__AscendingBatchSequenceADV).",
+      "POST /files/create with server/test/unordered_batches/Moov-batch-numbers-issue.json (batches numbered 2 then 1) answers HTTP 200; the same body with ?preserveBatchNumbers=true answers HTTP 500 containing \"Batch numbers must be in ascending order\", and with ?unorderedBatchNumbers=true HTTP 200 with an id (TestUnorderedBatches, TestReadValidateOpts_PreserveBatchNumbers)."
+    ],
+    "requirements": ["FR-0902"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 8
+  },
+  {
+    "key": "ABCD-1015",
+    "summary": "achcli reads stdin for -, checks original control totals with -validate-totals and whole files with -validate-file, optionally reformatting to stdout",
+    "description": "31aac1a (#1904) added readInput with a cached stdin so - works twice (diff against stdin), probes for a pipe before reading and rejects - with -fix (\"stdin (-) is not supported with -fix\"). 99c384d (#1905) lets -validate-totals combine with -reformat=json|ach for exactly one file, writing to stdout only when the totals pass. 0fea53d (#1909) added -validate-file, which runs File.ValidateWith as GET /files/{id}/validate does and therefore also rejects unordered batch numbers. Failures print \"ERROR: <path>: ...\" on stdout and exit 1, flag syntax errors exit 2; JSON input, SkipAll, UnequalAddendaCounts, -skip-validation and the presentation flags are rejected in these modes. All shipped in v1.68.0.",
+    "type": "Story",
+    "status": "Ready for UAT",
+    "fixVersion": "v1.68.0",
+    "components": ["ach-core"],
+    "acceptanceCriteria": [
+      "achcli -reformat=json - < test/testdata/ppd-debit.ach prints the file as JSON and exits 0, and achcli -diff test/testdata/ppd-debit.ach - < test/testdata/ppd-debit.ach reports no differences (TestStdinCLI/reformat_json and diff_file_against_stdin).",
+      "achcli -fix -update-eed=20260102 - exits 1 with \"stdin (-) is not supported with -fix\", and achcli - with an empty stdin exits 1 with \"stdin is empty\" (TestStdinCLI/fix_rejects_stdin and empty_stdin).",
+      "achcli -validate-totals test/testdata/ppd-debit.ach prints nothing and exits 0, with -v it also prints the per-file summary, and a file whose stored batch count is wrong prints \"ERROR: <path>: \" naming the failing control field and exits 1 (TestValidateTotalsCLI/valid, verbose, BatchCount).",
+      "achcli -validate-totals -reformat=json file.json exits 1 with \"accepts raw ACH only; JSON parsing recalculates totals\", and -validate-totals with two files plus -reformat exits 1 with \"requires exactly one ACH file, found 2\".",
+      "achcli -validate-file on a raw file whose batches are numbered 2 then 1 exits 1 with \"Batch numbers must be in ascending order\" while -validate-totals on the same file exits 0, and -validate-file -validate opts.json with {\"allowUnorderedBatchNumbers\": true} exits 0."
+    ],
+    "requirements": ["FR-0903"],
+    "assignee": "u-brijesh",
+    "purpose": "uat",
+    "updatedDaysAgo": 10
+  },
+  {
+    "key": "ABCD-1016",
+    "summary": "CTX and ATX entries with zero addenda lose their receiving company when loaded from JSON",
+    "description": "FileFromJSON rebuilt the CTX/ATX IndividualName from the addenda count and dropped the company when the count was 0000. 48b4eb3 (#1902) keeps the receiving company for zero-addenda entries and cdbd536 reads the 4-digit count as a numeric field through catxAddendaCount so \"0000GLOBAL LOGISTICS\" is count 0 plus company (issue #1901). Fixed in v1.65.2 and verified again in the v1.68.0 run. ad0658b (#1893) in the same release train accepts PAY as an IAT Addenda10 TransactionTypeCode as delivered by the Federal Reserve (issue #1891).",
+    "type": "Bug",
+    "status": "Done",
+    "fixVersion": "v1.68.0",
+    "components": ["ach-core"],
+    "acceptanceCriteria": [
+      "ach.ReadJSONFile on test/issues/testdata/issue1901.json gives one entry with CATXAddendaRecordsField \"0000\", CATXReceivingCompanyField \"GLOBAL LOGISTICS\" and IndividualName \"0000GLOBAL LOGISTICS\" (TestIssue1901).",
+      "Marshalling that file to JSON and reading it with FileFromJSON keeps the same count and company, and writing it to Nacha and reading it back gives \"GLOBAL LOGISTICS  \" padded to the field (TestIssue1901).",
+      "POST /files/create with that JSON body and Content-Type application/json answers HTTP 200 with an id, and GET /files/{id}/contents shows the entry detail line with \"0000GLOBAL LOGISTICS\" in positions 55 to 76.",
+      "catxAddendaCount accepts a zero count with a company, a padded zero count and a non-zero count, and rejects a bare company, letters in the count slot, an empty name and a name shorter than 4 characters (TestCATXAddendaCount subtests; TestBatchCATX_JSONKeepsReceivingCompany for CTX and ATX with and without addenda).",
+      "An IAT file whose Addenda10 transaction type code is PAY (test/testdata/iat-debit.ach with 710ANN replaced by 710PAY) reads and validates without error and keeps \"PAY\" (TestIssue1891, TestAddenda10TransactionTypeCodePAY)."
+    ],
+    "requirements": ["FR-0904"],
+    "assignee": "u-brijesh",
+    "purpose": "regression",
+    "updatedDaysAgo": 13
+  }
+]
