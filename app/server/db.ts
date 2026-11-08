@@ -1787,13 +1787,31 @@ export function openDb(path: string) {
            WHERE c.application_id = ? AND a.kind = 'uat_report' ORDER BY a.created_at DESC, a.rowid DESC`,
         )
         .all(app) as Row[];
-      const out = new Map<string, { state: 'gaps' | 'ready'; covered: number; total: number; chatId: string; analysedAt: string; by: string | null }>();
+      const out = new Map<string, { state: 'gaps' | 'ready' | 'signed-off'; covered: number; total: number; chatId: string; analysedAt: string; by: string | null; signedOff?: { by: string; at: string; flowId: string } }>();
       for (const r of rows) {
         const body = json<{ ticketKey?: string; criteria?: { status: string }[] }>(r.body, {});
         if (!body.ticketKey || out.has(body.ticketKey)) continue;
         const statuses = (body.criteria ?? []).map((c) => c.status);
         const covered = statuses.filter((s) => s === 'passing').length;
         out.set(body.ticketKey, { state: statuses.length > 0 && covered === statuses.length ? 'ready' : 'gaps', covered, total: statuses.length, chatId: String(r.chat_id), analysedAt: String(r.created_at), by: (r.by as string) ?? null });
+      }
+      // A story signed off in a UAT flow (docs/FLOWS.md) after its last analysis reads as signed off, not as
+      // the gaps that analysis found: the flow verified every criterion before accepting the sign-off. The
+      // analysis itself (covered, when, by whom) is kept, since the flow's Analyse step reports it.
+      const signed = db
+        .prepare(
+          `SELECT s.story_key, s.decision, s.created_at, s.flow_id, u.name AS by FROM flow_signoffs s JOIN flows f ON f.id = s.flow_id JOIN users u ON u.id = s.decided_by
+           WHERE f.application_id = ? AND f.status != 'cancelled' ORDER BY s.created_at DESC, s.rowid DESC`,
+        )
+        .all(app) as Row[];
+      const seen = new Set<string>();
+      for (const r of signed) {
+        const key = String(r.story_key);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const cur = out.get(key);
+        if (r.decision !== 'signed_off' || !cur || String(r.created_at) < cur.analysedAt) continue;
+        out.set(key, { ...cur, state: 'signed-off', signedOff: { by: String(r.by), at: String(r.created_at), flowId: String(r.flow_id) } });
       }
       return out;
     },

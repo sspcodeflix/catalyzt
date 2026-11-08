@@ -260,6 +260,17 @@ legend { padding: 0; }
 .flowwaiting li.you { background: var(--hz-info-tint); }
 .flowwaiting .who { font-weight: 600; min-width: 90px; }
 .flowwaiting .what { flex: 1; min-width: 200px; }
+/* Several stories waiting on one reviewer, approved together. */
+.bulkreview { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hz-border); display: flex; flex-direction: column; gap: 8px; }
+.bulkreview p { margin: 0; font-size: 13.5px; }
+.bulkreview ul { gap: 2px; }
+.bulkreview li { padding: 4px 6px; }
+.bulkreview label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.bulkreview label .grow { flex: 1; min-width: 120px; }
+.bulkreview label small { white-space: nowrap; }
+.bulkreview .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bulkreview .row .ink { margin-left: auto; }
+.bulknote { margin: 8px 0 0; }
 .flowmanage { display: flex; gap: 8px; }
 
 .flowstories { display: flex; flex-direction: column; gap: 8px; }

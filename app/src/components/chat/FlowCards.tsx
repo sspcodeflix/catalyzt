@@ -245,7 +245,7 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
             <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
             <span className="sfwait">
               {reviewKey
-                ? `Waiting on you: review the drafted cases for ${reviewKey}`
+                ? `Waiting on you: review the drafted cases for ${reviewKey}${review && review.stories.length > 1 ? ` and ${review.stories.length - 1} more` : ''}`
                 : mine.length
                   ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
                   : other
@@ -253,19 +253,26 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
                     : 'Nothing waiting'}
             </span>
             {reviewKey ? (
-              <Link
-                to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`}
-                className="btn small ink"
-                onClick={(e) => {
-                  // The review is in this chat: go to it rather than leave.
-                  const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(reviewKey)}`);
-                  if (!here) return;
-                  e.preventDefault();
-                  here.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                }}
-              >
-                Review cases
-              </Link>
+              <>
+                <Link
+                  to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`}
+                  className="btn small ink"
+                  onClick={(e) => {
+                    // The review is in this chat: go to it rather than leave.
+                    const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(reviewKey)}`);
+                    if (!here) return;
+                    e.preventDefault();
+                    here.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  }}
+                >
+                  Review cases
+                </Link>
+                {review && review.stories.length > 1 && (
+                  <Link to={`/flows/${f.id}?review=all`} className="btn small plain">
+                    Approve several at once
+                  </Link>
+                )}
+              </>
             ) : (
               <Link to={`/flows/${f.id}`} className="btn small plain">
                 Open flow

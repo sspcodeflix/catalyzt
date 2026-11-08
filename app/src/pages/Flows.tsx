@@ -306,7 +306,7 @@ export function FlowStart() {
           </div>
           <p className="muted lead">
             {kind === 'uat'
-              ? 'Choose the stories to take to UAT. Each one is analysed against its tests, gaps get drafted cases for the component manager to review, testers record results, and the product owner signs off.'
+              ? 'Choose the stories to take to UAT. Each one is analysed against its tests, gaps get drafted cases for the component managers to review (and anyone they add), the managers run them and record results, and they sign off. A story signed off before is marked; pick it again only to retest it.'
               : 'Regression starts from what the application covers today. Choose the gaps to close: each one is analysed, cases are reviewed, automation is written and merged, and CI must pass it.'}
           </p>
 
@@ -364,7 +364,7 @@ export function FlowStart() {
               <button
                 type="button"
                 className="btn plain small"
-                onClick={() => setPicked(new Set((kind === 'uat' ? shown.map((t) => t.key) : (cov?.gaps ?? []).map((g) => g.key)).filter((k) => !taken.has(k))))}
+                onClick={() => setPicked(new Set((kind === 'uat' ? shown.filter((t) => t.uat.state !== 'signed-off').map((t) => t.key) : (cov?.gaps ?? []).map((g) => g.key)).filter((k) => !taken.has(k))))}
               >
                 Select all
               </button>
@@ -381,6 +381,11 @@ export function FlowStart() {
                       <span className="mono">{t.key}</span>
                       <span className="grow">{t.summary}</span>
                       <InFlow k={t.key} taken={taken} />
+                      {!taken.has(t.key) && t.uat.state === 'signed-off' && (
+                        <span className="pill pass" title={t.uat.signedOff ? `Signed off by ${t.uat.signedOff.by} on ${day(t.uat.signedOff.at)}` : undefined}>
+                          Signed off
+                        </span>
+                      )}
                       <small className="muted">
                         {t.acceptanceCriteria.length} criteria · {t.components.join(', ') || 'no component'}
                       </small>
@@ -434,13 +439,15 @@ export function FlowDetail() {
   // ?review=KEY (from a chat card or a story chat) opens that story at its review.
   const [params] = useSearchParams();
   const reviewKey = params.get('review');
-  const [open, setOpen] = useState<string | null>(reviewKey);
+  const [open, setOpen] = useState<string | null>(reviewKey === 'all' ? null : reviewKey);
+  const [bulkNote, setBulkNote] = useState('');
   const { me, loaded } = useSession();
   const hasFlow = !!flow;
   useEffect(() => {
     if (!reviewKey || !hasFlow) return;
-    setOpen(reviewKey);
-    const t = setTimeout(() => document.getElementById(`review-${reviewKey}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+    // ?review=all lands on the panel that approves several stories at once.
+    if (reviewKey !== 'all') setOpen(reviewKey);
+    const t = setTimeout(() => document.getElementById(reviewKey === 'all' ? 'bulk-review' : `review-${reviewKey}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
     return () => clearTimeout(t);
   }, [reviewKey, hasFlow]);
 
@@ -489,6 +496,17 @@ export function FlowDetail() {
     );
 
   const mine = flow.waiting.filter((w) => w.you);
+  // Several stories waiting on this person's review can be approved together.
+  const bulk = mine.find((w) => w.action === 'Review cases' && w.stories.length > 1);
+  // Open a story at the control an action needs, and put focus on it.
+  const openAt = (key: string, section: 'review' | 'run' | 'signoff' | 'story') => {
+    setOpen(key);
+    setTimeout(() => {
+      const target = document.getElementById(`${section}-${key}`) ?? document.getElementById(`story-${key}`);
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target?.querySelector<HTMLElement>('textarea, input:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true });
+    }, 50);
+  };
   return (
     <div className="body panelpage">
       <div className="chatcol listcol">
@@ -546,17 +564,7 @@ export function FlowDetail() {
                       <button
                         type="button"
                         className="btn small"
-                        onClick={() => {
-                          // Open the story at the control this action needs, and put focus on it.
-                          const key = w.stories[0];
-                          const section = w.action === 'Review cases' ? 'review' : w.action === 'Record results' ? 'run' : w.action === 'Sign off' ? 'signoff' : 'story';
-                          setOpen(key);
-                          setTimeout(() => {
-                            const target = document.getElementById(`${section}-${key}`) ?? document.getElementById(`story-${key}`);
-                            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            target?.querySelector<HTMLElement>('textarea, input:not([disabled]), button:not([disabled])')?.focus({ preventScroll: true });
-                          }, 50);
-                        }}
+                        onClick={() => openAt(w.stories[0], w.action === 'Review cases' ? 'review' : w.action === 'Record results' ? 'run' : w.action === 'Sign off' ? 'signoff' : 'story')}
                       >
                         {w.action}
                       </button>
@@ -564,6 +572,12 @@ export function FlowDetail() {
                   </li>
                 ))}
               </ul>
+              {bulk && <BulkReview flow={flow} keys={bulk.stories} onFlow={setFlow} onOpen={(k) => openAt(k, 'review')} onResult={setBulkNote} />}
+              {bulkNote && (
+                <p className="muted small bulknote" role="status">
+                  {bulkNote}
+                </p>
+              )}
             </section>
           )}
           {flow.status === 'paused' && <p className="pill warn">Paused: nothing new is started until it is resumed.</p>}
@@ -722,6 +736,96 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
           )}
           {signStep.state === 'waiting' && !story.can.signoff && <p className="muted">The manager of the story's components signs off (a product owner or an app owner may too).</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Several stories waiting on one person's review, approved together: tick the ones whose requirements and
+ * cases have been checked (each opens at its review), then one Approve. Each story is decided exactly as if
+ * approved on its own, so a story with other approvers still waits for them. Asking for changes stays on
+ * the story, since it needs a note about that story.
+ */
+function BulkReview({ flow, keys, onFlow, onOpen, onResult }: { flow: FlowView; keys: string[]; onFlow: (f: FlowView) => void; onOpen: (key: string) => void; onResult: (text: string) => void }) {
+  const me = useSession().userId;
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(keys));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  // Stories that stopped waiting (approved elsewhere, sent back) are not counted or sent.
+  const selected = keys.filter((k) => picked.has(k));
+  const toggle = (k: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+  const next = flow.kind === 'uat' ? 'Run tests' : 'Automate';
+  const approve = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await api<{ flow: FlowView; result: { approved: string[]; waiting: { key: string; on: string[] }[]; skipped: { key: string; reason: string }[] } }>(`/api/flows/${flow.id}/review`, { method: 'POST', body: JSON.stringify({ storyKeys: selected }) });
+      onFlow(r.flow);
+      flowsChanged();
+      const parts: string[] = [];
+      if (r.result.approved.length) parts.push(`Approved ${r.result.approved.join(', ')}: the cases are in Hexa and ${r.result.approved.length === 1 ? 'the story moves' : 'the stories move'} to ${next}.`);
+      for (const w of r.result.waiting) parts.push(`${w.key}: you approved; waiting on ${w.on.join(' and ')}.`);
+      for (const s of r.result.skipped) parts.push(`${s.key}: ${s.reason}.`);
+      onResult(parts.join(' '));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="bulkreview" id="bulk-review" aria-label="Approve the drafted cases of several stories at once">
+      <p>
+        <b>{keys.length} stories wait for your review.</b>{' '}
+        <span className="muted">Open each one to check its requirements and the cases drafted for them, then approve the ones you have checked together. Asking for changes is done on the story, with a note.</span>
+      </p>
+      <ul>
+        {keys.map((k) => {
+          const s = flow.items.find((x) => x.key === k);
+          const n = s?.review?.cases.length ?? 0;
+          // Requirements that got a case, as the story's row counts them.
+          const reqs = new Set((s?.review?.cases ?? []).map((c) => c.criterion)).size;
+          const others = (s?.review?.approvers ?? []).filter((a) => a.id !== me && a.decision !== 'approved').map((a) => a.name);
+          return (
+            <li key={k}>
+              <label>
+                <input type="checkbox" value={k} checked={picked.has(k)} onChange={() => toggle(k)} />
+                <span className="mono">{k}</span>
+                <span className="grow">{s?.summary}</span>
+                <small className="muted">
+                  {n} {n === 1 ? 'case' : 'cases'} for {reqs} {reqs === 1 ? 'requirement' : 'requirements'}
+                  {others.length ? ` · also needs ${others.join(' and ')}` : ''}
+                </small>
+              </label>
+              <button type="button" className="btn plain small" onClick={() => onOpen(k)}>
+                Open
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="row">
+        <button type="button" className="btn plain small" onClick={() => setPicked(new Set(keys))}>
+          Select all
+        </button>
+        <button type="button" className="btn plain small" onClick={() => setPicked(new Set())}>
+          Clear
+        </button>
+        <button type="button" className="btn ink" disabled={busy || selected.length === 0} onClick={() => void approve()}>
+          {busy ? 'Approving…' : `Approve ${selected.length} selected`}
+        </button>
+      </div>
+      {error && (
+        <p className="errtext" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

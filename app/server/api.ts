@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, appPeople, castReview, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, setApprovers, setStatus, signOff, storiesInFlows } from './flows';
+import { analyseAgain, appCoverage, appPeople, approveReviews, changeStories, createFlow, decideFlowReview, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, type ReviewOutcome, setApprovers, setStatus, signOff, storiesInFlows } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -436,10 +436,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             flows.kick();
             return send(res, 201, { flow: flowView(db, member, fid, user.id, roles) });
           }
-          const fm = /^\/api\/flows\/([A-Za-z0-9_-]{1,64})(?:\/(status|stories|analyse|signoff|approvers))?$/.exec(url);
+          const fm = /^\/api\/flows\/([A-Za-z0-9_-]{1,64})(?:\/(status|stories|analyse|signoff|approvers|review))?$/.exec(url);
           if (fm && !fm[2] && req.method === 'GET') return send(res, 200, { flow: flowView(db, member, fm[1], user.id, roles) });
           if (fm && fm[2] && req.method === 'POST') {
             const b = (await readJson(req)) as Record<string, unknown>;
+            if (fm[2] === 'review') {
+              // Several stories' drafted cases approved in one go, each exactly as if approved on its own.
+              const result = approveReviews(db, member, fm[1], user, roles, keys(b.storyKeys), casesExecutor(db, appId, user));
+              return send(res, 200, { flow: flowView(db, member, fm[1], user.id, roles), result });
+            }
             if (fm[2] === 'status') {
               const st = b.status === 'active' || b.status === 'paused' || b.status === 'cancelled' ? b.status : null;
               if (!st) throw new HttpError(400, 'status must be active, paused or cancelled.');
@@ -642,33 +647,28 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         // changes ends the review with a note. No rating is asked for: the decision is about the requirements
         // and their cases, not feedback on the answer.
         const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && isFlowReview(db, appId, found.id, found.payload.storyKey);
-        let approvedBy: { id: string; name: string }[] = [];
         if (inFlow) {
-          if (decision === 'declined' && note.length < 3) throw new HttpError(400, 'Say what should change in the drafted cases.');
-          let gate: ReturnType<typeof castReview>;
+          let r: ReviewOutcome;
           try {
-            gate = castReview(db, member, { id: found.id, storyKey: found.payload.storyKey!, components: targets }, user, decision, note || null);
+            r = decideFlowReview(db, member, user, found, decision, note || null, casesExecutor(db, appId, user));
           } catch (e) {
             if (e instanceof FlowError) throw new HttpError(e.status, e.message);
             throw e;
           }
-          approvedBy = gate.approvedBy;
-          if (!gate.complete) {
-            noteStory(db, appId, found.payload.storyKey!, user.id, 'review', `${user.name} approved the drafted cases for ${found.payload.storyKey}; waiting on ${gate.waitingOn.map((p) => p.name).join(' and ')}.`);
-            return send(res, 200, { approval: view(found), waitingOn: gate.waitingOn });
-          }
-        } else {
-          // In chat: an owner or a component manager decides, and approving needs a rating first.
-          requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
-          if (decision === 'approved' && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
-          // F19: a component manager decides only changes to components they manage, taken from the frozen
-          // payload (older approvals: the story's components); an owner decides any. A change that names no
-          // component is the owner's to decide.
-          if (!roles.includes('app_owner')) {
-            if (targets.length === 0) throw new HttpError(403, 'This change names no component you manage; only an app owner can decide it.');
-            const foreign = targets.filter((name) => member.components.find((c) => c.name === name)?.managerId !== user.id);
-            if (foreign.length) throw new HttpError(403, `Only the manager of ${foreign.join(', ')} or an app owner can decide this change.`);
-          }
+          if (r.kind === 'waiting') return send(res, 200, { approval: view(found), waitingOn: r.waitingOn });
+          if (r.kind === 'already') return settled(r.approval);
+          return send(res, 200, { approval: view(r.approval) });
+        }
+        // In chat: an owner or a component manager decides, and approving needs a rating first.
+        requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
+        if (decision === 'approved' && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+        // F19: a component manager decides only changes to components they manage, taken from the frozen
+        // payload (older approvals: the story's components); an owner decides any. A change that names no
+        // component is the owner's to decide.
+        if (!roles.includes('app_owner')) {
+          if (targets.length === 0) throw new HttpError(403, 'This change names no component you manage; only an app owner can decide it.');
+          const foreign = targets.filter((name) => member.components.find((c) => c.name === name)?.managerId !== user.id);
+          if (foreign.length) throw new HttpError(403, `Only the manager of ${foreign.join(', ')} or an app owner can decide this change.`);
         }
         // The action runs from the payload frozen with the approval, inside the decision's transaction.
         const execute = decision === 'approved' && found.action === 'add_uat_cases' ? casesExecutor(db, appId, user) : undefined;
@@ -683,11 +683,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             found.payload.storyKey,
             user.id,
             decision,
-            decision === 'approved'
-              ? `Approved the drafted cases for ${found.payload.storyKey}${inFlow ? (approvedBy.length > 1 ? ` (${approvedBy.map((p) => p.name).join(' and ')})` : '') : ' in chat'}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`
-              : inFlow
-                ? `Asked for changes to the drafted cases for ${found.payload.storyKey}: "${note}"`
-                : `Declined an older proposal of cases for ${found.payload.storyKey} in chat.`,
+            decision === 'approved' ? `Approved the drafted cases for ${found.payload.storyKey} in chat: ${result.approval.outcome?.text ?? 'added to Hexa'}.` : `Declined an older proposal of cases for ${found.payload.storyKey} in chat.`,
           );
         return send(res, 200, { approval: view(result.approval) });
       }

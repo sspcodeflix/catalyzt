@@ -11,6 +11,7 @@ export const uatPill: Record<UatState, { cls: string; label: string }> = {
   'not-analysed': { cls: '', label: 'Not analysed' },
   gaps: { cls: 'warn', label: 'Gaps' },
   ready: { cls: 'pass', label: 'Ready' },
+  'signed-off': { cls: 'pass', label: 'Signed off' },
 };
 
 export const relTime = (iso: string) => {
@@ -24,7 +25,9 @@ export const relTime = (iso: string) => {
 export const uatText = (t: Ticket) =>
   t.uat.state === 'not-analysed'
     ? uatPill[t.uat.state].label
-    : `${uatPill[t.uat.state].label} · ${t.uat.covered} of ${t.uat.total}${t.uat.analysedAt ? ` · analysed ${relTime(t.uat.analysedAt)}${t.uat.by ? ` by ${t.uat.by}` : ''}` : ''}`;
+    : t.uat.state === 'signed-off' && t.uat.signedOff
+      ? `Signed off · ${relTime(t.uat.signedOff.at)} by ${t.uat.signedOff.by}`
+      : `${uatPill[t.uat.state].label} · ${t.uat.covered} of ${t.uat.total}${t.uat.analysedAt ? ` · analysed ${relTime(t.uat.analysedAt)}${t.uat.by ? ` by ${t.uat.by}` : ''}` : ''}`;
 
 type Filter = 'all' | UatState;
 
@@ -113,7 +116,7 @@ export function Tickets() {
               />
             </label>
             <span className="segctl" role="radiogroup" aria-label="UAT status">
-              {(['all', 'not-analysed', 'gaps', 'ready'] as const).map((f) => (
+              {(['all', 'not-analysed', 'gaps', 'ready', 'signed-off'] as const).map((f) => (
                 <button
                   key={f}
                   type="button"

@@ -30,7 +30,7 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 | Analyse | the UAT analyst's report for the story exists | the report in a chat the flow created |
 | Review cases | the drafted cases are approved, or nothing needed drafting | the flow's review of the approval on that report |
 | Run tests | every criterion has a passing automated test or a tester's pass | CI results in Hexa and testers' results |
-| Sign off | the product owner signed off with that evidence | the sign-off record |
+| Sign off | a manager of the story's components signed off with that evidence | the sign-off record |
 | Automate | every criterion has an automated test of the story's components | Hexa links |
 | Verify in CI | every criterion's automated test passed in the target build | CI results |
 
@@ -45,7 +45,10 @@ manager, and they can add or remove approvers.
   people to a story, and their approval is needed too; "Who approves" on the story shows each person, why,
   and where they stand. The cases are added to Hexa when the last approval is in. Anyone required can ask
   for changes instead, with a note, which ends the review: the flow's owner analyses again. An app owner who
-  is not among the approvers cannot approve for them.
+  is not among the approvers cannot approve for them. When several stories wait on the same person, the
+  "Waiting on you" list offers them together: tick the ones checked, one Approve, and each is decided
+  exactly as if approved alone (a story with other approvers still waits for them). Asking for changes
+  stays per story, since it needs a note about that story.
 - **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
   No manual case is drafted for that criterion.
 - **Run tests:** the story's managers run the manual cases in the UAT environment and record Passed, Failed
@@ -88,6 +91,10 @@ shows today's progress, and acting in a card acts on the flow itself.
   Passed, Failed and Blocked buttons from the Run tests step on, and the sign-off box.
 - **Starting a flow:** UAT picks stories from the Jira filter. Regression first shows coverage today per
   component and preselects every story with a gap.
+- **After a sign-off** the story reads "Signed off · when · by whom" on the Tickets, Search and Start
+  pages (and in its panel) instead of the gaps its analysis found, as long as nothing analysed it again
+  since. Such a story is left out of "Select all" when starting a UAT flow; it can still be picked to
+  retest it. Finished and cancelled flows stay on the Test flows page under "Finished and cancelled".
 
 ## Rules
 

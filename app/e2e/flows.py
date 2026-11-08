@@ -113,6 +113,25 @@ with sync_playwright() as p:
         send = page.locator(f'#review-{key} button:has-text("Send back for changes")')
         check('review: sending back needs a note', send.is_disabled())
         page.screenshot(path=os.environ.get('E2E_SHOTS', '/tmp') + '/flow-review.png', full_page=False)
+        # Two stories wait on the same reviewer: they can be approved together. The other one is approved
+        # that way; this one is kept for the chat below.
+        bulk = page.locator('#bulk-review')
+        check('bulk: several stories waiting on one reviewer can be approved together', bulk.count() == 1 and bulk.locator('li').count() == 2 and 'Approve 2 selected' in bulk.inner_text(), bulk.inner_text()[:200] if bulk.count() else 'no panel')
+        if bulk.count():
+            values = [bulk.locator('li input').nth(i).get_attribute('value') for i in range(bulk.locator('li input').count())]
+            other = [k for k in values if k != key][0]
+            bulk.locator(f'input[value="{key}"]').uncheck()
+            check('bulk: the button counts the selection', 'Approve 1 selected' in bulk.inner_text(), bulk.inner_text()[:200])
+            page.screenshot(path=os.environ.get('E2E_SHOTS', '/tmp') + '/flow-bulk.png', full_page=False)
+            bulk.locator('button:has-text("Approve 1 selected")').click()
+            page.wait_for_selector('.flowwaiting .bulknote', timeout=15000)
+            note = page.inner_text('.flowwaiting .bulknote')
+            # A story whose components have another manager too keeps waiting on them after this approval.
+            partial = f'{other}: you approved; waiting on' in note
+            check('bulk: says what was approved and where the stories go', (f'Approved {other}' in note and 'Run tests' in note) or partial, note)
+            row = page.locator(f'#story-{other}').inner_text()
+            moved = ('approved by Sourav' in row and 'still to come' in row) if partial else ('Run tests' in row)
+            check('bulk: the chosen story moves on (or waits on its other approver); this one still waits for its review', moved and page.locator(f'#review-{key}').count() == 1 and page.locator('#bulk-review').count() == 0, row[:200])
         # Approve in the story's chat instead: its card is the same review, and the decision lands on the card.
         page.click(f'#story-{key} a:has-text("Open the analysis chat")')
         page.wait_for_selector('.flowhandoff .flowreview', timeout=15000)

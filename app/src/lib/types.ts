@@ -201,7 +201,7 @@ export type TestType = 'uat' | 'regression';
 
 /* ---------- Jira tickets ---------- */
 
-export type UatState = 'not-analysed' | 'gaps' | 'ready';
+export type UatState = 'not-analysed' | 'gaps' | 'ready' | 'signed-off';
 
 export interface Ticket {
   key: string;
@@ -217,7 +217,7 @@ export interface Ticket {
   acceptanceCriteria: string[];
   requirements: string[];
   /** The latest UAT analysis: from the server's saved reports, or from this session when fresher. */
-  uat: { state: UatState; covered: number; total: number; chatId?: string; analysedAt?: string; by?: string | null };
+  uat: { state: UatState; covered: number; total: number; chatId?: string; analysedAt?: string; by?: string | null; signedOff?: { by: string; at: string; flowId: string } };
   /** 'horizon' when created in Catalyzt's dummy Jira. */
   source?: 'jira_sync' | 'horizon';
   applicationId?: string;

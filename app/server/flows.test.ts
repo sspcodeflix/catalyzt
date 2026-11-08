@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startApi, type TestApi } from './api-harness';
 import type { HorizonDb } from './db';
 import { fixtureDb, seedRefundTests } from './fixture';
-import { analyseStory, type FlowView } from './flows';
+import { analyseStory, type BulkReviewResult, type FlowView } from './flows';
 
 let db: HorizonDb;
 let api: TestApi;
@@ -88,6 +88,9 @@ describe('a UAT flow', () => {
     f = await view('u-sourav', id);
     expect(f.status).toBe('done');
     expect(f.coverage.now).toBe(100);
+    // Outside the flow the story now reads as signed off, not as the gaps its analysis found.
+    const listed = ((await (await sourav.get('/api/stories')).json()) as { stories: { key: string; uat: { state: string; covered: number; signedOff?: { by: string } } }[] }).stories;
+    expect(listed.find((s) => s.key === 'ABCD-1001')!.uat).toMatchObject({ state: 'signed-off', signedOff: { by: 'Sourav' } });
     expect(f.events.map((e) => e.text).join('\n')).toMatch(/Signed off ABCD-1001[\s\S]*Passed: [\s\S]*UAT analyst checked ABCD-1001[\s\S]*Started with 1 story/);
   });
 
@@ -314,6 +317,34 @@ describe('reviewing drafted cases in a flow', () => {
     const events = await sourav.run({ text: 'Is ABCD-1001 ready for UAT?', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'plain', messageId: 'pm1', answerId: 'pa1' });
     const approvalId = (events.find((e) => e.type === 'saved') as { approvals: { id: string }[] }).approvals[0].id;
     expect((await sourav.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(403);
+  });
+});
+
+describe('approving several stories at once', () => {
+  it('approves the drafted cases of every chosen story the person is asked to approve, and reports the rest', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001', 'ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
+    const f = await until('u-sourav', id, (x) => x.items.length === 2 && x.items.every((s) => s.steps.find((st) => st.key === 'review')?.state === 'waiting'));
+    const mine = f.waiting.find((w) => w.you)!;
+    expect(mine.action).toBe('Review cases');
+    expect([...mine.stories].sort()).toEqual(['ABCD-1001', 'ABCD-1002']);
+    // Ram is not an approver of either: nothing is decided, and he is told who approves.
+    const ram = await api.as('u-ram', 'ABCD').post(`/api/flows/${id}/review`, { storyKeys: ['ABCD-1001', 'ABCD-1002'] });
+    expect(ram.status).toBe(200);
+    const rb = (await ram.json()) as { result: BulkReviewResult };
+    expect(rb.result.approved).toEqual([]);
+    expect(rb.result.skipped.map((s) => s.key)).toEqual(['ABCD-1001', 'ABCD-1002']);
+    expect(rb.result.skipped[0].reason).toBe('Sourav approves these cases, not you');
+    // Sourav approves both in one go; a story outside the flow is reported, not touched.
+    const r = await sourav.post(`/api/flows/${id}/review`, { storyKeys: ['ABCD-1001', 'ABCD-1002', 'ABCD-1003'] });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { flow: FlowView; result: BulkReviewResult };
+    expect(body.result).toEqual({ approved: ['ABCD-1001', 'ABCD-1002'], waiting: [], skipped: [{ key: 'ABCD-1003', reason: 'not in this flow' }] });
+    expect(body.flow.items.map((s) => s.steps.find((st) => st.key === 'review')!.state)).toEqual(['done', 'done']);
+    expect(body.flow.events.filter((e) => /^Approved the drafted cases for ABCD-100[12]: Added/.test(e.text))).toHaveLength(2);
+    // Nothing is left to approve: a second go says so.
+    const again = (await (await sourav.post(`/api/flows/${id}/review`, { storyKeys: ['ABCD-1001'] })).json()) as { result: BulkReviewResult };
+    expect(again.result.skipped).toEqual([{ key: 'ABCD-1001', reason: 'no drafted cases are waiting for review' }]);
   });
 });
 

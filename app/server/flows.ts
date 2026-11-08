@@ -500,6 +500,19 @@ export function listFlows(db: HorizonDb, app: AppRecord, userId: string, opts: {
   });
 }
 
+/** What one person can do on a story of a flow: review its drafted cases (they are a required approver who has not approved yet), manage its approvers, record results, sign off. */
+function canFor(app: AppRecord, flow: FlowRow, s: FlowStory, userId: string, roles: string[]): FlowStory['can'] {
+  const isOwner = roles.includes('app_owner');
+  const mgr = app.components.some((c) => s.components.includes(c.name) && c.managerId === userId);
+  const pending = s.review?.status === 'pending' ? s.review : null;
+  return {
+    review: !!pending && flow.status === 'active' && pending.approvers.some((a) => a.id === userId && a.decision !== 'approved'),
+    manageApprovers: flow.status === 'active' && (mgr || isOwner || flow.owner.id === userId),
+    execute: mgr || isOwner || roles.includes('uat_tester') || roles.includes('product_owner'),
+    signoff: mgr || isOwner || roles.includes('product_owner'),
+  };
+}
+
 export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: string, roles: string[]): FlowView {
   const flow = getFlowRow(db, id);
   if (!flow || flow.app !== app.id) throw new FlowError(404, 'This flow does not exist in this application.');
@@ -512,16 +525,7 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
     text: String(r.text),
   }));
   const isOwner = roles.includes('app_owner');
-  for (const s of stories) {
-    const mgr = app.components.some((c) => s.components.includes(c.name) && c.managerId === userId);
-    const pending = s.review?.status === 'pending' ? s.review : null;
-    s.can = {
-      review: !!pending && flow.status === 'active' && pending.approvers.some((a) => a.id === userId && a.decision !== 'approved'),
-      manageApprovers: flow.status === 'active' && (mgr || isOwner || flow.owner.id === userId),
-      execute: mgr || isOwner || roles.includes('uat_tester') || roles.includes('product_owner'),
-      signoff: mgr || isOwner || roles.includes('product_owner'),
-    };
-  }
+  for (const s of stories) s.can = canFor(app, flow, s, userId, roles);
   return {
     ...summarise(flow, stories, userId),
     items: stories,
@@ -723,6 +727,88 @@ export function castReview(db: HorizonDb, app: AppRecord, approval: { id: string
   const votes = reviewVotes(db, approval.id);
   const waitingOn = reviewers.filter((r) => !votes.some((v) => v.id === r.id && v.decision === 'approved')).map(({ id, name }) => ({ id, name }));
   return { complete: decision === 'declined' || waitingOn.length === 0, waitingOn, approvedBy: votes.filter((v) => v.decision === 'approved').map(({ id, name }) => ({ id, name })) };
+}
+
+type ApprovalRecord = NonNullable<ReturnType<HorizonDb['getApproval']>>;
+export type ReviewOutcome = { kind: 'waiting'; waitingOn: { id: string; name: string }[] } | { kind: 'decided'; approval: ApprovalRecord } | { kind: 'already'; approval: ApprovalRecord };
+
+/**
+ * A flow's review of a proposal of drafted cases, decided as the flow's own step: the person's vote is
+ * recorded; approving by the last required approver (or asking for changes by any) decides the proposal,
+ * runs `execute` (the cases go into Hexa) and lands in the timeline of every flow holding the story.
+ */
+export function decideFlowReview(db: HorizonDb, app: AppRecord, user: { id: string; name: string }, found: ApprovalRecord, decision: 'approved' | 'declined', note: string | null, execute: Parameters<HorizonDb['decideApproval']>[3]): ReviewOutcome {
+  const key = found.payload.storyKey!;
+  const components = found.payload.components ?? db.getStory(key)?.components ?? [];
+  if (decision === 'declined' && (note ?? '').trim().length < 3) throw new FlowError(400, 'Say what should change in the drafted cases.');
+  const gate = castReview(db, app, { id: found.id, storyKey: key, components }, user, decision, note);
+  if (!gate.complete) {
+    noteStory(db, app.id, key, user.id, 'review', `${user.name} approved the drafted cases for ${key}; waiting on ${names(gate.waitingOn)}.`);
+    return { kind: 'waiting', waitingOn: gate.waitingOn };
+  }
+  const result = db.decideApproval(found.id, decision, user.id, decision === 'approved' ? execute : undefined, note);
+  if (result.kind === 'missing') throw new FlowError(404, 'This approval does not exist in this application.');
+  if (result.kind === 'already') return { kind: 'already', approval: result.approval };
+  noteStory(
+    db,
+    app.id,
+    key,
+    user.id,
+    decision,
+    decision === 'approved'
+      ? `Approved the drafted cases for ${key}${gate.approvedBy.length > 1 ? ` (${names(gate.approvedBy)})` : ''}: ${result.approval.outcome?.text ?? 'added to Hexa'}.`
+      : `Asked for changes to the drafted cases for ${key}: "${note}"`,
+  );
+  return { kind: 'decided', approval: result.approval };
+}
+
+export interface BulkReviewResult {
+  approved: string[];
+  waiting: { key: string; on: string[] }[];
+  skipped: { key: string; reason: string }[];
+}
+
+/**
+ * Approve the drafted cases of several stories of a flow in one go: each story the person is asked to
+ * approve gets their approval, exactly as if approved one by one; the others are reported, not touched.
+ * Asking for changes stays per story, since it needs a note about that story.
+ */
+export function approveReviews(db: HorizonDb, app: AppRecord, id: string, user: { id: string; name: string }, roles: string[], keys: string[], execute: Parameters<HorizonDb['decideApproval']>[3]): BulkReviewResult {
+  const flow = getFlowRow(db, id);
+  if (!flow || flow.app !== app.id) throw new FlowError(404, 'This flow does not exist in this application.');
+  if (flow.status !== 'active') throw new FlowError(409, `The flow is ${flow.status}; nothing can be approved until it is active.`);
+  if (keys.length === 0) throw new FlowError(400, 'Choose the stories whose drafted cases you approve.');
+  const stories = storiesOf(db, app, flow);
+  const out: BulkReviewResult = { approved: [], waiting: [], skipped: [] };
+  for (const key of [...new Set(keys)]) {
+    const s = stories.find((x) => x.key === key);
+    if (!s) {
+      out.skipped.push({ key, reason: 'not in this flow' });
+      continue;
+    }
+    if (s.review?.status !== 'pending') {
+      out.skipped.push({ key, reason: 'no drafted cases are waiting for review' });
+      continue;
+    }
+    if (!canFor(app, flow, s, user.id, roles).review) {
+      out.skipped.push({ key, reason: s.review.approvers.some((a) => a.id === user.id) ? 'you already approved' : `${names(s.review.approvers)} ${s.review.approvers.length === 1 ? 'approves' : 'approve'} these cases, not you` });
+      continue;
+    }
+    const found = db.getApproval(s.review.approvalId);
+    if (!found || found.status !== 'pending') {
+      out.skipped.push({ key, reason: 'already decided' });
+      continue;
+    }
+    try {
+      const r = decideFlowReview(db, app, user, found, 'approved', null, execute);
+      if (r.kind === 'waiting') out.waiting.push({ key, on: r.waitingOn.map((p) => p.name) });
+      else out.approved.push(key);
+    } catch (e) {
+      if (e instanceof FlowError) out.skipped.push({ key, reason: e.message });
+      else throw e;
+    }
+  }
+  return out;
 }
 
 /** When every required approver has approved the story's pending proposal (after an approver was removed), decide it. */
