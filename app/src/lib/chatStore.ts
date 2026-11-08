@@ -129,8 +129,8 @@ export async function loadChat(chatId: string, force = false): Promise<void> {
         createdBy: chat.createdBy,
       });
       loads.set(chatId, { state: 'ready' });
-      // A UAT report in the chat marks its story as analysed for this session.
-      for (const a of Object.values(chat.artifacts)) if (a.kind === 'uat') recordUatAnalysis(a.ticketKey, chatId, a.criteria.map((c) => c.status));
+      // A UAT report in a saved chat only fills a story the list has no analysis for (R14).
+      for (const a of Object.values(chat.artifacts)) if (a.kind === 'uat') recordUatAnalysis(a.ticketKey, chatId, a.criteria.map((c) => c.status), { saved: true });
     }
   } catch (e) {
     if (epoch !== sessionEpoch()) return;

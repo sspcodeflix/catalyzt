@@ -6,7 +6,7 @@ import { useAgentActivity } from '../lib/agentsStore';
 import { useRecentChats } from '../lib/chatStore';
 import { useHuddle } from '../lib/huddleData';
 import { selectApp, signInAs, useSession } from '../lib/session';
-import { useTickets } from '../lib/ticketStore';
+import { uatBadge, useTickets } from '../lib/ticketStore';
 import { BrandMark, BrandWordmark } from './BrandMark';
 import { Icon } from './Icon';
 
@@ -25,7 +25,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const me = session.me;
   const runningAgents = useAgentActivity().agents.filter((a) => a.status === 'running' && a.parentId).length;
   const openHuddleItems = useHuddle().filter((i) => !i.decision).length;
-  const waiting = useTickets().filter((t) => t.uat.state === 'not-analysed').length;
+  const badge = uatBadge(useTickets());
   const recents = useRecentChats();
   const ref = useRef<HTMLElement>(null);
 
@@ -87,9 +87,9 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           <NavLink to="/tickets" className={navClass}>
             <Icon name="doc" />
             Jira Stories
-            {waiting > 0 && (
-              <span className="navcount" aria-label={`${waiting} not analysed`}>
-                {waiting}
+            {badge.count > 0 && (
+              <span className="navcount" title={badge.label} aria-label={badge.label}>
+                {badge.count}
               </span>
             )}
           </NavLink>
