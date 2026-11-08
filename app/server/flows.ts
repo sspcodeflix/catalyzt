@@ -446,6 +446,24 @@ export function flowView(db: HorizonDb, app: AppRecord, id: string, userId: stri
 
 /* ---------- Changes ---------- */
 
+/** Stories already in an active or paused flow of this kind (other than `except`), with that flow: a story is in one flow of a kind at a time. */
+export function storiesInFlows(db: HorizonDb, app: string, kind: FlowKind, except: string | null = null) {
+  const rows = db.raw
+    .prepare("SELECT i.story_key, f.id, f.title FROM flows f JOIN flow_items i ON i.flow_id = f.id WHERE f.application_id = ? AND f.kind = ? AND f.status IN ('active', 'paused') AND i.removed_at IS NULL AND f.id != ? ORDER BY f.created_at")
+    .all(app, kind, except ?? '') as Row[];
+  const taken = new Map<string, { flowId: string; title: string }>();
+  for (const r of rows) if (!taken.has(String(r.story_key))) taken.set(String(r.story_key), { flowId: String(r.id), title: String(r.title) });
+  return taken;
+}
+
+function refuseTaken(db: HorizonDb, app: string, kind: FlowKind, keys: string[], except: string | null = null) {
+  const taken = storiesInFlows(db, app, kind, except);
+  const clash = keys.filter((k) => taken.has(k));
+  if (!clash.length) return;
+  const where = [...new Set(clash.map((k) => taken.get(k)!.title))].map((t) => `"${t}"`).join(', ');
+  throw new FlowError(409, `${clash.join(', ')} ${clash.length === 1 ? 'is' : 'are'} already in the ${kind === 'uat' ? 'UAT' : 'regression'} flow ${where}. A story is in one ${kind === 'uat' ? 'UAT' : 'regression'} flow at a time: continue it there, or remove it from that flow first.`);
+}
+
 export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; name: string }, roles: string[], input: { kind: FlowKind; title?: string; stories: string[]; origin?: string | null }) {
   if (!roles.includes('app_owner') && !roles.includes('component_manager')) throw new FlowError(403, 'Only an app owner or a component manager can start a test flow.');
   const keys = [...new Set(input.stories)].slice(0, MAX_FLOW_STORIES + 1);
@@ -469,6 +487,8 @@ export function createFlow(db: HorizonDb, app: AppRecord, user: { id: string; na
     const active = db.raw.prepare("SELECT title FROM flows WHERE application_id = ? AND kind = 'regression' AND status IN ('active', 'paused')").get(app.id) as { title: string } | undefined;
     if (active) throw new FlowError(409, `A regression flow is already running: "${active.title}". Add stories to it, or finish it first.`);
   }
+  // Two flows over one story would split its review, results and sign-off between them.
+  refuseTaken(db, app.id, input.kind, keys);
   const id = `flow-${randomUUID().slice(0, 8)}`;
   const t = now();
   const base = measure(db, keys, input.kind);
@@ -520,6 +540,7 @@ export function changeStories(db: HorizonDb, app: AppRecord, id: string, user: {
   const bad = add.filter((k) => db.getStory(k)?.applicationId !== app.id);
   if (bad.length) throw new FlowError(400, `Not stories of this application: ${bad.join(', ')}.`);
   const adding = add.filter((k) => !current.some((i) => i.key === k));
+  refuseTaken(db, app.id, flow.kind, adding, id);
   if (current.length + adding.length - remove.length > MAX_FLOW_STORIES) throw new FlowError(400, `A flow holds at most ${MAX_FLOW_STORIES} stories.`);
   const t = now();
   db.raw.transaction(() => {
@@ -709,12 +730,21 @@ export function flowChatAnswer(db: HorizonDb, app: AppRecord, userId: string, ro
       stories = picked.map((s) => ({ key: s.key, summary: s.summary, note: s.status }));
       how = version ? `the stories with fix version ${version}` : 'the stories in Ready for UAT';
     }
-    stories = stories.slice(0, MAX_FLOW_STORIES);
+    // Stories already in a flow of this kind are left out and named, with that flow's card.
+    const taken = storiesInFlows(db, app.id, kind);
+    const already = stories.filter((x) => taken.has(x.key));
+    stories = stories.filter((x) => !taken.has(x.key)).slice(0, MAX_FLOW_STORIES);
+    const inFlows = [...new Set(already.map((x) => taken.get(x.key)!.flowId))];
+    const alreadyText = already.length
+      ? ` ${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in ${[...new Set(already.map((x) => `"${taken.get(x.key)!.title}"`))].join(', ')}, so ${already.length === 1 ? 'it is' : 'they are'} left out.`
+      : '';
+    if (!stories.length && already.length)
+      return { prose: `${already.map((x) => x.key).join(', ')} ${already.length === 1 ? 'is' : 'are'} already in a ${kind === 'uat' ? 'UAT' : 'regression'} flow. Here it is; nothing new was started.`, blocks: inFlows.slice(0, 3).map((flowId) => ({ kind: 'flow' as const, flowId })) };
     const title = kind === 'uat' ? (version ? `UAT · release ${version}` : `UAT · ${stories.length === 1 ? stories[0].key : `${stories.length} stories`}`) : `Regression · ${app.name}`;
     const allowed = roles.includes('app_owner') || roles.includes('component_manager');
     const prose = !stories.length
       ? `I found no stories for a ${kind === 'uat' ? 'UAT' : 'regression'} flow from ${how}. Name the stories, or check the Jira filter.`
-      : `I found ${plural(stories.length, 'story', 'stories')} for a ${kind === 'uat' ? 'UAT' : 'regression'} flow: ${how}. Untick any you want to leave out, then press Start. Nothing starts until you do.${allowed ? '' : ' Only an app owner or a component manager can start a flow.'}`;
+      : `I found ${plural(stories.length, 'story', 'stories')} for a ${kind === 'uat' ? 'UAT' : 'regression'} flow: ${how}. Untick any you want to leave out, then press Start. Nothing starts until you do.${alreadyText}${allowed ? '' : ' Only an app owner or a component manager can start a flow.'}`;
     return { prose, blocks: stories.length ? [{ kind: 'flow_start', flowKind: kind, title, stories }] : [] };
   }
   const flows = listFlows(db, app, userId);

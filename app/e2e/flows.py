@@ -127,6 +127,10 @@ with sync_playwright() as p:
     # Regression starts from the application's coverage.
     sign_in(page, 'Ram Kumar')
     page.goto(BASE + '/flows/new')
+    # A story already in a UAT flow cannot be picked again: it shows the flow it is in.
+    page.wait_for_selector('.flowpick li.taken', timeout=15000)
+    row = page.locator(f'.flowpick li.taken:has-text("{keys[0]}")')
+    check('start: a story already in a flow is marked and cannot be picked', row.count() == 1 and row.locator('input').is_disabled() and 'UAT · e2e release' in row.inner_text())
     page.click('.segctl button:has-text("Regression")')
     page.wait_for_selector('.flowbase table tbody tr', timeout=20000)
     check('regression: coverage today per component', page.locator('.flowbase tbody tr').count() >= 5 and re.search(r'\d+% covered today', page.inner_text('.flowbase')) is not None)

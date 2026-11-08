@@ -94,6 +94,11 @@ shows today's progress, and acting in a card acts on the flow itself.
   who and when.
 - **Who starts a flow:** the app owner, or a component manager for stories that touch their components.
 - **One regression flow per application** at a time. UAT flows can run side by side.
+- **One flow per story** of each kind at a time. Starting a flow (from the page, a retry, another tab,
+  or chat) or adding a story to a flow is refused for a story already in an active or paused flow of
+  that kind, naming that flow. The start page shows such stories with their flow and cannot pick them;
+  in chat they are left out, and a request for only such stories answers with their flow. Cancelling
+  or finishing the flow frees the story.
 - **Owner controls:** the person who started it, or the app owner, can pause, resume, cancel, and add or
   remove stories. Every change is in the timeline.
 - **A failed or blocked result needs a note**, and so does not signing off.

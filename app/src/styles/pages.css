@@ -352,3 +352,4 @@ legend { padding: 0; }
 .flowhandoff > p { margin: 0; }
 .flowhandoff .flowreview { margin-bottom: 0; }
 .flowhandoff .flowreview h3 { font-family: inherit; font-size: 15px; font-weight: 600; }
+.flowpick li.taken label { opacity: .75; } .flowpick li.taken .pill a { color: inherit; }

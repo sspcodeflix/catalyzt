@@ -213,6 +213,33 @@ describe('a failed background analysis', () => {
   });
 });
 
+describe('one flow per story', () => {
+  it('refuses a second UAT flow over a story already in one, from the page, from adding stories and from chat', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const first = ((await (await sourav.post('/api/flows', { kind: 'uat', title: 'UAT · first', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    // A second press, a retry after an error, another tab: no second flow.
+    const again = await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001', 'ABCD-1002'] });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as { error: string }).error).toMatch(/ABCD-1001 is already in the UAT flow "UAT · first"/);
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM flows WHERE kind = 'uat'").get()).toEqual({ n: 1 });
+    // The start page knows which stories are taken.
+    const taken = ((await (await sourav.get('/api/flows/taken?kind=uat')).json()) as { taken: { key: string; flowId: string }[] }).taken;
+    expect(taken).toEqual([{ key: 'ABCD-1001', flowId: first, title: 'UAT · first' }]);
+    // Adding it to another flow is refused too.
+    const other = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1002'] })).json()) as { flow: FlowView }).flow.id;
+    expect((await sourav.post(`/api/flows/${other}/stories`, { add: ['ABCD-1001'] })).status).toBe(409);
+    // From chat: the story is left out and its flow is shown; nothing new is offered.
+    const events = await sourav.run({ text: 'start UAT for ABCD-1001', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'c1', messageId: 'm1', answerId: 'a1' });
+    const text = JSON.stringify(events);
+    expect(text).toMatch(/already in a UAT flow/);
+    expect(text).not.toMatch(/"kind":"flow_start"/);
+    expect(text).toContain(first);
+    // Once that flow is cancelled, the story can start again.
+    expect((await sourav.post(`/api/flows/${first}/status`, { status: 'cancelled' })).status).toBe(200);
+    expect((await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).status).toBe(201);
+  });
+});
+
 describe('reviewing drafted cases in a flow', () => {
   it('asks what to change when sending cases back, shows it in the flow, and waits on the owner to analyse again', async () => {
     const sourav = api.as('u-sourav', 'ABCD');

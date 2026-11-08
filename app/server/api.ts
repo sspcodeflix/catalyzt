@@ -55,7 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
-import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, listFlows, noteStory, recordExecution, setStatus, signOff } from './flows';
+import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowByOrigin, flowsForStory, storiesInFlows, flowView, flowWorker, listFlows, noteStory, recordExecution, setStatus, signOff } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -409,6 +409,10 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
             return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
           }
           if (url === '/api/flows/coverage' && req.method === 'GET') return send(res, 200, appCoverage(db, member));
+          if (url === '/api/flows/taken' && req.method === 'GET') {
+            const kind = full.searchParams.get('kind') === 'regression' ? 'regression' : 'uat';
+            return send(res, 200, { taken: [...storiesInFlows(db, appId, kind)].map(([key, f]) => ({ key, ...f })) });
+          }
           if (url === '/api/flows' && req.method === 'POST') {
             const b = (await readJson(req)) as Record<string, unknown>;
             const kind = b.kind === 'uat' || b.kind === 'regression' ? b.kind : null;

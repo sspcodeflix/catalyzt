@@ -200,6 +200,16 @@ interface AppCoverage {
   lastScan: { at: string | null; repo: string } | null;
 }
 
+/** "In <flow>" next to a story already in a flow of this kind. */
+function InFlow({ k, taken }: { k: string; taken: Map<string, { flowId: string; title: string }> }) {
+  const f = taken.get(k);
+  return f ? (
+    <small className="pill info">
+      In <Link to={`/flows/${f.flowId}`}>{f.title}</Link>
+    </small>
+  ) : null;
+}
+
 export function FlowStart() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<FlowKind>('uat');
@@ -209,23 +219,39 @@ export function FlowStart() {
   const [cov, setCov] = useState<AppCoverage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Stories already in a flow of this kind: shown with that flow, not pickable (one flow per story and kind).
+  const [taken, setTaken] = useState<Map<string, { flowId: string; title: string }>>(new Map());
   const tickets = useTickets();
   const appName = useSession().me?.app?.name ?? '';
   const statuses = useMemo(() => [...new Set(tickets.map((t) => t.status))], [tickets]);
   const shown = kind === 'uat' ? tickets.filter((t) => !status || t.status === status) : [];
 
   useEffect(() => {
+    let live = true;
+    api<{ taken: { key: string; flowId: string; title: string }[] }>(`/api/flows/taken?kind=${kind}`)
+      .then((d) => {
+        if (!live) return;
+        const m = new Map(d.taken.map((t) => [t.key, { flowId: t.flowId, title: t.title }]));
+        setTaken(m);
+        setPicked((p) => new Set([...p].filter((k) => !m.has(k))));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [kind]);
+  useEffect(() => {
     if (kind !== 'regression' || cov) return;
     api<AppCoverage>('/api/flows/coverage')
       .then((c) => {
         setCov(c);
-        setPicked(new Set(c.gaps.map((g) => g.key)));
+        setPicked(new Set(c.gaps.map((g) => g.key).filter((k) => !taken.has(k))));
       })
       .catch((e) => setError((e as Error).message));
   }, [kind, cov]);
   const switchKind = (k: FlowKind) => {
     setKind(k);
-    setPicked(k === 'regression' && cov ? new Set(cov.gaps.map((g) => g.key)) : new Set());
+    setPicked(k === 'regression' && cov ? new Set(cov.gaps.map((g) => g.key).filter((x) => !taken.has(x))) : new Set());
     setError('');
   };
   const toggle = (k: string) =>
@@ -322,7 +348,7 @@ export function FlowStart() {
               <button
                 type="button"
                 className="btn plain small"
-                onClick={() => setPicked(new Set(kind === 'uat' ? shown.map((t) => t.key) : (cov?.gaps ?? []).map((g) => g.key)))}
+                onClick={() => setPicked(new Set((kind === 'uat' ? shown.map((t) => t.key) : (cov?.gaps ?? []).map((g) => g.key)).filter((k) => !taken.has(k))))}
               >
                 Select all
               </button>
@@ -333,11 +359,12 @@ export function FlowStart() {
             <ul>
               {kind === 'uat' &&
                 shown.map((t) => (
-                  <li key={t.key}>
+                  <li key={t.key} className={taken.has(t.key) ? 'taken' : undefined}>
                     <label>
-                      <input type="checkbox" checked={picked.has(t.key)} onChange={() => toggle(t.key)} />
+                      <input type="checkbox" checked={picked.has(t.key)} disabled={taken.has(t.key)} onChange={() => toggle(t.key)} />
                       <span className="mono">{t.key}</span>
                       <span className="grow">{t.summary}</span>
+                      <InFlow k={t.key} taken={taken} />
                       <small className="muted">
                         {t.acceptanceCriteria.length} criteria · {t.components.join(', ') || 'no component'}
                       </small>
@@ -346,11 +373,12 @@ export function FlowStart() {
                 ))}
               {kind === 'regression' &&
                 (cov?.gaps ?? []).map((g) => (
-                  <li key={g.key}>
+                  <li key={g.key} className={taken.has(g.key) ? 'taken' : undefined}>
                     <label>
-                      <input type="checkbox" checked={picked.has(g.key)} onChange={() => toggle(g.key)} />
+                      <input type="checkbox" checked={picked.has(g.key)} disabled={taken.has(g.key)} onChange={() => toggle(g.key)} />
                       <span className="mono">{g.key}</span>
                       <span className="grow">{g.summary}</span>
+                      <InFlow k={g.key} taken={taken} />
                       <small className="muted">
                         {g.uncovered.length} of {g.criteria} uncovered ({g.uncovered.join(', ')}) · {g.components.join(', ') || 'no component'}
                       </small>
