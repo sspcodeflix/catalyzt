@@ -1040,4 +1040,17 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE chats ADD COLUMN flow_id TEXT REFERENCES flows(id);
   CREATE INDEX chats_flow ON chats (flow_id);
   `,
+  // 26: manual_executions was added to migration 23 after a development database had already applied
+  // it, so such a database has no table. Applied migrations are never edited; this one repairs it.
+  `
+  CREATE TABLE IF NOT EXISTS manual_executions (
+    id TEXT PRIMARY KEY,
+    test_case_id TEXT NOT NULL REFERENCES test_cases(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'blocked')),
+    note TEXT,
+    executed_by TEXT NOT NULL REFERENCES users(id),
+    executed_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS manual_executions_test ON manual_executions (test_case_id, executed_at);
+  `,
 ];

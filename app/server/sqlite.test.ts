@@ -174,3 +174,21 @@ describe('query plans use the indexes the hot paths need', () => {
     expect(plan(db, 'SELECT id FROM source_chunks WHERE source_id = ? AND retired_at IS NULL', 's')).toMatch(/source_chunks_current|source_chunks_source/);
   });
 });
+
+describe('repair of a database that applied an early migration 23', () => {
+  it('adds manual_executions when the database is past 23 without it, and keeps its flows', () => {
+    const path = fresh();
+    const first = openDb(path);
+    seedWorkspace(first, FIXTURE);
+    first.raw.prepare("INSERT INTO flows (id, application_id, kind, title, owner_id, status, created_at, updated_at) VALUES ('f1', 'ABCD', 'uat', 'UAT', 'u-sourav', 'active', 't', 't')").run();
+    // The state the live development database was in: level 25, no manual_executions table.
+    first.raw.exec('DROP TABLE manual_executions');
+    first.raw.pragma('user_version = 25');
+    first.raw.close();
+    const db = openDb(path);
+    expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'manual_executions'").get()).toEqual({ name: 'manual_executions' });
+    expect(db.raw.prepare('SELECT id FROM flows').all()).toEqual([{ id: 'f1' }]);
+    expect(db.raw.pragma('user_version', { simple: true })).toBe(MIGRATIONS.length);
+    db.raw.close();
+  });
+});
