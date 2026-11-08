@@ -784,6 +784,30 @@ const finalStatus = (type: SourceType): SourceStatus => (type === 'Repository' ?
  * Huddle item of kind conflict is created with two options: keep the higher-trust source, or use
  * the upload. Deciding the item resolves the conflict.
  */
+/** Words that identify a source in what someone wrote about it: its title, and words for its kind. */
+const KIND_WORDS: Partial<Record<SourceType, string[]>> = { Repository: ['readme', 'repository', 'repo', 'documentation', 'docs'], Jira: ['jira', 'ticket', 'tickets', 'story', 'stories', 'backlog'] };
+const GENERIC = new Set(['project', 'the', 'and', 'notes', 'file', 'txt', 'md', 'doc', 'docs', 'documentation', 'team', 'source']);
+const sourceWords = (s: SourceView) => new Set([...(s.title.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length > 2 && !GENERIC.has(w)), ...(KIND_WORDS[s.type] ?? [])]);
+
+/**
+ * R16: what was entered for one source of a conflict but names another source of the application
+ * ("the README does not state a rule" given as what Jira says). Returns a note per such row naming the
+ * source the text actually refers to; the conflict is still raised, with the note in its summary.
+ */
+export function misattributed(rows: { value: string; where: string }[], pair: SourceView[], all: SourceView[]): string[] {
+  const notes: string[] = [];
+  rows.forEach((row, i) => {
+    const own = pair[i];
+    if (!own) return;
+    const said = new Set(`${row.value} ${row.where}`.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+    const mine = [...sourceWords(own)].some((w) => said.has(w));
+    if (mine) return;
+    const named = all.filter((s) => s.id !== own.id && [...sourceWords(s)].some((w) => said.has(w)));
+    if (named.length) notes.push(`What was entered for ${own.title} ("${row.value}") refers to ${named.map((s) => `${s.title} (${s.type})`).join(' or ')}, not to ${own.title}. Check that the right source was chosen before deciding.`);
+  });
+  return notes;
+}
+
 export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord, input: ConflictInput, at = Date.now()) {
   const source = mustGet(db, app.id, str(input.sourceId));
   const other = getSource(db, app.id, str(input.otherSourceId));
@@ -796,11 +820,15 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
   if (!title) throw new RequestError(400, 'Say what the conflict is about (title).');
   const detail = str(input.detail).trim().slice(0, 2000);
   const rows = Array.isArray(input.compare) ? input.compare : [];
+  // Each row is labelled with the source it belongs to (R16): a label sent by the browser can add to the
+  // name but never replace it.
   const compare: CompareRow[] = [source, other].map((s, i) => {
     const c = (rows[i] ?? {}) as Partial<CompareRow>;
-    return { label: str(c.label).trim().slice(0, 120) || s.title, value: str(c.value).trim().slice(0, 300), where: str(c.where).trim().slice(0, 200) };
+    const label = str(c.label).trim().slice(0, 120);
+    return { label: !label || label === s.title ? s.title : `${s.title} · ${label}`, value: str(c.value).trim().slice(0, 300), where: str(c.where).trim().slice(0, 200) };
   });
   if (!compare[0].value || !compare[1].value) throw new RequestError(400, 'Give what each source says (two compare rows with a value).');
+  const attribution = misattributed(compare, [source, other], listSources(db, app.id));
 
   const id = `cf-${randomUUID().slice(0, 8)}`;
   const reason = `Unresolved conflict with ${other.title}`;
@@ -827,14 +855,15 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
         title,
         summary: detail || `${source.title} disagrees with ${other.title}. ${excluded} passage${excluded === 1 ? '' : 's'} excluded until decided.`,
         scope: scopeLabel(app, source.scope),
-        aiSummary: `${compare[0].label}: ${compare[0].value} [1]. ${compare[1].label}: ${compare[1].value} [2]. ${source.title} (${lowerFirst(source.trust)}) ranks below ${other.title} (${lowerFirst(other.trust)}), so Catalyzt keeps using ${other.title} and leaves ${excluded} passage${excluded === 1 ? '' : 's'} of ${source.title} out until this is decided.`,
+        aiSummary: `${compare[0].label}: ${compare[0].value} [1]. ${compare[1].label}: ${compare[1].value} [2]. ${source.title} (${lowerFirst(source.trust)}) ranks below ${other.title} (${lowerFirst(other.trust)}), so Catalyzt keeps using ${other.title} and leaves ${excluded} passage${excluded === 1 ? '' : 's'} of ${source.title} out until this is decided.${attribution.length ? ` ${attribution.join(' ')}` : ''}`,
         citations: [
           { n: 1, title: compare[0].label, detail: [compare[0].where, lowerFirst(source.trust)].filter(Boolean).join(' · '), href: sourceHref(source.id) },
           { n: 2, title: compare[1].label, detail: [compare[1].where, lowerFirst(other.trust)].filter(Boolean).join(' · '), href: other.href ?? sourceHref(other.id) },
         ],
         options: [
-          { title: `Keep ${other.title}: ${compare[1].value}`, detail: `${source.title} stays excluded for this point; ask its author to update it.`, keepsUpload: false },
-          { title: `Use ${source.title}: ${compare[0].value}`, detail: `Its passages are used again; ask the owners of ${other.title} to update.`, keepsUpload: true },
+          // The source decides the option; what it says is quoted as reported (R16).
+          { title: `Keep ${other.title} ("${compare[1].value}")`, detail: `${source.title} stays excluded for this point; ask its author to update it.`, keepsUpload: false },
+          { title: `Use ${source.title} ("${compare[0].value}")`, detail: `Its passages are used again; ask the owners of ${other.title} to update.`, keepsUpload: true },
         ],
         affects: [
           { label: source.title, href: sourceHref(source.id) },
@@ -848,7 +877,7 @@ export function raiseConflict(db: HorizonDb, app: AppRecord, user: PersonRecord,
     db.raw.prepare('UPDATE conflicts SET huddle_item_id = ? WHERE id = ?').run(itemId, id);
     db.audit('user', user.id, 'context.conflict', 'context_source', source.id, { conflictId: id, huddleItemId: itemId, other: other.id });
   })();
-  return { conflict: getConflict(db, app.id, id)!, huddleItemId: itemId };
+  return { conflict: getConflict(db, app.id, id)!, huddleItemId: itemId, warnings: attribution };
 }
 
 /**
