@@ -129,18 +129,25 @@ def link_test_and_reanalyse(persona: Persona, key: str):
     if st != 200:
         return
     criteria = story['story']['acceptanceCriteria']
+    components = story['story'].get('components') or []
     words = lambda s: set(w for w in re.findall(r'[a-z0-9]+', s.lower()) if len(w) > 3)
+    # Only automated tests of the story's own components are candidates (a word shared with a test from
+    # another repository made wrong links before); the best is the one sharing the most words with a criterion.
+    pool = []
+    for comp in components:
+        st, res = persona.api('GET', f'/api/hexa/tests?kind=automated&limit=200&component={comp}')
+        if st == 200:
+            pool += res['rows']
     best = None
+    best_score = 1  # at least two shared words, or nothing is linked
     for i, ac in enumerate(criteria):
-        for w in sorted(words(ac), key=len, reverse=True)[:3]:
-            st, res = persona.api('GET', f'/api/hexa/tests?kind=automated&limit=5&q={w}')
-            if st == 200 and res['rows']:
-                best = (res['rows'][0], i + 1)
-                break
-        if best:
-            break
+        aw = words(ac)
+        for t in pool:
+            score = len(aw & words(f"{t['title']} {t.get('suite') or ''}"))
+            if score > best_score:
+                best, best_score = (t, i + 1), score
     if not best:
-        log.act(f'{persona.name}: no automated test shares words with {key}\'s criteria; nothing linked')
+        log.act(f'{persona.name}: no automated test of {key}\'s components fits its criteria; nothing linked')
         return
     test, n = best
     persona.goto(f'/hexa/test/{test["id"]}?tab=automated', '.panel form[aria-label="Link this test"]')

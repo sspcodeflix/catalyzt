@@ -99,7 +99,7 @@ export function Hexa() {
             <Runs />
           ) : (
             // Keyed on the result and search filters too, so the Failing now tile and a citation's ?q= apply even on this tab.
-            <TestList key={`${tab}-${params.get('result') ?? ''}-${params.get('q') ?? ''}`} tab={tab} compact={panelOpen} initialResult={params.get('result') ?? ''} initialQuery={params.get('q') ?? ''} />
+            <TestList key={`${tab}-${params.get('result') ?? ''}-${params.get('q') ?? ''}-${params.get('component') ?? ''}`} tab={tab} compact={panelOpen} initialResult={params.get('result') ?? ''} initialQuery={params.get('q') ?? ''} initialComponent={params.get('component') ?? ''} />
           )}
         </div>
       </div>
@@ -108,7 +108,9 @@ export function Hexa() {
   );
 }
 
-function TestList({ tab, compact, initialResult, initialQuery }: { tab: 'manual' | 'automated'; compact: boolean; initialResult: string; initialQuery: string }) {
+function TestList({ tab, compact, initialResult, initialQuery, initialComponent }: { tab: 'manual' | 'automated'; compact: boolean; initialResult: string; initialQuery: string; initialComponent: string }) {
+  // A citation can open the tests of one component (?component=), shown as a removable filter.
+  const [component, setComponent] = useState(initialComponent);
   const [data, setData] = useState<TestsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A citation lands here with ?q=<component>; the search box starts with it and the list is filtered (R09).
@@ -123,6 +125,7 @@ function TestList({ tab, compact, initialResult, initialQuery }: { tab: 'manual'
   const load = useCallback(async () => {
     const p = new URLSearchParams({ limit: String(limit), kind: tab === 'manual' ? (proposed ? 'proposed' : 'manual') : 'automated' });
     if (q.trim()) p.set('q', q.trim());
+    if (component) p.set('component', component);
     if (purpose) p.set('purpose', purpose);
     if (tab === 'automated' && result) p.set('result', result);
     if (repo) p.set('repo', repo);
@@ -133,7 +136,7 @@ function TestList({ tab, compact, initialResult, initialQuery }: { tab: 'manual'
       if (e instanceof StaleScopeError) return;
       setError((e as Error).message);
     }
-  }, [q, purpose, proposed, result, repo, limit, tab]);
+  }, [q, purpose, proposed, result, repo, component, limit, tab]);
 
   useEffect(() => {
     const t = setTimeout(load, q ? 250 : 0);
@@ -214,6 +217,15 @@ function TestList({ tab, compact, initialResult, initialQuery }: { tab: 'manual'
               <Icon name="dl" small />
               Export for Octane
             </a>
+          )}
+          {component && (
+            <span className="itemchip">
+              <Icon name="layers" small />
+              Component: {component}
+              <button type="button" className="chipx" aria-label={`Show all tests, not only ${component}`} onClick={() => setComponent('')}>
+                <Icon name="close" small />
+              </button>
+            </span>
           )}
           {repo && (
             <span className="itemchip">

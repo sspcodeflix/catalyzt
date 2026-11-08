@@ -75,7 +75,7 @@ export function hexaEvidence(db: HorizonDb, app: string, req: { components: stri
       build ? `Target build for ${comp?.repo}: ${build.label}, recorded ${build.at}.` : comp?.repo ? `No pipeline run has been recorded for ${comp.repo}.` : '',
       listed.length ? `Tests (first ${listed.length} of ${total}):\n${listed.join('\n')}` : '',
     ].filter(Boolean);
-    out.push({ title: `Hexa · ${name}`, text: lines.join('\n'), detail: `${name} · ${HEXA_COMPONENT_FACTS} · latest results`, href: `/hexa?tab=automated&q=${encodeURIComponent(name)}` });
+    out.push({ title: `Hexa · ${name}`, text: lines.join('\n'), detail: `${name} · ${HEXA_COMPONENT_FACTS} · latest results`, href: `/hexa?tab=automated&component=${encodeURIComponent(name)}` });
   }
   for (const key of req.tickets.slice(0, 3)) {
     const story = db.getStory(key);

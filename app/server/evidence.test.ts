@@ -78,7 +78,7 @@ describe('Hexa facts find a component’s tests (R01, R03)', () => {
     expect(facts[0].text).toContain('embedded Mongo could not start');
     expect(facts[0].text).toContain('cart unreachable');
     expect(facts[0].text).not.toContain('&#10;');
-    expect(facts[0].href).toBe('/hexa?tab=automated&q=checkoutservice');
+    expect(facts[0].href).toBe('/hexa?tab=automated&component=checkoutservice');
   });
 
   it('a test class named in the question becomes a source with its latest result and failure message (R02)', () => {

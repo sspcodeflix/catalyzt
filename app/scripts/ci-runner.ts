@@ -119,7 +119,7 @@ function command(t: Target): string {
       // Reports are copied under their module directory (account-service/TEST-x.xml), so Hexa knows which module each test belongs to.
       return `${cd} && ${setup}(mvn -B -ntp -fae test -Dsurefire.printSummary=true 2>&1 | tee /out/mvn.log; echo "mvn exit $?") && find . -path '*/surefire-reports/TEST-*.xml' | while read -r f; do d="/out/$(dirname "$(dirname "$(dirname "$f")")" | sed 's#^\\./##')"; mkdir -p "$d"; cp "$f" "$d/"; done`;
     case 'node-jest':
-      return `${cd} && ${setup}(npm ci --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_OUTPUT_NAME=jest.xml npx jest --ci --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo "jest exit $?")`;
+      return `${cd} && ${setup}(npm ci --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_OUTPUT_NAME=jest.xml JEST_JUNIT_ADD_FILE_ATTRIBUTE=true npx jest --ci --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo "jest exit $?")`;
     case 'node-mocha':
       return `${cd} && ${setup}(npm ci --no-audit --no-fund --loglevel=error || npm install --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error mocha mocha-junit-reporter && (npx mocha --reporter mocha-junit-reporter --reporter-options mochaFile=/out/mocha.xml 2>&1 | tee /out/mocha.log; echo "mocha exit $?")`;
     case 'python':

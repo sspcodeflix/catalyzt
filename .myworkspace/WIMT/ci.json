@@ -18,7 +18,7 @@
   "ghostfolio": {
     "targets": [
       {
-        "name": "api-jest",
+        "name": "nx-jest",
         "kind": "node-jest",
         "path": ".",
         "heavy": true,
@@ -27,7 +27,7 @@
           "NX_DAEMON": "false",
           "NX_NO_CLOUD": "true"
         },
-        "run": "(npm ci --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_OUTPUT_NAME=jest.xml npx dotenv-cli -e .env.example -- npx nx run api:test --ci --skip-nx-cache --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo \"nx exit $?\")",
+        "run": "(npm ci --no-audit --no-fund --loglevel=error) && npm install --no-save --no-audit --no-fund --loglevel=error jest-junit && (JEST_JUNIT_OUTPUT_DIR=/out JEST_JUNIT_UNIQUE_OUTPUT_NAME=true JEST_JUNIT_ADD_FILE_ATTRIBUTE=true NX_DAEMON=false npx dotenv-cli -e .env.example -- npx nx run-many -t test -p api client ui common --ci --skip-nx-cache --parallel=1 --reporters=default --reporters=jest-junit 2>&1 | tee /out/jest.log; echo \"nx exit $?\")",
         "note": "Nx: the api project only, with .env.example loaded the way the repository's own npm test script does (the configuration service requires ACCESS_TOKEN_SALT and JWT_SECRET_KEY)"
       }
     ]

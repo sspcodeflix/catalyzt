@@ -583,6 +583,8 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         return send(res, 200, {
           ...db.listTests(appId, {
             q: (p.get('q') ?? '').slice(0, 100) || undefined,
+            // The tests that belong to one component (by link, repository, path and package), not a text search.
+            component: (p.get('component') ?? '').slice(0, 100) || undefined,
             kind: pick('kind', ['automated', 'manual', 'proposed']),
             kinds: (p.get('kinds') ?? '').split(',').filter((k) => ['automated', 'manual', 'proposed'].includes(k)),
             purpose: pick('purpose', ['uat', 'regression']),
