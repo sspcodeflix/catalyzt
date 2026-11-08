@@ -129,9 +129,17 @@ export function loadSession(force = false): Promise<void> {
   const mine = epoch;
   loading = (async () => {
     try {
-      const res = await http('/api/me');
+      let res = await http('/api/me');
       // A newer sign-in or application choice started while this one was in flight: it wins.
       if (mine !== epoch) return;
+      if (!res.ok && (res.status === 404 || res.status === 403) && state.appId) {
+        // The remembered application is gone or no longer this person's (the workspace changed):
+        // forget it and let the server pick their first application, instead of a dead "Not signed in".
+        state = { ...state, appId: null, workspace: null };
+        save();
+        res = await http('/api/me');
+        if (mine !== epoch) return;
+      }
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Request failed (${res.status})`);
       const me = (await res.json()) as Me;
       if (mine !== epoch) return;

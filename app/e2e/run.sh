@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PORT="${E2E_PORT:-5199}"
 TMP="$(mktemp -d)"
-DEEPSEEK_API_KEY= HORIZON_DB_PATH="$TMP/e2e.db" HORIZON_FILES_DIR="$TMP/files" ./node_modules/.bin/vite --port "$PORT" --strictPort --host 127.0.0.1 > "$TMP/vite.log" 2>&1 &
+# The checks are written for the simulation workspace, whatever app/.env points the dev server at.
+DEEPSEEK_API_KEY= HORIZON_WORKSPACE="${E2E_WORKSPACE:-../.myworkspace}" HORIZON_DB_PATH="$TMP/e2e.db" HORIZON_FILES_DIR="$TMP/files" ./node_modules/.bin/vite --port "$PORT" --strictPort --host 127.0.0.1 > "$TMP/vite.log" 2>&1 &
 PID=$!
 trap 'kill $PID 2>/dev/null || true' EXIT
 curl -s --retry 40 --retry-connrefused --retry-delay 1 "http://127.0.0.1:$PORT/api/health" > /dev/null

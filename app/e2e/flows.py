@@ -197,6 +197,14 @@ with sync_playwright() as p:
     page.wait_for_selector('.flowsteps li', timeout=15000)
     sw = page.evaluate('document.documentElement.scrollWidth')
     check('phone: no sideways scroll on a flow', sw <= 392, str(sw))
+
+    # A remembered application that no longer exists (the workspace changed) lands on the person's first one.
+    page.set_viewport_size({'width': 1360, 'height': 900})
+    page.evaluate("localStorage.setItem('hz-session', JSON.stringify({userId: 'u-ram', appId: 'GONE', workspace: 'x'}))")
+    page.goto(BASE + '/')
+    page.wait_for_selector('.mebtn', timeout=15000); page.wait_for_timeout(1200)
+    me = page.inner_text('.mebtn')
+    check('session: a remembered application that no longer exists falls back to the first one', 'Ram Kumar' in me and 'does not exist' not in me, me[:120])
     b.close()
 
 print(f'\n{sum(ok for _, ok in checks)} of {len(checks)} checks passed; console errors: {len(errors) or "none"}')
