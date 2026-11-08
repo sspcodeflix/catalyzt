@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { PassageText } from '../components/PassageText';
 import { fetchSourceDetail, reportConflict, statusLabel, syncSource, testQuestion, TRUST_RANK, useContextStore, type RankedChunk, type SourceDetail } from '../lib/contextData';
 import { relTime } from './Tickets';
 
@@ -151,7 +152,7 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
                 <span>{c.locator}</span>
                 <span className="rel">v{c.version}</span>
               </header>
-              <div>{c.text}</div>
+              <PassageText text={c.text} locator={c.locator} />
               {c.excludedReason && (
                 <div>
                   <span className="pill warn">Excluded: {c.excludedReason}</span>
@@ -283,7 +284,7 @@ function TestQuestion() {
                 <span>{c.href ? <Link to={c.href}>{c.where}</Link> : c.where}</span>
                 <span className="rel">relevance {c.relevance.toFixed(2)}</span>
               </header>
-              <div>{c.text}</div>
+              <PassageText text={c.text} locator={c.where} />
               <div>
                 <span className={`pill ${c.used ? 'pass' : 'warn'}`}>{c.used ? 'Used' : c.reason}</span>
               </div>

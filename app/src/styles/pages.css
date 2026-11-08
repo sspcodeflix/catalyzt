@@ -176,4 +176,15 @@ legend { padding: 0; }
 /* App Context passages: a citation link lands on its passage; excluded ones stay visible but muted. */
 .chunk.excluded { opacity: .75; }
 .chunk.target, .chunk:target { outline: 2px solid var(--hz-info); outline-offset: 2px; }
+/* A passage as written (R20): Markdown rendered, build files kept in a monospace block. */
+.passage-md { display: flex; flex-direction: column; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.passage-md p, .passage-md ul, .passage-md ol, .passage-md blockquote { margin: 0; }
+.passage-md ul, .passage-md ol { padding-left: 20px; }
+.passage-md blockquote { padding-left: 10px; border-left: 3px solid var(--hz-border); color: var(--hz-text-secondary); }
+.passage-md code.mono { background: var(--hz-surface-muted); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; }
+.passage-pre { margin: 0; padding: 8px 10px; background: var(--hz-surface-muted); border-radius: var(--hz-radius-md); font: 12.5px/1.45 var(--hz-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; }
+.passage-table { overflow-x: auto; max-width: 100%; }
+.passage-table table { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+.passage-table th, .passage-table td { border: 1px solid var(--hz-divider); padding: 4px 8px; text-align: left; vertical-align: top; }
+.passage-table th { background: var(--hz-surface-muted); font-weight: 600; }
 .decideform input.text { width: 100%; box-sizing: border-box; }

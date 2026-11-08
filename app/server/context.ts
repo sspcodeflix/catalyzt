@@ -242,7 +242,7 @@ export interface Doc {
 }
 
 /**
- * Splits documents into passages: paragraphs (blank-line separated), short ones merged with the
+ * Splits documents into passages: paragraphs (blank-line separated, line breaks kept), short ones merged with the
  * next up to about 900 characters, anything under 40 characters dropped. Locators are
  * "<path> ¶<n>" so a citation can be opened at the passage.
  */
@@ -259,7 +259,13 @@ export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: 
     let n = 0;
     let buf = '';
     const flush = () => {
-      const t = buf.replace(/\s+/g, ' ').trim();
+      // Line breaks are kept (R20): a Markdown table or list stays readable on the passage page.
+      const t = buf
+        .split('\n')
+        .map((l) => l.replace(/[^\S\n]+/g, ' ').trim())
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
       buf = '';
       if (t.length < MIN_CHUNK_CHARS) return;
       n++;
@@ -269,7 +275,7 @@ export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: 
       const p = para.trim();
       if (!p) continue;
       if (buf && buf.length + p.length > TARGET_CHUNK_CHARS) flush();
-      buf = buf ? `${buf}\n${p}` : p;
+      buf = buf ? `${buf}\n\n${p}` : p;
       if (buf.length >= TARGET_CHUNK_CHARS) flush();
       if (out.length >= max) return out;
     }

@@ -31,6 +31,12 @@ describe('passages', () => {
     expect(collectDocs(cloneDir).map((d) => d.path).sort()).toEqual(['README.md', 'docs/refunds.md']);
   });
 
+  it('R20: keeps line breaks, so a Markdown table in a passage can be rendered', () => {
+    const table = 'Method\t| Path\t| Description\n------ | ---- |:----:|\nGET\t| /accounts/current\t| Get current account data';
+    const [c] = chunkDocs([{ path: 'README.md', text: `#### Account service\nContains general input logic.\n\n${table}\n` }]);
+    expect(c.text).toBe(`#### Account service\nContains general input logic.\n\nMethod | Path | Description\n------ | ---- |:----:|\nGET | /accounts/current | Get current account data`);
+  });
+
   it('R19: indexes build, container and CI files as line passages, within limits, and says so', () => {
     const { db, cloneDir } = fixtureWithDocs();
     const pom = `<project>\n  <modelVersion>4.0.0</modelVersion>\n  <artifactId>shop</artifactId>\n  <build>\n    <plugins>\n      <plugin><artifactId>maven-surefire-plugin</artifactId></plugin>\n    </plugins>\n  </build>\n</project>\n`;
