@@ -74,8 +74,9 @@ function ScopeSwitcher() {
   return (
     <Dropdown.Root>
       <Dropdown.Trigger asChild>
-        <button type="button" className="scope pick" aria-label={`Scope: ${app.name}${ws ? `, workspace ${ws}` : ''}. Change application or workspace`}>
+        <button type="button" className="scope pick">
           {label}
+          <span className="sr">. Change application or workspace</span>
           <Icon name="down" small />
         </button>
       </Dropdown.Trigger>

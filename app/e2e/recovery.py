@@ -53,7 +53,7 @@ with sync_playwright() as p:
         """A new UAT analysis from the home composer (a new chat and a new run every time)."""
         page.goto(BASE + '/')
         page.wait_for_selector('.composer textarea')
-        page.fill('.composer textarea', 'Is IBGM-1005 ready for UAT?')
+        page.fill('.composer textarea', 'Is IBGM-1008 ready for UAT?')
         page.keyboard.press('Enter')
         page.wait_for_url(re.compile(r'/chat/[0-9a-f-]+'), timeout=15000)
         return re.search(r'/chat/([0-9a-f-]+)', page.url).group(1)

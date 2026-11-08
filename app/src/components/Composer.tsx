@@ -288,7 +288,7 @@ export function Composer({
           className="keep"
           icon="auto"
           label={agentLabel(agent)}
-          ariaLabel={`Agent: ${agentLabel(agent)}`}
+          kind="Agent"
           items={[
             { key: 'auto', label: 'Auto', hint: 'Catalyzt picks the capability' },
             ...capabilities.map((c) => ({ key: c.id, label: c.name })),
@@ -301,7 +301,7 @@ export function Composer({
           icon="layers"
           label={scopeLabel(scope)}
           shortLabel={`${scope.appId} · ${scope.workspace}`}
-          ariaLabel={`Scope: ${scopeLabel(scope)}`}
+          kind="Scope"
           items={scopes.map((s) => ({ key: scopeLabel(s), label: scopeLabel(s) }))}
           selected={scopeLabel(scope)}
           onSelect={(k) => setScope(scopes.find((s) => scopeLabel(s) === k) ?? scope)}
@@ -331,18 +331,20 @@ interface PickerProps {
   icon: 'auto' | 'layers';
   label: string;
   shortLabel?: string;
-  ariaLabel: string;
+  /** Read before the visible label by assistive technology, e.g. "Scope". */
+  kind: string;
   items: { key: string; label: string; hint?: string }[];
   selected: string;
   onSelect: (key: string) => void;
 }
 
-function Picker({ className, icon, label, shortLabel, ariaLabel, items, selected, onSelect }: PickerProps) {
+function Picker({ className, icon, label, shortLabel, kind, items, selected, onSelect }: PickerProps) {
   return (
     <Dropdown.Root>
       <Dropdown.Trigger asChild>
-        <button type="button" className={`pick${className ? ` ${className}` : ''}`} aria-label={ariaLabel}>
+        <button type="button" className={`pick${className ? ` ${className}` : ''}`}>
           <Icon name={icon} small />
+          <span className="sr">{kind}: </span>
           {shortLabel ? (
             <>
               <span className="pl wide">{label}</span>

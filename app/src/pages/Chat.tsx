@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-
 import { AssistantTurn } from '../components/chat/AssistantTurn';
 import { Composer, type ComposerSubmit } from '../components/Composer';
 import { Icon } from '../components/Icon';
+import { onTabListKey } from '../components/tabKeys';
 import { createChat, isAnswering, loadChat, sendMessage, stopAnswer, useChat, useChatLoad, type ChatLoad } from '../lib/chatStore';
 import { useSession } from '../lib/session';
 import { detectTestType, testTypeLabel } from '../lib/testType';
@@ -57,8 +58,10 @@ function ChatView({ chatId }: { chatId: string }) {
 
   return (
     <div className={`body${panelOpen ? ` split view-${view}` : ''}`}>
+      {/* The page heading for assistive technology; the top bar shows the same title visually. */}
+      <h1 className="sr">{chat?.title ?? 'Chat'}</h1>
       {panelOpen && (
-        <div className="mobiletabs segctl" role="tablist" aria-label="Chat or report">
+        <div className="mobiletabs segctl" role="tablist" aria-label="Chat or report" onKeyDown={onTabListKey}>
           <button type="button" role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => setView('chat')}>
             Chat
           </button>

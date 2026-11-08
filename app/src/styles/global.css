@@ -6,6 +6,12 @@ button, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--hz-info); outline-offset: 2px; }
+/* Skip link: off screen until focused, then the first thing on the page. */
+.skip { position: absolute; left: 12px; top: -48px; z-index: 100; padding: 8px 14px; border-radius: var(--hz-radius-md); background: var(--hz-ink); color: var(--hz-on-ink); font-weight: 500; text-decoration: none; }
+.skip:focus { top: 10px; }
+/* The routed page's wrapper (skip-link target) lays out its page as the main column did; it needs no ring. */
+.main > .content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.main > .content:focus { outline: none; }
 .mono { font-family: var(--hz-font-mono); font-size: .9em; }
 .muted { color: var(--hz-text-muted); }
 svg.i { width: 18px; height: 18px; flex-shrink: 0; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
@@ -53,7 +59,9 @@ svg.sm { width: 15px; height: 15px; }
 /* Composer */
 .composerwrap { padding: 12px 24px 18px; }
 .composer { width: 100%; max-width: var(--hz-thread-max); margin: 0 auto; background: var(--hz-surface); border: 1px solid var(--hz-border); border-radius: var(--hz-radius-2xl); box-shadow: var(--hz-shadow-composer); padding: 14px 14px 10px 16px; display: flex; flex-direction: column; gap: 12px; }
+/* Keyboard focus in the message box: a ring in the focus colour; a click keeps the quiet border. */
 .composer:focus-within { border-color: var(--hz-border-strong); }
+.composer:has(.input:focus-visible) { border-color: var(--hz-info); box-shadow: var(--hz-shadow-composer), 0 0 0 1px var(--hz-info); }
 .composer .input { border: 0; outline: 0; background: transparent; resize: none; font-size: 15.5px; line-height: 1.6; min-height: 26px; max-height: 40vh; padding: 0; field-sizing: content; }
 .composer .input::placeholder { color: var(--hz-text-placeholder); }
 .composer .row { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -94,7 +102,8 @@ svg.sm { width: 15px; height: 15px; }
 
 @media (max-width: 899px) {
   .sidebar { display: none; }
-  .sidebar.open { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 40; box-shadow: var(--hz-shadow-composer); }
+  /* The drawer scrolls when its content is taller than the phone (many recent chats), so the person menu stays reachable. */
+  .sidebar.open { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 40; box-shadow: var(--hz-shadow-composer); overflow-y: auto; overscroll-behavior: contain; }
   .sidebar.open .drawer-close { display: inline-flex; }
   .scrim { display: block; position: fixed; inset: 0; z-index: 30; background: rgb(0 0 0 / .32); }
   .menu, .mbrand { display: inline-flex; }
@@ -187,6 +196,8 @@ svg.flip { transform: rotate(180deg); }
 .tabs button { padding: 8px 12px; font-size: 13.5px; color: var(--hz-text-secondary); background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs button[data-state="active"] { color: var(--hz-text); border-color: var(--hz-ink); font-weight: 500; }
 .tabpane { display: flex; flex-direction: column; gap: 18px; }
+/* Inactive panels are empty and `hidden`; the display above must not bring them back as empty Tab stops. */
+.tabpane[hidden] { display: none; }
 .tabpane:focus-visible { outline-offset: 4px; }
 .code { font: 12.5px/1.75 var(--hz-font-mono); background: var(--hz-surface-sunken); border: 1px solid var(--hz-border); border-radius: var(--hz-radius-lg); overflow: hidden; }
 .code .file { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--hz-border); font-size: 12px; color: var(--hz-text-secondary); background: var(--hz-surface); overflow-wrap: anywhere; }
@@ -361,7 +372,7 @@ div.prose { display: flex; flex-direction: column; gap: 10px; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
 .inline { display: inline-flex; align-items: center; gap: 8px; }
 select, input.text { height: 36px; padding: 0 10px; border: 1px solid var(--hz-border-strong); border-radius: var(--hz-radius-md); background: var(--hz-surface); color: var(--hz-text); font: inherit; font-size: 14px; }
-select:focus, input.text:focus { outline: 0; border-color: var(--hz-ink); }
+select:focus, input.text:focus { outline: 0; border-color: var(--hz-ink); box-shadow: 0 0 0 1px var(--hz-ink); }
 .jqlpreview { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
 .errtext { color: var(--hz-crit-text); font-size: 13px; margin: 0; }
 .formactions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
@@ -475,7 +486,7 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
 .feedback fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .feedback legend { font-weight: 500; padding: 0; margin-bottom: 4px; }
 .feedback textarea { width: 100%; box-sizing: border-box; min-height: 72px; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--hz-border-strong); border-radius: var(--hz-radius-md); background: var(--hz-surface); color: var(--hz-text); font: inherit; font-size: 14px; resize: vertical; }
-.feedback textarea:focus { outline: 0; border-color: var(--hz-ink); }
+.feedback textarea:focus { outline: 0; border-color: var(--hz-ink); box-shadow: 0 0 0 1px var(--hz-ink); }
 .fb-hints { margin: 0; padding: 10px 12px 10px 28px; border-radius: var(--hz-radius-md); background: var(--hz-warn-tint); color: var(--hz-warn-text); font-size: 13px; }
 .msgactions .errtext { margin-left: 6px; }
 .emptystate { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 18px 20px; border: 1px solid var(--hz-border); border-radius: var(--hz-radius-xl); background: var(--hz-surface); max-width: 520px; }
