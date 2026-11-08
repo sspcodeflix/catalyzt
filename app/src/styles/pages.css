@@ -348,5 +348,7 @@ legend { padding: 0; }
 .reviewreqs .req { margin: 0; }
 .reviewcase { margin-left: 14px; padding: 8px 10px; border-radius: 8px; background: var(--hz-bg, transparent); border: 1px solid var(--hz-border); font-size: 13.5px; }
 .reviewcase ol { margin: 6px 0 0; padding-left: 20px; color: var(--hz-text-secondary); }
-.flowhandoff { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
-.flowhandoff p { margin: 0; }
+.flowhandoff { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.flowhandoff > p { margin: 0; }
+.flowhandoff .flowreview { margin-bottom: 0; }
+.flowhandoff .flowreview h3 { font-family: inherit; font-size: 15px; font-weight: 600; }

@@ -43,7 +43,7 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
   changes**. Sending cases back needs a note saying what to change; the note shows on the story and in
   the timeline, and the story waits on the flow's owner to analyse again. No rating of the AI's answer is
   asked for: rating is feedback that makes the assistant better, the review is a decision about the
-  cases. In the analysis chat, the approval card points to the flow's review instead. Drafted cases for a
+  cases. In a chat, the approval card for such a story is that same review, so it can be approved or sent back right there; it acts on the flow. Drafted cases for a
   story in no flow keep the chat approval card, where approving still asks for a rating first.
 - **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
   No manual case is drafted for that criterion.

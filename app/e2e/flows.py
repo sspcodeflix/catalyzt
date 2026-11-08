@@ -77,6 +77,10 @@ with sync_playwright() as p:
     page.click('.flowdetail a:has-text("Open the analysis chat")')
     page.wait_for_selector('.storyflowbar .sfrow', timeout=15000)
     check('chat: a story chat shows its flow and step above the reply box', 'UAT · e2e release' in page.inner_text('.storyflowbar') and 'Step:' in page.inner_text('.storyflowbar'))
+    # The drafted cases can be reviewed right in the chat: the flow's review, no rating lock.
+    page.wait_for_selector('.flowhandoff .flowreview', timeout=15000)
+    hand = page.locator('.flowhandoff').first
+    check('chat: the flow review is in the chat, requirement by requirement', hand.locator('.reviewreqs > li').count() >= 1 and 'Rate the answer' not in hand.inner_text())
     page.go_back()
     page.wait_for_selector('.flowsteps li', timeout=15000)
 

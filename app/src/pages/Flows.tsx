@@ -675,7 +675,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
  * The flow's own review step: each requirement of the story with the cases drafted for it, then Approve or
  * Request changes. It decides the approval from the analysis; no rating of the answer is asked for here.
  */
-function CaseReview({ flow, story }: { flow: FlowView; story: FlowStory }) {
+export function CaseReview({ flow, story }: { flow: FlowView; story: FlowStory }) {
   const me = useSession().me?.user;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);

@@ -10,7 +10,7 @@ import { flowsChanged, useActiveFlows, type FlowSummary, type FlowView } from '.
 import { api } from '../../lib/hexa';
 import { sessionEpoch, useSession } from '../../lib/session';
 import type { Block } from '../../lib/types';
-import { Coverage, FlowCard, Stepper, StoryRow } from '../../pages/Flows';
+import { CaseReview, Coverage, FlowCard, Stepper, StoryRow } from '../../pages/Flows';
 
 const KIND = { uat: 'UAT', regression: 'Regression' } as const;
 
@@ -252,7 +252,17 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
                     : 'Nothing waiting'}
             </span>
             {reviewKey ? (
-              <Link to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`} className="btn small ink">
+              <Link
+                to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`}
+                className="btn small ink"
+                onClick={(e) => {
+                  // The review is in this chat: go to it rather than leave.
+                  const here = document.querySelector<HTMLElement>(`.flowhandoff #review-${CSS.escape(reviewKey)}`);
+                  if (!here) return;
+                  e.preventDefault();
+                  here.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                }}
+              >
                 Review cases
               </Link>
             ) : (
@@ -268,25 +278,38 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
 }
 
 /**
- * In a chat, the approval card for drafted cases of a story that is in a test flow: the cases are reviewed
- * in the flow (requirement by requirement, Approve or Request changes), so the card points there. A story
- * in no flow, or a decided approval, keeps the usual card.
+ * In a chat, the approval card for drafted cases of a story that is in a test flow becomes the flow's own
+ * review, right here: each requirement with its cases, Approve or Request changes, no rating asked. It acts
+ * on the flow, so the flow page, its cards and the team see the decision. A story in no flow, or a decided
+ * approval, keeps the usual card.
  */
 export function FlowReviewHandoff({ storyKey, pending, children }: { storyKey: string | null; pending: boolean; children: React.ReactNode }) {
   const flows = useStoryFlows(storyKey && pending ? [storyKey] : []);
-  if (!storyKey || !pending) return <>{children}</>;
-  if (flows === null) return <>{children}</>;
-  const f = flows[0];
-  if (!f) return <>{children}</>;
+  const flowId = flows?.[0]?.id ?? null;
+  const [view, setView] = useState<FlowView | null>(null);
+  useEffect(() => {
+    if (!flowId) return;
+    const epoch = sessionEpoch();
+    let live = true;
+    const load = () =>
+      api<{ flow: FlowView }>(`/api/flows/${flowId}`)
+        .then((d) => live && epoch === sessionEpoch() && setView(d.flow))
+        .catch(() => undefined);
+    void load();
+    window.addEventListener('flows:changed', load);
+    return () => {
+      live = false;
+      window.removeEventListener('flows:changed', load);
+    };
+  }, [flowId]);
+  const story = view && view.id === flowId ? view.items.find((s) => s.key === storyKey) : undefined;
+  if (!storyKey || !pending || !flowId || !story?.review || story.review.status !== 'pending') return <>{children}</>;
   return (
-    <section className="card approve flowhandoff" aria-label={`Review ${storyKey} in the test flow`}>
-      <p>
-        <b>Drafted UAT cases for {storyKey}</b>
-        <span className="muted"> are reviewed in the test flow <Link to={`/flows/${f.id}`}>{f.title}</Link>, requirement by requirement.</span>
+    <div className="card approve flowhandoff">
+      <p className="muted small">
+        {storyKey} is in the test flow <Link to={`/flows/${flowId}`}>{view!.title}</Link>. Reviewing here moves the flow on for everyone.
       </p>
-      <Link to={`/flows/${f.id}?review=${encodeURIComponent(storyKey)}`} className="btn small ink">
-        Review cases
-      </Link>
-    </section>
+      <CaseReview flow={view!} story={story} />
+    </div>
   );
 }
