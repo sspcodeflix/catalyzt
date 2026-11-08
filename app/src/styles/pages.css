@@ -49,6 +49,9 @@ legend { padding: 0; }
 .types { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .linkbox { padding: 18px; border-left: 1px solid var(--hz-divider); display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .linkform { display: flex; flex-direction: column; gap: 8px; }
+/* R08: the unlink control on a link chip is a 28 px target; the last change can be undone. */
+.linkpill .chipx { width: 28px; height: 28px; margin: -5px -8px -5px 2px; }
+.linkundo { margin: 8px 0 0; font-size: 13px; }
 .scoperow { display: flex; gap: 8px 14px; align-items: center; font-size: 13px; flex-wrap: wrap; }
 .scoperow legend { font-size: 13px; font-weight: 500; margin-bottom: 6px; width: 100%; float: left; }
 .wsrow { display: flex; gap: 8px; align-items: center; font-size: 13px; }
