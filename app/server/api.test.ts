@@ -758,3 +758,20 @@ describe('R13: the story list carries the latest saved UAT analysis', () => {
     expect(other.stories.every((s) => s.uat.state === 'not-analysed')).toBe(true);
   });
 });
+
+describe('linking a test from another repository is refused unless confirmed', () => {
+  it('409 with the reason, then 200 with force; removing is never refused', async () => {
+    const xml = '<testsuite name="s"><testcase classname="github.com/moov-io/ach" name="TestFile"/></testsuite>';
+    const ci = await startApi(db, null, { ingestToken: 't' });
+    await ci.anonymous().post('/api/hexa/results', { app: 'ABCD', repo: 'moov-io/ach', runId: 'x1', attempt: 1, startedAt: new Date().toISOString(), junit: [xml] }, { Authorization: 'Bearer t' });
+    ci.close();
+    const id = db.listTests('ABCD', { q: 'TestFile' }).rows[0].id;
+    const sourav = api.as('u-sourav', 'ABCD');
+    const refused = await sourav.post(`/api/hexa/tests/${id}/links`, { type: 'criterion', ref: 'ABCD-1001#AC1' });
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: 'other_repo', error: expect.stringMatching(/moov-io\/ach.*acme\/shop.*would not count/) });
+    expect(db.getTest(id)?.links).toEqual([]);
+    expect((await sourav.post(`/api/hexa/tests/${id}/links`, { type: 'criterion', ref: 'ABCD-1001#AC1', force: true })).status).toBe(200);
+    expect((await sourav.post(`/api/hexa/tests/${id}/links`, { type: 'criterion', ref: 'ABCD-1001#AC1', remove: true })).status).toBe(200);
+  });
+});

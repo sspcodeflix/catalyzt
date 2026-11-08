@@ -508,21 +508,29 @@ function LinkForm({ testId, linked, onLinked }: { testId: string; linked: TestLi
   const ref = type === 'component' ? component : type === 'story' ? storyKey : storyKey && ac > 0 ? `${storyKey}#AC${ac}` : '';
   const already = linked.some((l) => l.type === type && (l.type === 'component' ? l.ref.endsWith(`/${ref}`) : l.ref === ref));
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
+  // A link the server refused because the test comes from another repository can be confirmed once.
+  const [confirm, setConfirm] = useState(false);
+  const link = async (force: boolean) => {
     if (!ref) return;
     setBusy(true);
     setError(null);
     try {
       const before = linked;
-      const r = await api<{ test: TestDetail }>(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type, ref }) });
+      const r = await api<{ test: TestDetail }>(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type, ref, force }) });
       hexaChanged();
+      setConfirm(false);
       onLinked(addedLinks(before, r.test.links));
     } catch (err) {
-      setError((err as Error).message);
+      const msg = (err as Error).message;
+      setError(msg);
+      setConfirm(!force && /would not count as evidence/.test(msg));
     } finally {
       setBusy(false);
     }
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    void link(false);
   };
 
   return (
@@ -589,6 +597,14 @@ function LinkForm({ testId, linked, onLinked }: { testId: string; linked: TestLi
       {error && (
         <p className="errtext" role="alert">
           {error}
+          {confirm && (
+            <>
+              {' '}
+              <button type="button" className="btn small" onClick={() => void link(true)} disabled={busy}>
+                Link anyway
+              </button>
+            </>
+          )}
         </p>
       )}
     </form>

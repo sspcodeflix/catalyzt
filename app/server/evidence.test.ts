@@ -120,3 +120,55 @@ describe('module path from the report location', () => {
     expect(db.listTests('ABCD', { q: 'AccountTest' }).rows[0]).toMatchObject({ path: 'account-service', framework: 'JUnit (Maven)', kind: 'automated' });
   });
 });
+
+describe('component mapping on the real import shapes (R01 on live data, V-*-01)', () => {
+  const junit = (cases: { classname: string; name: string; file?: string; failed?: boolean }[]) =>
+    `<testsuites><testsuite name="s">${cases.map((c) => `<testcase classname="${c.classname}" name="${c.name}"${c.file ? ` file="${c.file}"` : ''}>${c.failed ? '<failure message="boom"/>' : ''}</testcase>`).join('')}</testsuite></testsuites>`;
+  const meta = (o: Partial<RunMeta> = {}): RunMeta => ({ app: 'ABCD', source: 'webhook', repo: 'acme/shop', workflow: 'ci', framework: 'JUnit (Maven)', externalRunId: 'm1', attempt: 1, runUrl: null, event: 'push', branch: 'main', sha: 'abc1234', prNumber: null, isMerge: false, startedAt: new Date().toISOString(), ...o });
+
+  it('Maven packages, Go package paths and Jest files map to their component; titles never do', async () => {
+    const db = fixtureDb();
+    await ingestJUnit(db, [{ filename: 'TEST-x.xml', xml: junit([
+      { classname: 'com.acme.shop.checkoutservice.ChargeTest', name: 'chargesTheCard' },
+      { classname: 'github.com/acme/shop/src/frontend', name: 'TestHomeHandler' },
+      { classname: 'charge rejects expired cards', name: 'charge rejects expired cards', file: 'src/checkoutservice/charge.test.ts' },
+      { classname: 'com.acme.shop.checkoutservice.FrontendBannerTest', name: 'frontendBannerShowsTotal' },
+    ]) }], meta(), 'u-sourav');
+    const of = (c: string) => db.listTests('ABCD', { component: c, kind: 'automated', limit: 50 }).rows.map((r) => r.title).sort();
+    expect(of('checkoutservice')).toEqual(['Charges the card', 'Frontend banner shows total', 'charge rejects expired cards'].sort());
+    // "frontend" appears in a checkoutservice test's title: that does not make it a frontend test.
+    expect(of('frontend')).toEqual(['Home handler']);
+    const row = db.listTests('ABCD', { q: 'chargesTheCard' }).rows[0];
+    expect(row).toMatchObject({ suite: 'com.acme.shop.checkoutservice.ChargeTest', framework: 'JUnit (Maven)' });
+  });
+
+  it('a component whose path is the whole repository owns all of its tests, and only those', async () => {
+    const db = fixtureDb();
+    db.raw.prepare("INSERT INTO components (id, application_id, name, manager_id, workspace_id, repo, path) VALUES ('ABCD/shop-core', 'ABCD', 'shop-core', 'u-sourav', NULL, 'acme/shop', '.')").run();
+    await ingestJUnit(db, [{ filename: 'go.xml', xml: junit([{ classname: 'github.com/acme/shop', name: 'TestBatch' }]) }], meta({ framework: 'go test' }), 'u-sourav');
+    await ingestJUnit(db, [{ filename: 'go.xml', xml: junit([{ classname: 'github.com/acme/other', name: 'TestElsewhere' }]) }], meta({ repo: 'acme/other', externalRunId: 'o1', framework: 'go test' }), 'u-sourav');
+    expect(db.listTests('ABCD', { component: 'shop-core', kind: 'automated' }).rows.map((r) => r.title)).toEqual(['Batch']);
+  });
+
+  it('an earlier import with the short class name and no path is refreshed by the next delivery', async () => {
+    const db = fixtureDb();
+    await ingestJUnit(db, [{ filename: 'TEST-x.xml', xml: junit([{ classname: 'com.acme.shop.checkoutservice.RefundTest', name: 'refundsPartially' }]) }], meta(), 'u-sourav');
+    const id = db.listTests('ABCD', { q: 'refundsPartially' }).rows[0].id;
+    db.raw.prepare("UPDATE test_cases SET suite = 'RefundTest', path = NULL, framework = 'JUnit XML' WHERE id = ?").run(id); // how older imports stored it
+    expect(db.listTests('ABCD', { component: 'checkoutservice', kind: 'automated' }).total).toBe(0);
+    await ingestJUnit(db, [{ filename: 'checkoutservice/TEST-x.xml', xml: junit([{ classname: 'com.acme.shop.checkoutservice.RefundTest', name: 'refundsPartially' }]) }], meta({ externalRunId: 'm2' }), 'u-sourav');
+    expect(db.getTest(id)).toMatchObject({ suite: 'com.acme.shop.checkoutservice.RefundTest', path: 'checkoutservice', framework: 'JUnit (Maven)' });
+    expect(db.listTests('ABCD', { component: 'checkoutservice', kind: 'automated' }).total).toBe(1);
+  });
+
+  it('a linked test from a repository none of the story’s components use is shown but never counted', async () => {
+    const db = fixtureDb();
+    await ingestJUnit(db, [{ filename: 'go.xml', xml: junit([{ classname: 'github.com/moov-io/ach', name: 'TestFile' }]) }], meta({ repo: 'moov-io/ach', externalRunId: 'a1', framework: 'go test' }), 'u-sourav');
+    const ach = db.listTests('ABCD', { q: 'TestFile' }).rows[0];
+    db.linkTest(ach.id, 'criterion', 'ABCD-1001#AC1', 'u-sourav'); // ABCD-1001 is checkoutservice, in acme/shop
+    const ac1 = db.coverageFor('ABCD-1001')[0];
+    expect(ac1.status).not.toBe('passing');
+    expect(ac1.evidence).toMatch(/not counted: .* from moov-io\/ach, which none of this story's components use/);
+    expect(ac1.tests.find((t) => t.id === ach.id)?.result).toBe('other_repo');
+  });
+});

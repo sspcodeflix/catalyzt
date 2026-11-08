@@ -79,6 +79,8 @@ function storeRun(db: HorizonDb, meta: RunMeta, cases: JUnitCase[], userId: stri
     return {
       testCaseId: hit?.id ?? null,
       create: hit ? undefined : { id: ciTestId(meta.app, meta.repo, c), title: ciTitle(c), suite: ciSuite(c), codeName: rawName(c.name), path: c.file },
+      // What this delivery knows about where the test lives, to refresh an earlier import's short suite and missing path.
+      refresh: hit ? { suite: ciSuite(c), path: c.file } : undefined,
       status: c.status,
       durationMs: c.durationMs,
       message: c.message,

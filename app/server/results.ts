@@ -56,7 +56,7 @@ export function matchCase(c: JUnitCase, cands: Candidate[], idx: CandidateIndex 
   const cls = lastPart(c.classname);
   const byName = idx.byCodeName.get(raw) ?? [];
   const agrees = (x: Candidate) =>
-    (!!cls && (x.suite === cls || (x.path?.includes(cls) ?? false))) || (!!c.file && !!x.path && (c.file.endsWith(x.path) || x.path.endsWith(c.file)));
+    (!!cls && (x.suite === cls || (!!x.suite && lastPart(x.suite) === cls) || (x.path?.includes(cls) ?? false))) || (!!c.file && !!x.path && (c.file.endsWith(x.path) || x.path.endsWith(c.file)));
   // Rule 3, in inventory order: the title alone, "<suite> <title>", or the classname plus title.
   const literal = [...(idx.byTitle.get(c.name) ?? []), ...(idx.bySuiteTitle.get(c.name) ?? [])].sort((a, b) => a.pos - b.pos).find((x) => x.title === c.name || (!!x.suite && `${x.suite} ${x.title}` === c.name) || (x.suite === c.classname && x.title === c.name));
   // Titles of scanned tests are the method name in words, so this also matches tests that were
@@ -78,4 +78,9 @@ export function ciTitle(c: JUnitCase) {
   return /\s/.test(raw) ? raw : humanize(raw);
 }
 
-export const ciSuite = (c: JUnitCase) => lastPart(c.classname) || null;
+/**
+ * The suite of a test first seen in CI: the full class or package name as JUnit gives it
+ * (com.piggymetrics.account.AccountControllerTest, github.com/moov-io/ach), so the test can be mapped to
+ * a component by its package or directory. Only the short name was kept before, which lost that.
+ */
+export const ciSuite = (c: JUnitCase) => c.classname.trim() || null;

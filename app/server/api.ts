@@ -623,6 +623,18 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           }
         }
         if (type === 'component' && !member.components.some((c) => c.name === ref)) throw new HttpError(400, `${ref} is not a component of ${appId}.`);
+        // An automated test from a repository the target does not live in is almost always a mistake (a
+        // word-matched link): refused with the reason unless the person confirms; coverage never counts it anyway.
+        if (b.remove !== true && b.force !== true && t.kind === 'automated' && t.repo) {
+          const targetComponents = type === 'component' ? [ref] : storyKey ? (db.getStory(storyKey)?.components ?? []) : [];
+          const repos = new Set(member.components.filter((c) => targetComponents.includes(c.name) && c.repo).map((c) => c.repo as string));
+          if (repos.size && !repos.has(t.repo)) {
+            return send(res, 409, {
+              error: `${t.id} is a test in ${t.repo}, but ${type === 'component' ? ref : storyKey} lives in ${[...repos].join(', ')}. It would not count as evidence. Link it anyway only if that is really intended.`,
+              code: 'other_repo',
+            });
+          }
+        }
         db.linkTest(t.id, type, type === 'component' ? componentId(appId, ref) : ref, user.id, b.remove === true);
         return send(res, 200, { test: db.getTest(t.id) });
       }

@@ -158,6 +158,15 @@ const GENERIC_WORDS = new Set(['service', 'services', 'svc', 'api', 'app', 'appl
 const NOISE_WORDS = new Set(['src', 'main', 'test', 'tests', 'java', 'go', 'com', 'org', 'io', 'net', 'pkg', 'internal', 'cmd']);
 const escapeLike = (s: string) => s.replace(/[%_\\]/g, (m) => `\\${m}`);
 
+/** The words of a component's name and path that no other component of the same repository has (F: component matching). */
+export function distinctiveKeywords(comp: { name: string; path: string | null }, others: { name: string; path: string | null }[]): string[] {
+  const words = (c: { name: string; path: string | null }) =>
+    new Set([c.name, ...(c.path ?? '').split('/')].flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/)).filter((w) => w.length >= 3 && !NOISE_WORDS.has(w)));
+  const mine = words(comp);
+  const theirs = new Set(others.filter((o) => o.name !== comp.name).flatMap((o) => [...words(o)]));
+  return [...mine].filter((w) => !theirs.has(w));
+}
+
 /** The distinctive words of a component ("account-service" → account; "ach-core" → ach; "frontend" → frontend). */
 export function componentKeywords(name: string, path: string | null): string[] {
   const raw = [name, ...(path ?? '').split('/')].flatMap((s) => s.toLowerCase().split(/[^a-z0-9]+/)).filter((w) => w.length >= 3 && !NOISE_WORDS.has(w));
@@ -205,7 +214,8 @@ export interface EvidenceBuild {
 }
 
 /** A linked test's result in the target build. `missing`: the test was not in that run, so an older pass does not count. */
-export type EvidenceResult = 'passed' | 'failed' | 'skipped' | 'missing' | 'not_run' | 'manual';
+/** `other_repo`: an automated test from a repository none of the story's components use; it is shown but never counted. */
+export type EvidenceResult = 'passed' | 'failed' | 'skipped' | 'missing' | 'not_run' | 'manual' | 'other_repo';
 
 /** What Hexa knows about one acceptance criterion. */
 export interface CriterionCoverage {
@@ -435,6 +445,11 @@ export function openDb(path: string) {
       req.run(requirementUid(app, r), app, r);
       sr.run(key, requirementUid(app, r));
     }
+  }
+
+  /** The components of an application that share a repository. */
+  function siblings(app: string, repo: string | null) {
+    return db.prepare('SELECT name, path FROM components WHERE application_id = ? AND repo IS ?').all(app, repo) as { name: string; path: string | null }[];
   }
 
   function getChat(id: string) {
@@ -777,20 +792,34 @@ export function openDb(path: string) {
       if (!comp) return null;
       const parts: string[] = [];
       const args: unknown[] = [];
+      // Linked to the component, or a manual/proposed test linked to a story this component is part of.
       parts.push("EXISTS (SELECT 1 FROM test_case_links l WHERE l.test_case_id = t.id AND l.entity_type = 'component' AND l.entity_ref = ?)");
       args.push(`${app}/${comp.name}`);
+      parts.push(
+        `(t.kind != 'automated' AND EXISTS (SELECT 1 FROM test_case_links l JOIN story_components sc ON sc.story_key = CASE WHEN instr(l.entity_ref, '#') > 0 THEN substr(l.entity_ref, 1, instr(l.entity_ref, '#') - 1) ELSE l.entity_ref END
+           JOIN components c ON c.id = sc.component_id WHERE l.test_case_id = t.id AND l.entity_type IN ('story', 'criterion') AND c.application_id = ? AND c.name = ?))`,
+      );
+      args.push(app, comp.name);
+      // Automated tests: only from the component's own repository, by where they live.
       const p = (comp.path ?? '').replace(/^\.?\/+/, '').replace(/\/+$/, '');
-      if (p) {
-        parts.push("(t.path = ? OR t.path LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\')");
-        args.push(p, `${escapeLike(p)}/%`, `%/${escapeLike(p)}/%`);
+      const inRepo: string[] = [];
+      const inArgs: unknown[] = [];
+      if (!p || p === '.') {
+        // The component is the whole repository (ach-core, customer-portal): all of its tests.
+        inRepo.push('1');
+      } else {
+        // Under its path (file or module), or in a Go package path ending with it.
+        inRepo.push("t.path = ? OR t.path LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\'");
+        inArgs.push(p, `${escapeLike(p)}/%`, `%/${escapeLike(p)}/%`, `%/${escapeLike(p)}`, `%/${escapeLike(p)}/%`);
+        // In a Java or Go package named after it, by the words only this component of the repository has.
+        for (const kw of distinctiveKeywords(comp, siblings(app, comp.repo))) {
+          inRepo.push("(instr(t.suite, ' ') = 0 AND (t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\'))");
+          inArgs.push(`%.${escapeLike(kw)}.%`, `${escapeLike(kw)}.%`, `%/${escapeLike(kw)}`);
+        }
       }
-      for (const kw of componentKeywords(comp.name, comp.path)) {
-        parts.push("(t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\' OR t.suite LIKE ? ESCAPE '\\')");
-        args.push(`%.${escapeLike(kw)}.%`, `${escapeLike(kw)}.%`, `%/${escapeLike(kw)}/%`, `%/${escapeLike(kw)}`);
-      }
-      const like = `%${escapeLike(comp.name)}%`;
-      parts.push("(t.title LIKE ? ESCAPE '\\' OR t.path LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM test_case_links l WHERE l.test_case_id = t.id AND l.entity_ref LIKE ? ESCAPE '\\'))");
-      args.push(like, like, like);
+      parts.push(`(t.kind = 'automated' AND ${comp.repo ? 't.repo = ? AND ' : ''}(${inRepo.join(' OR ')}))`);
+      if (comp.repo) args.push(comp.repo);
+      args.push(...inArgs);
       return { sql: `(${parts.join(' OR ')})`, args };
     },
 
@@ -1089,7 +1118,7 @@ export function openDb(path: string) {
      */
     ingestRun(
       meta: RunMeta,
-      results: { testCaseId: string | null; create?: { id: string; title: string; suite: string | null; codeName: string; path: string | null }; status: 'passed' | 'failed' | 'skipped'; durationMs: number | null; message: string | null }[],
+      results: { testCaseId: string | null; create?: { id: string; title: string; suite: string | null; codeName: string; path: string | null }; refresh?: { suite: string | null; path: string | null }; status: 'passed' | 'failed' | 'skipped'; durationMs: number | null; message: string | null }[],
       userId: string,
     ) {
       return db.transaction(() => {
@@ -1100,6 +1129,11 @@ export function openDb(path: string) {
         let matched = 0;
         const counts = { passed: 0, failed: 0, skipped: 0 };
         const seen = new Map<string, (typeof results)[number]>();
+        const refreshCi = db.prepare(
+          `UPDATE test_cases SET suite = CASE WHEN ? IS NOT NULL AND (suite IS NULL OR instr(?, suite) > 0) THEN ? ELSE suite END, path = COALESCE(path, ?),
+             framework = CASE WHEN framework IS NULL OR framework = 'JUnit XML' THEN COALESCE(?, framework) ELSE framework END
+           WHERE id = ? AND origin = 'ci_results'`,
+        );
         for (const r of results) {
           let id = r.testCaseId;
           if (!id && r.create) {
@@ -1112,6 +1146,11 @@ export function openDb(path: string) {
               .run(id, meta.app, r.create.title.slice(0, 300), r.create.suite, r.create.codeName, meta.framework?.trim() || 'JUnit XML', meta.repo, r.create.path, userId, t, t);
             if (ins.changes) created++;
           } else if (id) matched++;
+          // A CI test recorded by an earlier import gets the full suite and the file or module this delivery
+          // knows (older imports kept only the short class name and no path), and the delivery's framework.
+          const fresh = r.refresh ?? r.create;
+          if (id && fresh)
+            refreshCi.run(fresh.suite, fresh.suite, fresh.suite, fresh.path, meta.framework?.trim() || null, id);
           if (!id) continue;
           // A test reported twice in one run (retries) keeps its worst result.
           const prev = seen.get(id);
@@ -1315,11 +1354,17 @@ export function openDb(path: string) {
         return builds.get(key) ?? null;
       };
       const one = (list: { id: string }[]) => (list.length === 1 ? list[0].id : `${list.length} tests`);
+      // The repositories the story's components live in. A linked automated test from any other repository
+      // is evidence about something else (a word-matched link, a mistake) and never counts toward coverage.
+      const storyRepos = new Set(
+        (db.prepare('SELECT c.repo FROM story_components sc JOIN components c ON c.id = sc.component_id WHERE sc.story_key = ? AND c.repo IS NOT NULL').all(storyKey) as { repo: string }[]).map((r) => r.repo),
+      );
       return story.acceptanceCriteria.map((_, i) => {
         const rows = linked.all(`${storyKey}#AC${i + 1}`) as Row[];
         const tests = rows.map((r) => {
           const kind = String(r.kind);
           if (kind !== 'automated') return { id: String(r.id), title: String(r.title), kind, result: 'manual' as EvidenceResult, build: null };
+          if (storyRepos.size && r.repo && !storyRepos.has(String(r.repo))) return { id: String(r.id), title: String(r.title), kind, result: 'other_repo' as EvidenceResult, build: null, awaiting: null, repo: String(r.repo) };
           const build = buildFor((r.repo as string) ?? null);
           const result: EvidenceResult = !build ? 'not_run' : resultIn(build, String(r.id));
           // Missing from the build: did its workflow report at all for this commit?
@@ -1329,7 +1374,9 @@ export function openDb(path: string) {
           return { id: String(r.id), title: String(r.title), kind, result, build, awaiting: awaiting ? wf : null };
         });
         const used = [...new Map(tests.flatMap((t) => (t.build ? [[t.build.runId, t.build] as const] : []))).values()];
-        const out = (status: CriterionStatus, evidence: string): CriterionCoverage => ({ status, evidence, tests: tests.map(({ build: _b, awaiting: _a, ...t }) => t), builds: used });
+        const foreign = tests.filter((t) => t.result === 'other_repo') as { id: string; repo?: string }[];
+        const note = foreign.length ? ` · not counted: ${one(foreign)} from ${[...new Set(foreign.map((f) => f.repo))].join(', ')}, which none of this story's components use` : '';
+        const out = (status: CriterionStatus, evidence: string): CriterionCoverage => ({ status, evidence: `${evidence}${note}`, tests: tests.map(({ build: _b, awaiting: _a, repo: _r, ...t }: { build: unknown; awaiting?: unknown; repo?: unknown } & Record<string, unknown>) => t) as CriterionCoverage['tests'], builds: used });
         const by = (result: EvidenceResult) => tests.filter((t) => t.result === result);
         const label = (t: { build: EvidenceBuild | null }) => t.build?.label ?? 'the target build';
         const failed = by('failed');
