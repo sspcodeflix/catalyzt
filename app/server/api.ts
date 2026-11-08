@@ -614,9 +614,15 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           throw new HttpError(409, a.status === 'expired' ? 'This approval was superseded by a newer revision of the answer.' : `This was already ${a.status}.`);
         };
         if (found.status !== 'pending') return settled(found);
-        // Server-side rules: an owner or a component manager decides, and approving needs a rating first.
+        // Server-side rules: an owner or a component manager decides. In chat, approving needs a rating first.
+        // Drafted cases for a story in a test flow are reviewed as the flow's own step instead: the decision
+        // is about the requirements and their cases, not feedback on the answer, so no rating is asked for,
+        // and asking for changes says what to change.
         requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
-        if (decision === 'approved' && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+        const inFlow = found.action === 'add_uat_cases' && !!found.payload.storyKey && flowsForStory(db, appId, found.payload.storyKey).length > 0;
+        const note = typeof b.note === 'string' ? b.note.trim().slice(0, 1000) : '';
+        if (decision === 'approved' && !inFlow && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+        if (decision === 'declined' && inFlow && note.length < 3) throw new HttpError(400, 'Say what should change in the drafted cases.');
         // F19: a component manager decides only changes to components they manage, taken from the frozen
         // payload (older approvals: the story's components); an owner decides any. A change that names no
         // component is the owner's to decide.
@@ -638,12 +644,12 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
                 return { ok: true, text: `Added ${n} manual test${n === 1 ? '' : 's'} to Hexa, linked to ${story.key}` };
               }
             : undefined;
-        const result = db.decideApproval(found.id, decision, user.id, execute);
+        const result = db.decideApproval(found.id, decision, user.id, execute, note || null);
         if (result.kind === 'missing') return send(res, 404, { error: 'This approval does not exist in this application.' });
         if (result.kind === 'already') return settled(result.approval);
         // The decision moves a test flow holding the story: say so in its timeline.
         if (found.action === 'add_uat_cases' && found.payload.storyKey)
-          noteStory(db, appId, found.payload.storyKey, user.id, decision, decision === 'approved' ? `Approved the drafted cases for ${found.payload.storyKey}: ${result.approval.outcome?.text ?? 'added to Hexa'}.` : `Declined the drafted cases for ${found.payload.storyKey}.`);
+          noteStory(db, appId, found.payload.storyKey, user.id, decision, decision === 'approved' ? `Approved the drafted cases for ${found.payload.storyKey}: ${result.approval.outcome?.text ?? 'added to Hexa'}.` : `Asked for changes to the drafted cases for ${found.payload.storyKey}${note ? `: "${note}"` : '.'}`);
         return send(res, 200, { approval: view(result.approval) });
       }
 

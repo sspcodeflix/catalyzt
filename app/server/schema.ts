@@ -1053,4 +1053,8 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX IF NOT EXISTS manual_executions_test ON manual_executions (test_case_id, executed_at);
   `,
+  // 27: what a reviewer asked to change when declining drafted cases in a test flow.
+  `
+  ALTER TABLE approvals ADD COLUMN note TEXT;
+  `,
 ];

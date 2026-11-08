@@ -1,5 +1,5 @@
 import { flowsChanged } from '../../lib/flows';
-import { FlowChatCard, FlowsWaitingCard, FlowStartCard } from './FlowCards';
+import { FlowChatCard, FlowReviewHandoff, FlowsWaitingCard, FlowStartCard } from './FlowCards';
 import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -148,8 +148,8 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
         const rights = approvalBlockReason(session.me?.app, session.userId, story ? story.components : null);
         const lockReason = !a.id ? 'Waiting for the answer to be saved' : rights ?? (message.rating === null ? 'Rate the answer to approve' : null);
         return (
+          <FlowReviewHandoff key={i} storyKey={a.action === 'add_uat_cases' ? (story?.key ?? (report?.kind === 'uat' ? report.ticketKey : null)) : null} pending={a.status === 'pending'}>
           <ApprovalCard
-            key={i}
             approval={a}
             revision={message.revision}
             lockReason={lockReason}
@@ -159,6 +159,7 @@ export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: Assista
               if (a.id) void decide(a.id, d);
             }}
           />
+          </FlowReviewHandoff>
         );
       }
       case 'flow':

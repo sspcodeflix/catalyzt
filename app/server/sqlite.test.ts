@@ -183,6 +183,8 @@ describe('repair of a database that applied an early migration 23', () => {
     first.raw.prepare("INSERT INTO flows (id, application_id, kind, title, owner_id, status, created_at, updated_at) VALUES ('f1', 'ABCD', 'uat', 'UAT', 'u-sourav', 'active', 't', 't')").run();
     // The state the live development database was in: level 25, no manual_executions table.
     first.raw.exec('DROP TABLE manual_executions');
+    // Columns added after 25 did not exist then either.
+    first.raw.exec('ALTER TABLE approvals DROP COLUMN note');
     first.raw.pragma('user_version = 25');
     first.raw.close();
     const db = openDb(path);

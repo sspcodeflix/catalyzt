@@ -90,20 +90,30 @@ with sync_playwright() as p:
     check('team: same steps and counts for Ram and Sourav', st == 200 and st2 == 200 and body['flow']['steps'] == body2['flow']['steps'])
     check('team: Sourav cannot cancel Ram\'s flow', page.locator('button:has-text("Cancel flow")').count() == 0 and api(ctx, 'u-sourav', 'POST', f'/api/flows/{flow_id}/status', {'status': 'cancelled'})[0] == 403)
 
-    # "Review cases" lands on the approval card itself, in view, not at the bottom of the chat.
-    rev = page.locator('.flownext a:has-text("Review cases")').first
+    # "Review cases" opens the flow's own review: each requirement with its drafted cases, no rating asked.
+    rev = page.locator('.flowstory .flownext button:has-text("Review cases")').first
     if rev.count():
-        href = rev.get_attribute('href') or ''
         rev.click()
-        page.wait_for_selector('.card.approve', timeout=15000)
-        page.wait_for_timeout(1200)
-        box = page.locator(f'#{href.split("#")[1]}').bounding_box() if '#' in href else None
-        check('review: the link points at the approval card and shows it', '#approval-' in href and box is not None and 0 <= box['y'] < 900, f'{href} {box}')
-        bar = page.inner_text('.storyflowbar') if page.locator('.storyflowbar').count() else ''
-        check('review: the bar in that chat names the flow', 'UAT · e2e release' in bar, bar)
-        page.go_back()
+        page.wait_for_selector('.flowreview', timeout=15000)
+        panel = page.locator('.flowreview').first
+        check('review: the requirements are listed with the cases drafted for them', panel.locator('.reviewreqs > li').count() >= 2 and panel.locator('.reviewcase').count() >= 1)
+        check('review: no rating is asked for', 'Rate' not in panel.inner_text() and panel.locator('.stars, [aria-label*="Rate"]').count() == 0)
+        key = (panel.get_attribute('id') or '').replace('review-', '')
+        # The link a chat gives (?review=KEY) opens the same review.
+        page.goto(BASE + f'/flows/{flow_id}?review={key}')
+        page.wait_for_selector(f'#review-{key}', timeout=15000)
+        check('review: ?review= opens that story at its review', page.locator(f'#review-{key}').is_visible())
+        # Request changes asks what to change before it can be sent.
+        page.click(f'#review-{key} button:has-text("Request changes")')
+        send = page.locator(f'#review-{key} button:has-text("Send back for changes")')
+        check('review: sending back needs a note', send.is_disabled())
+        page.screenshot(path=os.environ.get('E2E_SHOTS', '/tmp') + '/flow-review.png', full_page=False)
+        page.click(f'#review-{key} button:has-text("Approve")')
+        page.wait_for_selector(f'#review-{key}', state='detached', timeout=15000)
+        row = page.locator(f'#story-{key}').inner_text()
+        check('review: approving moves the story to Run tests', 'Run tests' in row, row[:200])
     else:
-        check('review: a story waits on its case review', False, 'no Review cases link')
+        check('review: a story waits on its case review', False, 'no Review cases button')
 
     # Home shows the flow in progress.
     page.goto(BASE + '/')

@@ -338,3 +338,15 @@ legend { padding: 0; }
 .card.approve.flash { box-shadow: 0 0 0 2px var(--hz-ink); transition: box-shadow .3s; }
 .jumpanchor { position: relative; height: 0; }
 .jumpanchor .jumplatest { bottom: 10px; }
+/* The flow's own case review: requirement by requirement, then Approve or Request changes. */
+.flowreview { display: flex; flex-direction: column; gap: 10px; padding: 14px; margin-bottom: 14px; border: 1px solid var(--hz-border); border-left: 3px solid var(--hz-warn, #c98a00); border-radius: 10px; background: var(--hz-surface-2, transparent); }
+.flowreview h3 { margin: 0; }
+.flowreview .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.reviewreqs { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.reviewreqs > li { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--hz-border); }
+.reviewreqs > li:last-child { border-bottom: 0; padding-bottom: 0; }
+.reviewreqs .req { margin: 0; }
+.reviewcase { margin-left: 14px; padding: 8px 10px; border-radius: 8px; background: var(--hz-bg, transparent); border: 1px solid var(--hz-border); font-size: 13.5px; }
+.reviewcase ol { margin: 6px 0 0; padding-left: 20px; color: var(--hz-text-secondary); }
+.flowhandoff { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
+.flowhandoff p { margin: 0; }

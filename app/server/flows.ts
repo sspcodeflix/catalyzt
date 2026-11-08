@@ -102,11 +102,13 @@ interface Approval {
   decidedBy: string | null;
   chatId: string;
   components: string[];
+  cases: { id: string; title: string; criterion: string; steps: string[] }[];
+  note: string | null;
 }
 function latestCaseApproval(db: HorizonDb, key: string): Approval | null {
   const r = db.raw
     .prepare(
-      `SELECT a.id, a.status, a.created_at, a.decided_at, a.payload, u.name AS decided_by, m.chat_id FROM approvals a
+      `SELECT a.id, a.status, a.created_at, a.decided_at, a.payload, a.note, u.name AS decided_by, m.chat_id FROM approvals a
        JOIN answer_revisions ar ON ar.id = a.revision_id JOIN messages m ON m.id = ar.message_id LEFT JOIN users u ON u.id = a.decided_by
        WHERE a.action = 'add_uat_cases' AND a.status != 'expired' AND json_extract(a.target, '$.storyKey') = ? ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1`,
     )
@@ -120,6 +122,8 @@ function latestCaseApproval(db: HorizonDb, key: string): Approval | null {
     decidedBy: (r.decided_by as string) ?? null,
     chatId: String(r.chat_id),
     components: json<{ components?: string[] }>(r.payload, {}).components ?? [],
+    cases: json<{ cases?: Approval['cases'] }>(r.payload, {}).cases ?? [],
+    note: (r.note as string) ?? null,
   };
 }
 
@@ -158,9 +162,10 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
   if (!analysed) steps.push({ key: 'review', state: 'todo', detail: 'Waits for the analysis.', waitingOn: [] });
   else if (approval?.status === 'pending') {
     const who = approversOf(app, approval.components.length ? approval.components : story.components, db);
-    steps.push({ key: 'review', state: 'waiting', detail: 'Drafted UAT cases wait for approval: rate the analysis, then approve or decline the cases.', waitingOn: who, since: approval.createdAt, action: { kind: 'review', label: 'Review cases', href: `${chatHref(approval.chatId)}#approval-${approval.id}` } });
+    const n = new Set(approval.cases.map((c) => c.criterion)).size;
+    steps.push({ key: 'review', state: 'waiting', detail: `${plural(approval.cases.length, 'drafted case', 'drafted cases')} for ${plural(n, 'requirement', 'requirements')} ${approval.cases.length === 1 ? 'waits' : 'wait'} for review.`, waitingOn: who, since: approval.createdAt, action: { kind: 'review', label: 'Review cases' } });
   } else if (approval?.status === 'declined') {
-    steps.push({ key: 'review', state: 'blocked', detail: `${approval.decidedBy ?? 'A reviewer'} declined the drafted cases. Analyse again or ask for changes in the chat.`, waitingOn: [flow.owner], since: approval.decidedAt ?? undefined, action: { kind: 'review', label: 'Open the chat', href: chatHref(approval.chatId) } });
+    steps.push({ key: 'review', state: 'blocked', detail: `${approval.decidedBy ?? 'A reviewer'} asked for changes${approval.note ? `: "${/[.!?]$/.test(approval.note) ? approval.note : `${approval.note}.`}"` : '.'} Analyse again to draft new cases.`, waitingOn: [flow.owner], since: approval.decidedAt ?? undefined, action: { kind: 'analyse', label: 'Analyse again' } });
   } else if (toLink) {
     steps.push({ key: 'review', state: 'waiting', detail: `${plural(toLink, 'criterion', 'criteria')} may already be covered by a passing CI test. Link the right test so it counts.`, waitingOn: approversOf(app, story.components, db), action: { kind: 'link', label: 'Review suggestions', href: chatHref(report?.chatId) } });
   } else if (approval?.status === 'approved') {
@@ -234,6 +239,8 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     chatId: item.chatId ?? report?.chatId ?? null,
     manual,
     signoff,
+    // The drafted cases for review, by requirement, from the approval waiting on (or last decided by) a reviewer.
+    review: approval && (approval.status === 'pending' || approval.status === 'declined') ? { approvalId: approval.id, status: approval.status, cases: approval.cases, note: approval.note, decidedBy: approval.decidedBy, chatId: approval.chatId } : null,
   };
 }
 

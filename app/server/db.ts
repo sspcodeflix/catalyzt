@@ -485,6 +485,7 @@ export function openDb(path: string) {
       decidedAt: (r.decided_at as string) ?? null,
       outcome: json<ApprovalOutcome | null>(r.outcome, null),
       supersededBy: (r.superseded_by as string) ?? null,
+      note: (r.note as string) ?? null,
     };
   }
 
@@ -1803,7 +1804,7 @@ export function openDb(path: string) {
      * it is (a failed action leaves the approval pending, with no claim of success), and a second
      * decision arriving at the same time finds the approval already decided and gets its outcome.
      */
-    decideApproval(id: string, decision: 'approved' | 'declined', userId: string, execute?: (payload: ApprovalPayload) => ApprovalOutcome) {
+    decideApproval(id: string, decision: 'approved' | 'declined', userId: string, execute?: (payload: ApprovalPayload) => ApprovalOutcome, note?: string | null) {
       return db.transaction(() => {
         const a = getApproval(id);
         if (!a) return { kind: 'missing' as const, approval: undefined };
@@ -1811,10 +1812,10 @@ export function openDb(path: string) {
         const t = now();
         const outcome = decision === 'approved' && execute ? execute(a.payload) : null;
         const info = db
-          .prepare("UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, outcome = ?, executed_at = ? WHERE id = ? AND status = 'pending'")
-          .run(decision, userId, t, outcome ? JSON.stringify(outcome) : null, outcome ? t : null, id);
+          .prepare("UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, outcome = ?, executed_at = ?, note = ? WHERE id = ? AND status = 'pending'")
+          .run(decision, userId, t, outcome ? JSON.stringify(outcome) : null, outcome ? t : null, note || null, id);
         if (!info.changes) return { kind: 'already' as const, approval: getApproval(id)! };
-        audit('user', userId, `approval.${decision}`, 'approval', id, { revisionId: a.revisionId, outcome });
+        audit('user', userId, `approval.${decision}`, 'approval', id, { revisionId: a.revisionId, outcome, note: note || undefined });
         return { kind: 'decided' as const, approval: getApproval(id)! };
       })();
     },

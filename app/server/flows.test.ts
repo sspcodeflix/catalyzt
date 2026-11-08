@@ -47,12 +47,14 @@ describe('a UAT flow', () => {
     expect(asRam.current).toMatchObject({ key: 'review' });
     expect(asRam.waiting[0]).toMatchObject({ you: false, person: { name: 'Sourav' } });
 
-    // Sourav approves in the chat the flow created (rating first, as everywhere).
+    // The flow carries the review itself: the drafted case under its requirement.
     const chatId = f.items[0].chatId!;
     const approvals = db.listPendingApprovals('ABCD').filter((a) => a.chatId === chatId);
     expect(approvals).toHaveLength(1);
-    const rev = db.raw.prepare('SELECT revision_id FROM approvals WHERE id = ?').get(approvals[0].id) as { revision_id: string };
-    expect((await sourav.post(`/api/answers/${rev.revision_id}/rating`, { stars: 5 })).status).toBe(200);
+    expect(f.items[0].review).toMatchObject({ approvalId: approvals[0].id, status: 'pending' });
+    expect(f.items[0].review!.cases.map((c) => c.criterion)).toEqual(['AC4']);
+    expect(step(f, 'review').detail).toBe('1 drafted case for 1 requirement waits for review.');
+    // Reviewing in a flow is the flow's step, not feedback on the answer: no rating is needed to approve.
     expect((await sourav.post(`/api/approvals/${approvals[0].id}/decision`, { decision: 'approved' })).status).toBe(200);
 
     // Now the testers: AC4's manual case needs a result; AC3's automated test has none either.
@@ -211,6 +213,30 @@ describe('a failed background analysis', () => {
   });
 });
 
+describe('reviewing drafted cases in a flow', () => {
+  it('asks what to change when sending cases back, shows it in the flow, and waits on the owner to analyse again', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const id = ((await (await sourav.post('/api/flows', { kind: 'uat', stories: ['ABCD-1001'] })).json()) as { flow: FlowView }).flow.id;
+    const f = await until('u-sourav', id, (x) => step(x, 'review').state === 'waiting');
+    const approvalId = f.items[0].review!.approvalId;
+    const decide = (body: unknown) => sourav.post(`/api/approvals/${approvalId}/decision`, body);
+    expect((await decide({ decision: 'declined' })).status).toBe(400);
+    expect((await decide({ decision: 'declined', note: 'AC4 should also cover an expired card.' })).status).toBe(200);
+    const after = await view('u-sourav', id);
+    expect(step(after, 'review')).toMatchObject({ state: 'blocked', action: { kind: 'analyse', label: 'Analyse again' } });
+    expect(step(after, 'review').detail).toBe('Sourav asked for changes: "AC4 should also cover an expired card." Analyse again to draft new cases.');
+    expect(after.items[0].review).toMatchObject({ status: 'declined', note: 'AC4 should also cover an expired card.' });
+    expect(after.events.map((e) => e.text).join('\n')).toMatch(/Asked for changes to the drafted cases for ABCD-1001: "AC4 should also cover an expired card\."/);
+  });
+
+  it('keeps the rating before approving for drafted cases of a story in no flow', async () => {
+    const sourav = api.as('u-sourav', 'ABCD');
+    const events = await sourav.run({ text: 'Is ABCD-1001 ready for UAT?', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'plain', messageId: 'pm1', answerId: 'pa1' });
+    const approvalId = (events.find((e) => e.type === 'saved') as { approvals: { id: string }[] }).approvals[0].id;
+    expect((await sourav.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(403);
+  });
+});
+
 describe('work done in chat moves the flow', () => {
   it('records an analysis and an approval made in chat in the timeline, and finds the flow by story', async () => {
     const brian = api.as('u-sourav', 'ABCD');
@@ -219,7 +245,6 @@ describe('work done in chat moves the flow', () => {
     // Asked again in an ordinary chat, as Brijesh did.
     const events = await brian.run({ text: 'Is ABCD-1001 ready for UAT?', agent: 'auto', scope: {}, testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'], components: [], history: [], chatId: 'own', messageId: 'om1', answerId: 'oa1' });
     const approvalId = (events.find((e) => e.type === 'saved') as { approvals: { id: string }[] }).approvals[0].id;
-    expect((await brian.post('/api/answers/oa1-r1/rating', { stars: 5 })).status).toBe(200);
     expect((await brian.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' })).status).toBe(200);
     const f = await view('u-sourav', id);
     const texts = f.events.map((e) => e.text).join('\n');

@@ -28,7 +28,7 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 | Step | Done when | Comes from |
 |---|---|---|
 | Analyse | the UAT analyst's report for the story exists | the report in a chat the flow created |
-| Review cases | the drafted cases are approved, or nothing needed drafting | the approval card on that report |
+| Review cases | the drafted cases are approved, or nothing needed drafting | the flow's review of the approval on that report |
 | Run tests | every criterion has a passing automated test or a tester's pass | CI results in Hexa and testers' results |
 | Sign off | the product owner signed off with that evidence | the sign-off record |
 | Automate | every criterion has an automated test of the story's components | Hexa links |
@@ -38,6 +38,13 @@ Where each step's state comes from (nothing is typed in by hand, so the flow can
 
 - **Review cases:** the component's manager. When a story spans components of two managers, only the
   app owner can approve the drafted cases, so the flow says it waits on the app owner.
+- **How cases are reviewed:** opening the story in the flow (or "Review cases" from any chat card or
+  story chat) shows each requirement with the cases drafted for it, then **Approve** or **Request
+  changes**. Sending cases back needs a note saying what to change; the note shows on the story and in
+  the timeline, and the story waits on the flow's owner to analyse again. No rating of the AI's answer is
+  asked for: rating is feedback that makes the assistant better, the review is a decision about the
+  cases. In the analysis chat, the approval card points to the flow's review instead. Drafted cases for a
+  story in no flow keep the chat approval card, where approving still asks for a rating first.
 - **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
   No manual case is drafted for that criterion.
 - **Run tests:** people with the UAT tester role, or the app owner when there are none. A failing test
@@ -98,13 +105,13 @@ shows today's progress, and acting in a card acts on the flow itself.
 - Opening the automation pull request from Catalyzt. Today "Draft automation" puts the request in the
   chat box for an engineer to send, and the step completes when an automated test is linked.
 - Reminders and escalation for steps that wait too long.
-- Case review per case, with request-changes and versions. Today the drafted cases are approved or
-  declined together, on the approval card.
+- Approving or changing single cases, and versions of a case. Today the drafted cases of a story are
+  approved together, or sent back together with a note.
 - Asking the product owner for missing requirements from inside the flow. Today that is a concern raised
   in Huddle.
 - Notifications when something new waits on you; today the nav count and Home show it on the next visit.
 
 ## Data
 
-Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads). Step
+Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads); 27 adds `approvals.note` (what a reviewer asked to change). Step
 states are derived on each read from reports, approvals, test links and results.

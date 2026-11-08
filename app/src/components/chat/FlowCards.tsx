@@ -196,12 +196,9 @@ export function FlowsWaitingCard() {
   );
 }
 
-/**
- * Above the reply box of a chat about stories that are in a test flow: where the flow stands and who it
- * waits on, so approving a case or recording a result here visibly moves the flow on.
- */
-export function StoryFlowBar({ stories, pendingReview, onReview }: { stories: string[]; pendingReview?: { id: string; locked: boolean } | null; onReview?: (approvalId: string) => void }) {
-  const [flows, setFlows] = useState<FlowSummary[]>([]);
+/** The active flows holding any of these stories, refreshed while shown and after any flow change. */
+export function useStoryFlows(stories: string[]): FlowSummary[] | null {
+  const [flows, setFlows] = useState<FlowSummary[] | null>(null);
   const { me, loaded } = useSession();
   const key = [...new Set(stories)].sort().join(',');
   useEffect(() => {
@@ -221,14 +218,23 @@ export function StoryFlowBar({ stories, pendingReview, onReview }: { stories: st
       window.removeEventListener('flows:changed', load);
     };
   }, [loaded, me?.app?.id, me?.user.id, key]);
+  return key ? flows : [];
+}
+
+/**
+ * Above the reply box of a chat about stories that are in a test flow: where the flow stands and who it
+ * waits on. Reviewing drafted cases is the flow's own step, so "Review cases" opens it there.
+ */
+export function StoryFlowBar({ stories }: { stories: string[] }) {
+  const flows = useStoryFlows(stories) ?? [];
   if (!flows.length) return null;
   return (
     <div className="storyflowbar" role="status" aria-label="Test flows this chat is part of">
       {flows.slice(0, 2).map((f) => {
         const mine = f.waiting.filter((w) => w.you);
         const other = f.waiting.find((w) => !w.you);
-        // The review this flow waits on you for is the approval card in this very chat: go to it, don't leave.
-        const reviewHere = !!pendingReview && mine.some((w) => w.action === 'Review cases');
+        const review = mine.find((w) => w.action === 'Review cases');
+        const reviewKey = review ? (review.stories.find((k) => stories.includes(k)) ?? review.stories[0]) : null;
         return (
           <div key={f.id} className="sfrow">
             <span className="flowkind">{KIND[f.kind]}</span>
@@ -237,20 +243,18 @@ export function StoryFlowBar({ stories, pendingReview, onReview }: { stories: st
             </Link>
             <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
             <span className="sfwait">
-              {reviewHere
-                ? pendingReview!.locked
-                  ? 'Waiting on you: rate the analysis, then approve the drafted cases in this chat'
-                  : 'Waiting on you: approve or decline the drafted cases in this chat'
+              {reviewKey
+                ? `Waiting on you: review the drafted cases for ${reviewKey}`
                 : mine.length
-                ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
-                : other
-                  ? `Waiting on ${other.person?.name ?? (other.action.startsWith('The UAT analyst') ? 'the agent' : 'the pipeline')}: ${other.action.toLowerCase()}`
-                  : 'Nothing waiting'}
+                  ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
+                  : other
+                    ? `Waiting on ${other.person?.name ?? (other.action.startsWith('The UAT analyst') ? 'the agent' : 'the pipeline')}: ${other.action.toLowerCase()}`
+                    : 'Nothing waiting'}
             </span>
-            {reviewHere ? (
-              <button type="button" className="btn small" onClick={() => onReview?.(pendingReview!.id)}>
-                Review here
-              </button>
+            {reviewKey ? (
+              <Link to={`/flows/${f.id}?review=${encodeURIComponent(reviewKey)}`} className="btn small ink">
+                Review cases
+              </Link>
             ) : (
               <Link to={`/flows/${f.id}`} className="btn small plain">
                 Open flow
@@ -260,5 +264,29 @@ export function StoryFlowBar({ stories, pendingReview, onReview }: { stories: st
         );
       })}
     </div>
+  );
+}
+
+/**
+ * In a chat, the approval card for drafted cases of a story that is in a test flow: the cases are reviewed
+ * in the flow (requirement by requirement, Approve or Request changes), so the card points there. A story
+ * in no flow, or a decided approval, keeps the usual card.
+ */
+export function FlowReviewHandoff({ storyKey, pending, children }: { storyKey: string | null; pending: boolean; children: React.ReactNode }) {
+  const flows = useStoryFlows(storyKey && pending ? [storyKey] : []);
+  if (!storyKey || !pending) return <>{children}</>;
+  if (flows === null) return <>{children}</>;
+  const f = flows[0];
+  if (!f) return <>{children}</>;
+  return (
+    <section className="card approve flowhandoff" aria-label={`Review ${storyKey} in the test flow`}>
+      <p>
+        <b>Drafted UAT cases for {storyKey}</b>
+        <span className="muted"> are reviewed in the test flow <Link to={`/flows/${f.id}`}>{f.title}</Link>, requirement by requirement.</span>
+      </p>
+      <Link to={`/flows/${f.id}?review=${encodeURIComponent(storyKey)}`} className="btn small ink">
+        Review cases
+      </Link>
+    </section>
   );
 }

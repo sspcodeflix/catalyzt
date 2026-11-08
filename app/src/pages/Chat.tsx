@@ -318,7 +318,7 @@ function ChatView({ chatId }: { chatId: string }) {
             </button>
           )}
         </div>
-        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} pendingReview={pendingReview(chat)} onReview={(id) => goToApproval(id)} />}
+        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} />}
         {chat && !readOnly && (
           <div className="composerwrap">
             <Composer
@@ -445,12 +445,3 @@ function chatStories(chat: NonNullable<ReturnType<typeof useChat>>): string[] {
   return [...new Set(keys)].slice(0, 10);
 }
 
-/** The pending approval in this chat that drafted cases wait on, if any: the review a flow is waiting for. */
-function pendingReview(chat: NonNullable<ReturnType<typeof useChat>>): { id: string; locked: boolean } | null {
-  for (let i = chat.messages.length - 1; i >= 0; i--) {
-    const m = chat.messages[i];
-    if (m.role !== 'assistant') continue;
-    for (const b of m.blocks) if (b.kind === 'approval' && b.approval.id && b.approval.status === 'pending') return { id: b.approval.id, locked: m.rating === null };
-  }
-  return null;
-}

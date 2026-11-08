@@ -4,7 +4,7 @@
  * the actions that move it on. Every state comes from the server, derived from the records.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
 import { api } from '../lib/hexa';
@@ -387,8 +387,18 @@ export function FlowDetail() {
   const { flowId } = useParams();
   const [flow, setFlow] = useState<FlowView | null>(null);
   const [error, setError] = useState('');
-  const [open, setOpen] = useState<string | null>(null);
+  // ?review=KEY (from a chat card or a story chat) opens that story at its review.
+  const [params] = useSearchParams();
+  const reviewKey = params.get('review');
+  const [open, setOpen] = useState<string | null>(reviewKey);
   const { me, loaded } = useSession();
+  const hasFlow = !!flow;
+  useEffect(() => {
+    if (!reviewKey || !hasFlow) return;
+    setOpen(reviewKey);
+    const t = setTimeout(() => document.getElementById(`review-${reviewKey}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+    return () => clearTimeout(t);
+  }, [reviewKey, hasFlow]);
 
   useEffect(() => {
     if (!loaded || !me?.app || !flowId) return;
@@ -592,6 +602,7 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
   const runnable = ['run', 'signoff', null].includes(story.current) && story.steps.find((s) => s.key === 'review')?.state !== 'waiting';
   return (
     <div className="flowdetail">
+      {story.review?.status === 'pending' && <CaseReview flow={flow} story={story} />}
       <ol className="flowstorysteps">
         {story.steps.map((s) => (
           <li key={s.key} className={s.state}>
@@ -657,6 +668,98 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The flow's own review step: each requirement of the story with the cases drafted for it, then Approve or
+ * Request changes. It decides the approval from the analysis; no rating of the answer is asked for here.
+ */
+function CaseReview({ flow, story }: { flow: FlowView; story: FlowStory }) {
+  const me = useSession().me?.user;
+  const [note, setNote] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const review = story.review!;
+  const step = story.steps.find((s) => s.key === 'review');
+  const canDecide = flow.status === 'active' && !!me && !!step?.waitingOn.some((p) => p.id === me.id);
+  const decide = async (decision: 'approved' | 'declined') => {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/approvals/${review.approvalId}/decision`, { method: 'POST', body: JSON.stringify({ decision, note: decision === 'declined' ? note : undefined }) });
+      flowsChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const n = review.cases.length;
+  return (
+    <section className="flowreview" id={`review-${story.key}`} aria-label={`Review the drafted cases for ${story.key}`}>
+      <h3>Review the drafted cases</h3>
+      <p className="muted small">
+        Check each requirement and the cases drafted for it. Approving adds {n === 1 ? 'the case to Hexa as a manual UAT test' : `the ${n} cases to Hexa as manual UAT tests`} and moves {story.key} to Run tests.
+      </p>
+      <ol className="reviewreqs">
+        {story.criteria.map((c) => {
+          const cases = review.cases.filter((x) => x.criterion === c.id);
+          return (
+            <li key={c.id}>
+              <p className="req">
+                <b>{c.id}</b> {c.text}
+              </p>
+              {cases.length ? (
+                cases.map((x) => (
+                  <div key={x.id} className="reviewcase">
+                    <b>{x.title}</b>
+                    {x.steps.length > 0 && (
+                      <ol>
+                        {x.steps.map((st, i) => (
+                          <li key={i}>{st}</li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <p className="muted small">{c.verified || c.status === 'passing' ? 'No new case: already covered by a test.' : 'No case drafted for this requirement.'}</p>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {canDecide ? (
+        <>
+          {asking && (
+            <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should change: a missing requirement, a wrong step, a case to drop…" aria-label={`What should change for ${story.key}`} autoFocus />
+          )}
+          <div className="row">
+            <button type="button" className="btn ink" disabled={busy} onClick={() => void decide('approved')}>
+              Approve {n === 1 ? 'the case' : `${n} cases`}
+            </button>
+            {asking ? (
+              <button type="button" className="btn" disabled={busy || note.trim().length < 3} onClick={() => void decide('declined')}>
+                Send back for changes
+              </button>
+            ) : (
+              <button type="button" className="btn" disabled={busy} onClick={() => setAsking(true)}>
+                Request changes
+              </button>
+            )}
+          </div>
+        </>
+      ) : (
+        <p className="muted small">{step?.waitingOn.length ? `${step.waitingOn.map((p) => p.name).join(' or ')} reviews these cases.` : 'A component manager reviews these cases.'}</p>
+      )}
+      {error && (
+        <p className="errtext" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

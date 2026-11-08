@@ -55,6 +55,8 @@ export interface FlowStory {
   chatId: string | null;
   manual: ManualCase[];
   signoff: { decision: string; by: string; at: string; note: string | null; stale: boolean } | null;
+  /** Drafted cases waiting for review (or sent back with a note), for the flow's own review step. */
+  review: { approvalId: string; status: string; cases: { id: string; title: string; criterion: string; steps: string[] }[]; note: string | null; decidedBy: string | null; chatId: string } | null;
   removed?: boolean;
 }
 export interface FlowSummary {
