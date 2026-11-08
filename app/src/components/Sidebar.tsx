@@ -1,6 +1,7 @@
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { useEffect, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
+import { useActiveFlows, waitingOnMe } from '../lib/flows';
 
 import { useAgentActivity } from '../lib/agentsStore';
 import { useRecentChats } from '../lib/chatStore';
@@ -26,6 +27,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
   const runningAgents = useAgentActivity().agents.filter((a) => a.status === 'running' && a.parentId).length;
   const openHuddleItems = useHuddleState().counts.open;
   const badge = uatBadge(useTickets());
+  const flowWait = waitingOnMe(useActiveFlows());
   const recents = useRecentChats();
   const ref = useRef<HTMLElement>(null);
 
@@ -84,6 +86,15 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           Testing
         </div>
         <div role="group" aria-labelledby="nav-testing">
+          <NavLink to="/flows" className={navClass}>
+            <Icon name="branch" />
+            Test flows
+            {flowWait > 0 && (
+              <span className="navcount" aria-label={`${flowWait} waiting on you`} title={`${flowWait} waiting on you`}>
+                {flowWait}
+              </span>
+            )}
+          </NavLink>
           <NavLink to="/tickets" className={navClass}>
             <Icon name="doc" />
             Jira Stories

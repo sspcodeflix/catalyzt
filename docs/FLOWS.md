@@ -1,129 +1,89 @@
-# Flows: one shared view of where the work is
+# Test flows: one shared view of where UAT and regression stand
 
-A **flow** is a piece of work that takes days and several people, such as raising regression coverage
-for an application. It belongs to the application, not to a chat or a person. Anyone on the team who
-opens that workspace and application sees the same flow, at the same step, waiting on the same person.
-Chat stays the way people act on it. The flow is the way they see where it stands.
+A **test flow** takes a set of stories through UAT or regression. It belongs to the application, not
+to a chat or a person. Anyone on the team who opens the application sees the same flow, at the same
+step, waiting on the same people. Chat stays the way people ask and act. The flow shows where the
+work stands, so nobody has to rebuild the picture after a day away.
 
-## Why
+Scope: testing only (UAT and regression). SRE and vulnerability remediation are out of scope here.
 
-Today the steps exist but are scattered. The scan is in App Context, coverage is in Hexa, drafts are in a
-chat, reviews are in Needs you, and the pull request is in GitHub. A person who scans, logs out and comes
-back two days later has to rebuild the picture. A teammate who joins sees none of it.
+## The two flows
 
-## The regression flow
-
-```
- Step                  Who does it              Done when                         Waits on
- 1 Scan                agent                    every component's repo scanned    —
- 2 Baseline            agent                    coverage report per component     —
- 3 Choose gaps         flow owner               gaps selected (all, or some)      owner
- 4 Draft cases         agent                    a manual case per chosen gap      —
- 5 Review cases        component managers       every case approved               each manager, for their component
-                       (or reviewers they name)
- 6 Generate automation agent                    test code per approved case       —
- 7 Code review         repository code owners   pull request merged in GitHub     code owners
- 8 Verify              CI                       the new test passed in the        the pipeline
-                                                target build
- 9 Result              agent                    coverage after vs. before         —
-```
-
-Two loops come back into the flow:
-- **Changes requested.** A reviewer's comments send the case back to step 4. The agent writes a new
-  version, and only that case goes round again.
-- **Not enough knowledge.** A reviewer says the requirements behind a case are too thin to approve it.
-  The case moves to **Needs knowledge** and a Huddle concern goes to the product owner or a business
-  analyst. When they add the requirement, or upload a document to the app's context, the case is drafted
-  again. This is the "the functional requirements are not good enough for me" path.
-
-## Items, not one big step
-
-A flow carries many gaps, and each one moves on its own. Twelve cases can be in review while four are
-already in a pull request. So each step shows a count, and the flow's headline is the step that holds
-the work back:
+Each story in a flow moves through four steps. The agent does the first one in the background. Each
+of the others waits on a named person, and the flow says who.
 
 ```
- Regression · ABCD (Ram's Portfolio)                         started by Sourav · 3 Nov
+ UAT          Analyse ──▶ Review cases ──▶ Run tests ──────────▶ Sign off
+              agent       component         UAT testers record      product owner
+                          manager           pass / fail / blocked   (or app owner)
 
-  ✓ Scan   ✓ Baseline   ✓ Choose gaps   ● Review cases   ○ Automation   ○ Code review   ○ Verify
-                                         24 of 40 approved
-
-  Waiting on you: 8 cases for checkoutservice                         [Review now]
-  Waiting on Brijesh: 6 cases for paymentservice (2 days)             [Remind]
-  Needs knowledge: 2 cases, asked Ram in Huddle                       [Open]
-
-  Coverage   31% at baseline  →  31% now  →  52% when this flow finishes
+ Regression   Analyse ──▶ Review cases ──▶ Automate ───────────▶ Verify in CI
+              agent       component         automation engineer     the pipeline:
+                          manager           writes the test, PR     the new test must
+                                            is reviewed and merged  pass in the target build
 ```
 
-The coverage line has three numbers:
-- **Baseline:** the share of criteria and requirements with an automated test that passed in the target
-  build, measured when the flow started.
-- **Now:** the same share today.
-- **When this flow finishes:** the share if every chosen gap ends with a passing test.
+Where each step's state comes from (nothing is typed in by hand, so the flow cannot drift):
 
-Where a requirement was inferred from code instead of taken from Jira or the knowledge base, the
-report says so. A high number built on inferred requirements is not the same as one built on real ones.
+| Step | Done when | Comes from |
+|---|---|---|
+| Analyse | the UAT analyst's report for the story exists | the report in a chat the flow created |
+| Review cases | the drafted cases are approved, or nothing needed drafting | the approval card on that report |
+| Run tests | every criterion has a passing automated test or a tester's pass | CI results in Hexa and testers' results |
+| Sign off | the product owner signed off with that evidence | the sign-off record |
+| Automate | every criterion has an automated test of the story's components | Hexa links |
+| Verify in CI | every criterion's automated test passed in the target build | CI results |
 
-## Where people see it
+## Who it waits on
 
-- **In chat**, as a flow card: the stepper and the "waiting on" lines, updated live. "Where is the
-  regression for ABCD?" or "what is waiting on me?" answers with the card.
-- **On arrival.** When someone opens the application, a strip above the chat shows its active flows and
-  what changed since they last looked: "Since Tuesday: 14 cases drafted, waiting for your review."
-- **In Needs you**, each waiting item links back to its place in the flow.
-- **On the flow page**, the full view: the stepper, a table of items with their step and owner, and the
-  timeline of who did what. It is reached from the card, never needed to act.
+- **Review cases:** the component's manager. When a story spans components of two managers, only the
+  app owner can approve the drafted cases, so the flow says it waits on the app owner.
+- **Suggested tests:** when a passing CI test looks like it covers a criterion, the manager links it.
+  No manual case is drafted for that criterion.
+- **Run tests:** people with the UAT tester role, or the app owner when there are none. A failing test
+  waits on the component manager.
+- **Sign off:** people with the product owner role, or the app owner. Sign-off is refused while any
+  criterion is unverified. A sign-off with a gap needs a risk acceptance in Huddle.
+- **Automate:** people with the automation engineer role, or the component manager.
+- **Analyse, again:** the flow's owner, when an analysis failed or a reviewer declined the cases.
+
+## What people see
+
+- **Test flows** in the nav, under Testing, with a count of stories waiting on you.
+- **Home** shows the flows in progress, with what waits on you.
+- **The flow page** shows the four steps with "n of m stories" each, coverage at the start and now,
+  a "Waiting on" list with you first, one row per story with its current step and the button that moves
+  it on, and a timeline of who did what.
+- **Opening a story** shows its steps, its criteria with Verified or not, the manual cases with
+  Passed, Failed and Blocked buttons from the Run tests step on, and the sign-off box.
+- **Starting a flow:** UAT picks stories from the Jira filter. Regression first shows coverage today per
+  component and preselects every story with a gap.
 
 ## Rules
 
-- **The agent never passes a gate.** A gate is a named person's decision, recorded with who, when and
-  which version. Agent steps run as durable jobs, so they finish while nobody is logged in.
-- **One state for everyone.** The flow's state is computed from records: scans, test cases and their
-  review states, pull requests and CI results. It is never typed in by hand, so it cannot drift from
-  Hexa or GitHub.
-- **Delegation is explicit.** "I need my team to review this" assigns cases to named reviewers per
-  component. Only the component manager, or someone they named, can approve.
-- **Stale work goes back.** If a criterion changes in Jira, or an approved case is edited, that item
-  returns to review and the flow says why.
-- **Owner controls.** The person who started the flow, or the app owner, can pause, cancel, or add and
-  remove gaps. Each change is recorded. Only one regression flow can be active per application.
-- **Reminders.** An item past its due time is reminded in Needs you, and later escalated to the app
-  owner, as in Huddle.
+- **The agent never passes a gate.** Analysis runs as a durable job, so a flow over many stories keeps
+  going while nobody is signed in. Approvals, results and sign-off are people's decisions, recorded with
+  who and when.
+- **Who starts a flow:** the app owner, or a component manager for stories that touch their components.
+- **One regression flow per application** at a time. UAT flows can run side by side.
+- **Owner controls:** the person who started it, or the app owner, can pause, resume, cancel, and add or
+  remove stories. Every change is in the timeline.
+- **A failed or blocked result needs a note**, and so does not signing off.
+- **Stale sign-off:** if the evidence changes after a sign-off and a criterion is no longer verified,
+  the story goes back to waiting for sign-off.
 
-## The same frame for what comes next
+## Not built yet
 
-The story UAT flow in the chat-first note becomes one kind of flow. SRE remediation and vulnerability
-remediation assurance are later kinds with the same parts: agent steps, gated steps, items, waiting on,
-and a before-and-after measure. For vulnerabilities, the measure is open findings by severity. For SRE,
-it is risk to the error budget or time to saturation.
+- Opening the automation pull request from Catalyzt. Today "Draft automation" puts the request in the
+  chat box for an engineer to send, and the step completes when an automated test is linked.
+- Reminders and escalation for steps that wait too long.
+- Case review per case, with request-changes and versions. Today the drafted cases are approved or
+  declined together, on the approval card.
+- Asking the product owner for missing requirements from inside the flow. Today that is a concern raised
+  in Huddle.
+- Starting or querying a flow from chat ("where is the UAT for 24.11?").
 
 ## Data
 
-- `flows`: id, application, kind, title, owner, status (active, paused, done, cancelled), baseline
-  measure, created and finished times.
-- `flow_items`: flow, gap reference (component plus criterion or requirement), test case, pull request,
-  current step, state, assignee, due time.
-- `flow_events`: the audit timeline, one row per transition, with who and why.
-
-Steps and their counts are derived from items and existing records, not stored twice. The flow reuses
-jobs, test case versions and review states (step 2a of the chat-first note), approvals, and Huddle
-concerns.
-
-## Build order
-
-1. **Read-only flow.** Flow records, the baseline from the scan and Hexa, the flow card in chat, the
-   arrival strip, and the flow page. Started from chat with "start a regression for ABCD".
-2. **Gaps and cases.** Choose gaps, draft cases as durable jobs, case review with request changes and
-   delegation. This is the chat-first step 2a, delivered inside the flow.
-3. **Needs knowledge.** The Huddle concern to the product owner, and drafting again when knowledge
-   arrives.
-4. **Automation.** Generated test code, a pull request opened in the repository, its review state
-   mirrored, and verification in CI.
-5. **Result and reminders.** Coverage after the flow, reminders and escalation, and a virtual-user
-   simulation that leaves the flow mid-way and resumes it as another person.
-
-## Open decisions
-
-- Who may start a regression flow: the app owner only, or any component manager for their components.
-- Whether gaps are chosen per criterion, or per component with all its gaps.
-- Whether automation pull requests are grouped per component or opened one per test.
+Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`. Step
+states are derived on each read from reports, approvals, test links and results.

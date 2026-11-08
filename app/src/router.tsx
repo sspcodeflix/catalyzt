@@ -8,6 +8,7 @@ import { ContextSourcePanel } from './pages/ContextSourcePanel';
 import { Huddle } from './pages/Huddle';
 import { HuddleItemPanel } from './pages/HuddleItemPanel';
 import { Chat } from './pages/Chat';
+import { FlowDetail, Flows, FlowStart } from './pages/Flows';
 import { Hexa } from './pages/Hexa';
 import { HexaTestPanel, HexaUpload } from './pages/HexaPanels';
 import { Home } from './pages/Home';
@@ -28,6 +29,9 @@ export const router = createBrowserRouter([
         children: [{ path: 'artifact/:artifactId', element: <ArtifactPanel /> }],
       },
       { path: 'search', element: <Search /> },
+      { path: 'flows', element: <Flows /> },
+      { path: 'flows/new', element: <FlowStart /> },
+      { path: 'flows/:flowId', element: <FlowDetail /> },
       {
         path: 'hexa',
         element: <Hexa />,

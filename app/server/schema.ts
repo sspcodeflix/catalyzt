@@ -971,4 +971,63 @@ export const MIGRATIONS: string[] = [
   DROP TABLE memberships;
   ALTER TABLE memberships_v22 RENAME TO memberships;
   `,
+  // 23: test flows. A flow is a UAT or regression effort over a set of stories, shared by the
+  // application's team. Its steps are derived from existing records (reports, approvals, tests, results);
+  // only what has no other home is stored: the flow, its stories, sign-offs and the timeline.
+  `
+  CREATE TABLE flows (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id),
+    kind TEXT NOT NULL CHECK (kind IN ('uat', 'regression')),
+    title TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'done', 'cancelled')),
+    baseline TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  CREATE INDEX flows_app ON flows (application_id, status, created_at);
+  CREATE TABLE flow_items (
+    flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    story_key TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    chat_id TEXT,
+    added_by TEXT NOT NULL REFERENCES users(id),
+    added_at TEXT NOT NULL,
+    removed_at TEXT,
+    PRIMARY KEY (flow_id, story_key)
+  );
+  CREATE TABLE flow_signoffs (
+    id TEXT PRIMARY KEY,
+    flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    story_key TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('signed_off', 'rejected')),
+    note TEXT,
+    evidence TEXT NOT NULL DEFAULT '[]',
+    decided_by TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX flow_signoffs_story ON flow_signoffs (flow_id, story_key, created_at);
+  CREATE TABLE flow_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    actor_id TEXT REFERENCES users(id),
+    story_key TEXT,
+    kind TEXT NOT NULL,
+    text TEXT NOT NULL
+  );
+  CREATE INDEX flow_events_flow ON flow_events (flow_id, at);
+  -- A tester's result for a manual case: who ran it, when, pass or fail, and what they saw.
+  CREATE TABLE manual_executions (
+    id TEXT PRIMARY KEY,
+    test_case_id TEXT NOT NULL REFERENCES test_cases(id) ON DELETE CASCADE,
+    status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'blocked')),
+    note TEXT,
+    executed_by TEXT NOT NULL REFERENCES users(id),
+    executed_at TEXT NOT NULL
+  );
+  CREATE INDEX manual_executions_test ON manual_executions (test_case_id, executed_at);
+  `,
 ];

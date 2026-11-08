@@ -55,6 +55,7 @@ import { parseStoryInput, refineStory, StoryError } from './stories';
 import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
+import { analyseAgain, appCoverage, changeStories, createFlow, FlowError, flowView, flowWorker, listFlows, recordExecution, setStatus, signOff } from './flows';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -229,6 +230,9 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
   const files = opts.files ?? new LocalBlobStore('data/attachments');
   const runLimiter = opts.runLimits instanceof RunLimiter ? opts.runLimits : new RunLimiter(opts.runLimits ?? runLimitsFromEnv(process.env));
   const maxScans = opts.maxScans ?? maxScansFromEnv(process.env);
+  // Test flows analyse their stories in the background, so a long flow goes on while nobody is signed in.
+  const flows = flowWorker(getDb, getConfig);
+  setTimeout(flows.kick, 1000).unref?.();
 
   return async function api(req: IncomingMessage, res: ServerResponse, next: Next) {
     let full: URL;
@@ -387,6 +391,55 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         return send(res, 200, { ok: true, summary: r.summary });
       }
 
+      /* ---------- Test flows (docs/FLOWS.md) ---------- */
+      if (url.startsWith('/api/flows') || /^\/api\/hexa\/tests\/[^/]+\/executions$/.test(url)) {
+        try {
+          const str = (v: unknown, max = 200) => (isStr(v) ? v.slice(0, max) : '');
+          const keys = (v: unknown) => (Array.isArray(v) ? v.filter(isStr).map((k) => k.trim()).filter((k) => /^[A-Z][A-Z0-9]+-\d+$/.test(k)).slice(0, 101) : []);
+          if (url === '/api/flows' && req.method === 'GET') return send(res, 200, { flows: listFlows(db, member, user.id, { all: full.searchParams.get('all') === '1' }) });
+          if (url === '/api/flows/coverage' && req.method === 'GET') return send(res, 200, appCoverage(db, member));
+          if (url === '/api/flows' && req.method === 'POST') {
+            const b = (await readJson(req)) as Record<string, unknown>;
+            const kind = b.kind === 'uat' || b.kind === 'regression' ? b.kind : null;
+            if (!kind) throw new HttpError(400, 'kind must be uat or regression.');
+            const fid = createFlow(db, member, user, roles, { kind, title: str(b.title, 120), stories: keys(b.stories) });
+            flows.kick();
+            return send(res, 201, { flow: flowView(db, member, fid, user.id, roles) });
+          }
+          const fm = /^\/api\/flows\/([A-Za-z0-9_-]{1,64})(?:\/(status|stories|analyse|signoff))?$/.exec(url);
+          if (fm && !fm[2] && req.method === 'GET') return send(res, 200, { flow: flowView(db, member, fm[1], user.id, roles) });
+          if (fm && fm[2] && req.method === 'POST') {
+            const b = (await readJson(req)) as Record<string, unknown>;
+            if (fm[2] === 'status') {
+              const st = b.status === 'active' || b.status === 'paused' || b.status === 'cancelled' ? b.status : null;
+              if (!st) throw new HttpError(400, 'status must be active, paused or cancelled.');
+              setStatus(db, member, fm[1], user, roles, st);
+            } else if (fm[2] === 'stories') {
+              changeStories(db, member, fm[1], user, roles, keys(b.add), keys(b.remove));
+              flows.kick();
+            } else if (fm[2] === 'analyse') {
+              analyseAgain(db, member, fm[1], user, roles, str(b.storyKey, 40));
+              flows.kick();
+            } else {
+              const decision = b.decision === 'signed_off' || b.decision === 'rejected' ? b.decision : null;
+              if (!decision) throw new HttpError(400, 'decision must be signed_off or rejected.');
+              signOff(db, member, fm[1], user, roles, str(b.storyKey, 40), decision, str(b.note, 1000) || null);
+            }
+            return send(res, 200, { flow: flowView(db, member, fm[1], user.id, roles) });
+          }
+          const em = /^\/api\/hexa\/tests\/([^/]+)\/executions$/.exec(url);
+          if (em && req.method === 'POST') {
+            const b = (await readJson(req)) as Record<string, unknown>;
+            const status = b.status === 'passed' || b.status === 'failed' || b.status === 'blocked' ? b.status : null;
+            if (!status) throw new HttpError(400, 'status must be passed, failed or blocked.');
+            return send(res, 201, recordExecution(db, member, decodeURIComponent(em[1]), user, roles, status, str(b.note, 2000) || null));
+          }
+        } catch (e) {
+          if (e instanceof FlowError) throw new HttpError(e.status, e.message);
+          throw e;
+        }
+      }
+
       // The home page's entry points: real work waiting in this application, never invented numbers.
       if (url === '/api/home' && req.method === 'GET') {
         const runs = db.listRuns(appId, 10);
@@ -397,6 +450,7 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           stories: db.countStories(appId),
           runs: { recent: runs.length, failed: runs.filter((r) => r.status === 'failed').length, latest: latest ? { id: latest.id, repo: latest.repo, status: latest.status, at: latest.at, prNumber: latest.prNumber } : null },
           tests: db.testStats(appId).total,
+          flows: listFlows(db, member, user.id),
         });
       }
 

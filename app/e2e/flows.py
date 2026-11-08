@@ -1,0 +1,115 @@
+"""Test flows in the browser (docs/FLOWS.md): Ram starts a UAT flow from Jira stories, the analysis
+runs in the background, Sourav sees the same flow and what waits on him, the story opens with its
+criteria, regression starts from the application's coverage, Home and the nav show the flow, and the
+pages fit a phone. Runs against the throwaway server of run.sh."""
+import json, os, re, sys, time
+from playwright.sync_api import sync_playwright
+
+BASE = os.environ.get('E2E_BASE', 'http://127.0.0.1:5199')
+checks = []
+def check(name, ok, detail=''):
+    checks.append((name, bool(ok)))
+    print(('PASS ' if ok else 'FAIL ') + name + (f'  [{detail}]' if detail and not ok else ''))
+
+def sign_in(page, name):
+    page.click('.mebtn'); page.click(f'[role=menuitemradio]:has-text("{name}")'); page.wait_for_timeout(700)
+
+def api(ctx, user, method, path, body=None):
+    headers = {'x-horizon-user': user, 'x-horizon-app': 'ABCD', 'Content-Type': 'application/json'}
+    r = ctx.request.fetch(BASE + path, method=method, headers=headers, data=json.dumps(body) if body is not None else None)
+    try:
+        return r.status, r.json()
+    except Exception:
+        return r.status, None
+
+errors = []
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    ctx = b.new_context(viewport={'width': 1360, 'height': 900})
+    page = ctx.new_page()
+    page.on('console', lambda m: errors.append(m.text) if m.type == 'error' and '404' not in m.text else None)
+    page.goto(BASE + '/')
+    page.wait_for_selector('.mebtn')
+    sign_in(page, 'Ram Kumar')
+
+    # The nav has Test flows; nothing runs yet.
+    page.goto(BASE + '/flows')
+    page.wait_for_selector('.flowempty', timeout=15000)
+    check('nav: Test flows is in the Testing group', page.locator('.nav a[href="/flows"]').count() == 1)
+    check('list: says no flow is running', 'No flow is running' in page.inner_text('.flowempty'))
+
+    # Start a UAT flow with two stories from the Ready for UAT filter.
+    page.click('a:has-text("Start a test flow")')
+    page.wait_for_selector('.flowpick li label', timeout=15000)
+    boxes = page.locator('.flowpick li input[type=checkbox]')
+    check('start: stories are listed to choose from', boxes.count() >= 2, str(boxes.count()))
+    keys = [page.locator('.flowpick li .mono').nth(i).inner_text() for i in range(2)]
+    boxes.nth(0).check(); boxes.nth(1).check()
+    page.fill('.flowtitlefield input', 'UAT · e2e release')
+    start = page.locator('.flowstartbar .btn.ink')
+    check('start: the button counts the chosen stories', 'Start with 2 stories' in start.inner_text(), start.inner_text())
+    start.click()
+    page.wait_for_url(re.compile(r'/flows/flow-'), timeout=15000)
+    flow_id = page.url.rsplit('/', 1)[1]
+    page.wait_for_selector('.flowsteps li', timeout=15000)
+    check('flow: four UAT steps', [x.strip() for x in page.locator('.flowsteps .lbl b').all_inner_texts()] == ['Analyse', 'Review cases', 'Run tests', 'Sign off'])
+    check('flow: both stories are listed', page.locator('.flowstory').count() == 2)
+
+    # The analysis runs in the background; the page updates itself.
+    done = False
+    for _ in range(40):
+        s = page.locator('.flowsteps li').first.inner_text()
+        if '2 of 2' in s:
+            done = True; break
+        page.wait_for_timeout(1000)
+    check('background: both stories analysed without anyone asking again', done, page.locator('.flowsteps li').first.inner_text())
+    check('flow: coverage line shows start and now', re.search(r'\d+%\s*at the start', page.inner_text('.flowcov')) is not None, page.inner_text('.flowcov'))
+    check('flow: the waiting list names a person or step', page.locator('.flowwaiting li').count() >= 1)
+
+    # Open the first story: its steps, criteria and the analysis chat.
+    page.locator('.flowstoryhead').first.click()
+    page.wait_for_selector('.flowdetail')
+    check('story: criteria are listed with a status', page.locator('.flowcriteria > li .pill').count() >= 1)
+    check('story: links to the analysis chat', page.locator('.flowdetail a:has-text("Open the analysis chat")').count() == 1)
+    check('timeline: start and analyses are recorded', page.locator('.flowtimeline li').count() >= 3)
+
+    # Sourav sees the same flow, at the same step.
+    sign_in(page, 'Sourav')
+    page.goto(BASE + f'/flows/{flow_id}')
+    page.wait_for_selector('.flowsteps li', timeout=15000)
+    check('team: another member sees the flow by its link', page.locator('h1').inner_text() == 'UAT · e2e release')
+    st, body = api(ctx, 'u-sourav', 'GET', f'/api/flows/{flow_id}')
+    st2, body2 = api(ctx, 'u-ram', 'GET', f'/api/flows/{flow_id}')
+    check('team: same steps and counts for Ram and Sourav', st == 200 and st2 == 200 and body['flow']['steps'] == body2['flow']['steps'])
+    check('team: Sourav cannot cancel Ram\'s flow', page.locator('button:has-text("Cancel flow")').count() == 0 and api(ctx, 'u-sourav', 'POST', f'/api/flows/{flow_id}/status', {'status': 'cancelled'})[0] == 403)
+
+    # Home shows the flow in progress.
+    page.goto(BASE + '/')
+    page.wait_for_selector('.homeflows .flowcard', timeout=15000)
+    check('home: the flow is listed in progress', 'UAT · e2e release' in page.inner_text('.homeflows'))
+
+    # Regression starts from the application's coverage.
+    sign_in(page, 'Ram Kumar')
+    page.goto(BASE + '/flows/new')
+    page.click('.segctl button:has-text("Regression")')
+    page.wait_for_selector('.flowbase table tbody tr', timeout=20000)
+    check('regression: coverage today per component', page.locator('.flowbase tbody tr').count() >= 5 and re.search(r'\d+% covered today', page.inner_text('.flowbase')) is not None)
+    check('regression: gaps are preselected', page.locator('.flowpick li input:checked').count() >= 1)
+
+    # Draft automation puts the request in the message box, for a person to send.
+    page.goto(BASE + '/?ask=' + 'Write%20automated%20tests%20for%20ABCD-1001')
+    page.wait_for_selector('.composer textarea, textarea', timeout=10000)
+    check('home: ?ask= fills the message box, not sent', 'Write automated tests for ABCD-1001' in page.locator('textarea').first.input_value())
+
+    # Phone width: no sideways scroll on the flow page.
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(BASE + f'/flows/{flow_id}')
+    page.wait_for_selector('.flowsteps li', timeout=15000)
+    sw = page.evaluate('document.documentElement.scrollWidth')
+    check('phone: no sideways scroll on a flow', sw <= 392, str(sw))
+    b.close()
+
+print(f'\n{sum(ok for _, ok in checks)} of {len(checks)} checks passed; console errors: {len(errors) or "none"}')
+for e in errors[:5]:
+    print('  console:', e[:200])
+sys.exit(0 if all(ok for _, ok in checks) and not errors else 1)

@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (21 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (23 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -127,6 +127,16 @@ erDiagram
 | `test_runs` | `id`, `application_id`, `source`, `repo`, `workflow`, `external_run_id`, `attempt`, `run_url`, `event`, `branch`, `sha`, `pr_number`, `is_merge`, `status`, totals | Unique per application, source, repository, run and attempt; a rerun is a new attempt. The **target build** of a repository is its latest merge-commit run (latest attempt), else its latest run. |
 | `test_results` | `run_id`, `test_case_id`, `status`, `duration_ms`, `message` | One test's result in one run. Readiness reads a linked test's result in the target build: `passed`, `failed`, `skipped`, or `missing` from that run. |
 | `hexa_uploads` | `id`, `application_id`, `kind`, `filename`, `format`, `created`, `updated`, `problems` | Every upload and what it changed. |
+
+### Test flows (migration 23, `docs/FLOWS.md`)
+
+| Table | Columns | Notes |
+|---|---|---|
+| `flows` | `id`, `application_id`, `kind`, `title`, `owner_id`, `status`, `baseline` (JSON), `created_at`, `updated_at`, `finished_at` | `kind`: `uat`, `regression` (one active regression flow per application). `status`: `active`, `paused`, `done` (set once every story is through), `cancelled`. |
+| `flow_items` | `flow_id`, `story_key`, `position`, `chat_id`, `added_by`, `added_at`, `removed_at` | The stories in a flow; `chat_id` is the chat the background analysis created. Step states are not stored: they are derived from reports, approvals, links and results on each read. |
+| `flow_signoffs` | `id`, `flow_id`, `story_key`, `decision`, `note`, `evidence` (JSON), `decided_by`, `created_at` | `decision`: `signed_off`, `rejected` (needs a note). `evidence` freezes the criterion statuses at sign-off. |
+| `flow_events` | `id`, `flow_id`, `at`, `actor_id`, `story_key`, `kind`, `text` | The timeline: start, analyses, results, sign-offs, owner changes. |
+| `manual_executions` | `id`, `test_case_id`, `status`, `note`, `executed_by`, `executed_at` | A tester's result for a manual case: `passed`, `failed`, `blocked` (the last two need a note). |
 
 ### Knowledge and decisions
 | Table | Key columns | Notes |

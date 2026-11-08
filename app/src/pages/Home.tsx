@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { BrandMark } from '../components/BrandMark';
 import { Composer, type ComposerSubmit } from '../components/Composer';
@@ -8,6 +8,8 @@ import { BRAND } from '../lib/brand';
 import { capabilities } from '../lib/data';
 import { http, sessionEpoch, useSession } from '../lib/session';
 import { useTickets } from '../lib/ticketStore';
+import { useActiveFlows } from '../lib/flows';
+import { FlowCard } from './Flows';
 
 const greeting = () => {
   const h = new Date().getHours();
@@ -25,7 +27,10 @@ interface HomeData {
 
 export function Home() {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState('');
+  // ?ask= puts a prepared request in the message box (a flow's "Draft automation"), for the person to check and send.
+  const [params] = useSearchParams();
+  const [draft, setDraft] = useState(() => params.get('ask')?.slice(0, 2000) ?? '');
+  const flows = useActiveFlows();
   const { me, loaded } = useSession();
   const firstName = me?.user.name.split(' ')[0] ?? '';
   const story = useTickets()[0]?.key;
@@ -66,6 +71,18 @@ export function Home() {
       </div>
 
       <Composer placeholder="Ask Catalyzt to analyse, write, run, fix or secure" onSubmit={start} value={draft} onValueChange={setDraft} />
+
+      {me?.app && flows && flows.length > 0 && (
+        <section className="homeflows" aria-labelledby="homeflows-h">
+          <div className="homeflowshead">
+            <h2 id="homeflows-h">Test flows in progress</h2>
+            <Link to="/flows">All flows</Link>
+          </div>
+          {flows.slice(0, 3).map((f) => (
+            <FlowCard key={f.id} flow={f} compact />
+          ))}
+        </section>
+      )}
 
       {me?.app && (
         <nav className="entry" aria-label="Start from your work">
