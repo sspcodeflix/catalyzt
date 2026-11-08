@@ -43,6 +43,11 @@ const withUat = (s: ServerStory): Ticket => ({
 
 const jql = (f: ServerFilter) => `project = ${f.project} AND status in (${f.statuses.map((s) => `"${s}"`).join(', ')})`;
 
+/** Applies a story list from the server. Exported for tests. */
+export function applyStories(b: { stories: ServerStory[]; filter: ServerFilter }) {
+  apply(b);
+}
+
 function apply(b: { stories: ServerStory[]; filter: ServerFilter }) {
   stories = b.stories;
   tickets = stories.map(withUat);
@@ -98,6 +103,15 @@ export const getTicket = (key: string): Ticket | undefined => {
 };
 export const getTickets = () => tickets;
 
+/**
+ * The Jira Stories badge (R14): stories in the Jira filter with no UAT analysis saved, the same on
+ * every page, with a label that says what is counted.
+ */
+export function uatBadge(list: Ticket[]): { count: number; label: string } {
+  const count = list.filter((t) => t.uat.state === 'not-analysed').length;
+  return { count, label: `${count} of ${list.length} ${list.length === 1 ? 'story' : 'stories'} in the Jira filter not analysed for UAT yet` };
+}
+
 /** Fetches one story even if the filter hides it. */
 export async function fetchStory(key: string): Promise<Ticket | undefined> {
   try {
@@ -141,8 +155,17 @@ export async function createStory(
   return { story: withUat(r.story), visible: r.visible };
 }
 
-/** Records the result of a UAT analysis on the story, so the list shows it. */
-export function recordUatAnalysis(key: string, chatId: string, statuses: CriterionStatus[]) {
+/**
+ * Records the result of a UAT analysis on the story, so the list shows it. An analysis that just ran
+ * replaces what the story showed. One read from a saved chat (`saved`) only fills a story the list
+ * has no analysis for: opening an old chat must not replace the newer saved state, nor move the
+ * sidebar count depending on which chat is open (R14).
+ */
+export function recordUatAnalysis(key: string, chatId: string, statuses: CriterionStatus[], opts: { saved?: boolean } = {}) {
+  if (opts.saved) {
+    const s = stories.find((t) => t.key === key);
+    if (!s || uat.has(key) || s.uat) return;
+  }
   uat.set(key, { ...summariseCoverage(statuses), chatId });
   tickets = stories.map(withUat);
   emit();

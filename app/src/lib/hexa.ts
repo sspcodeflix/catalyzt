@@ -91,6 +91,33 @@ export interface RunRow {
   failures: { id: string; title: string; message: string | null }[];
 }
 
+/** A test's link to a story, criterion ("IBGM-1005#AC1"), requirement or component ("IBGM/account-service"). */
+export type TestLink = { type: string; ref: string };
+
+/** A link as people read it: "IBGM-1005 AC1", "IBGM-1005", "account-service". */
+export const linkLabel = (l: TestLink) => (l.type === 'criterion' ? l.ref.replace('#', ' ') : l.type === 'component' ? l.ref.replace(/^[^/]+\//, '') : l.ref);
+
+/** The links in `after` that were not in `before`: what one press of Link added (a criterion brings its story), so undo removes exactly that (R08). */
+export const addedLinks = (before: TestLink[], after: TestLink[]) => after.filter((a) => !before.some((b) => b.type === a.type && b.ref === a.ref));
+
+/**
+ * The line under "Pipeline runs" that says where the listed runs came from (R11): pushed by CI,
+ * collected from GitHub Actions merge-commit runs, uploaded. Only the sources present are named, so
+ * a list of locally pushed runs is never described as GitHub Actions merges.
+ */
+export function runSources(runs: Pick<RunRow, 'source'>[]): string {
+  if (!runs.length) return 'No runs yet';
+  const n = (s: RunRow['source']) => runs.filter((r) => r.source === s).length;
+  const parts = [
+    [n('webhook'), 'pushed by CI'],
+    [n('github_actions'), 'collected from GitHub Actions (merge-commit runs on the default branch)'],
+    [n('upload'), 'uploaded'],
+  ]
+    .filter(([k]) => Number(k) > 0)
+    .map(([k, w]) => `${k} ${w}`);
+  return `${runs.length} run${runs.length === 1 ? '' : 's'}: ${parts.join(', ')}`;
+}
+
 export interface TestDetail {
   id: string;
   title: string;

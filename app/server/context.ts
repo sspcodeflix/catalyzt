@@ -13,7 +13,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 import { containsSecret } from '../src/lib/guardrails';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
@@ -37,6 +37,10 @@ export const MAX_UPLOAD_MB = MAX_ATTACHMENT_BYTES / 1024 / 1024;
 /** Documentation files read from a clone, and how much of it. */
 const MAX_DOC_FILES = 60;
 const MAX_DOC_BYTES = 512 * 1024;
+/** Build and CI files read from a clone (R19): how many, how large, and how many passages each. */
+const MAX_BUILD_FILES = 40;
+const MAX_BUILD_BYTES = 64 * 1024;
+const MAX_CHUNKS_PER_BUILD_FILE = 12;
 const MAX_CHUNKS_PER_SOURCE = 400;
 const MIN_CHUNK_CHARS = 40;
 const TARGET_CHUNK_CHARS = 900;
@@ -233,20 +237,36 @@ export interface Doc {
   /** Relative path, used in locators. */
   path: string;
   text: string;
+  /** A build, container or CI file: split by lines with its layout kept, not by paragraphs (R19). */
+  build?: boolean;
 }
 
 /**
- * Splits documents into passages: paragraphs (blank-line separated), short ones merged with the
+ * Splits documents into passages: paragraphs (blank-line separated, line breaks kept), short ones merged with the
  * next up to about 900 characters, anything under 40 characters dropped. Locators are
  * "<path> ¶<n>" so a citation can be opened at the passage.
  */
 export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: string; text: string }[] {
   const out: { locator: string; text: string }[] = [];
   for (const d of docs) {
+    if (d.build) {
+      for (const c of chunkLines(d)) {
+        out.push(c);
+        if (out.length >= max) return out;
+      }
+      continue;
+    }
     let n = 0;
     let buf = '';
     const flush = () => {
-      const t = buf.replace(/\s+/g, ' ').trim();
+      // Line breaks are kept (R20): a Markdown table or list stays readable on the passage page.
+      const t = buf
+        .split('\n')
+        // Leading indentation is kept (code blocks, nested lists); runs of spaces inside a line are not.
+        .map((l) => l.replace(/\s+$/, '').replace(/(\S)[^\S\n]+/g, '$1 '))
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
       buf = '';
       if (t.length < MIN_CHUNK_CHARS) return;
       n++;
@@ -256,7 +276,7 @@ export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: 
       const p = para.trim();
       if (!p) continue;
       if (buf && buf.length + p.length > TARGET_CHUNK_CHARS) flush();
-      buf = buf ? `${buf}\n${p}` : p;
+      buf = buf ? `${buf}\n\n${p}` : p;
       if (buf.length >= TARGET_CHUNK_CHARS) flush();
       if (out.length >= max) return out;
     }
@@ -266,16 +286,51 @@ export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: 
   return out;
 }
 
+/**
+ * A build or CI file as passages: consecutive lines up to about 900 characters, indentation kept
+ * (a pom.xml or a workflow reads by its layout), blank runs squeezed, at most a dozen per file so a
+ * large manifest cannot crowd out the documentation.
+ */
+function chunkLines(d: Doc): { locator: string; text: string }[] {
+  const out: { locator: string; text: string }[] = [];
+  let buf: string[] = [];
+  let len = 0;
+  const flush = () => {
+    const t = buf.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    buf = [];
+    len = 0;
+    if (t.length < MIN_CHUNK_CHARS || out.length >= MAX_CHUNKS_PER_BUILD_FILE) return;
+    out.push({ locator: `${d.path} ¶${out.length + 1}`, text: t.length > 2000 ? `${t.slice(0, 1997)}…` : t });
+  };
+  for (const raw of d.text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, '');
+    if (len && len + line.length > TARGET_CHUNK_CHARS) flush();
+    buf.push(line);
+    len += line.length + 1;
+  }
+  flush();
+  return out;
+}
+
 const DOC_NAME = /^(readme|changelog|changes|contributing|architecture|design|security|testing|api)(\.|$)/i;
 const DOC_EXT = /\.(md|markdown|rst|txt|proto)$/i;
 const SPEC_NAME = /(openapi|swagger)[^/]*\.(ya?ml|json)$/i;
 const SKIP_DIR = /^(node_modules|vendor|third_party|dist|build|out|target|\.git|\.github|\.venv|venv|site-packages)$/;
+/** Build, container and CI files that say how the code is built, tested and run (R19). Lock files are not among them. */
+const BUILD_NAME = /^(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|package\.json|docker-compose[^/]*\.ya?ml|compose\.ya?ml|Dockerfile([.-][^/]*)?|\.travis\.yml|\.gitlab-ci\.yml|Jenkinsfile|Makefile|makefile|GNUmakefile)$/;
+const isWorkflow = (rel: string) => /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(rel.split(sep).join('/'));
 
-/** Documentation worth indexing in a clone: top-level READMEs and the like, docs/ markdown, protos, API specs. */
+/**
+ * What is worth indexing in a clone: top-level READMEs and the like, docs/ markdown, protos, API
+ * specs, and the build, container and CI files (pom.xml, build.gradle, package.json, Dockerfile,
+ * docker-compose, .travis.yml, GitHub workflows, Makefile) up to 64 KB each and 40 in all. Build
+ * files come back marked `build` so they are split by lines.
+ */
 export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
   const found: string[] = [];
+  const builds: string[] = [];
   const walk = (dir: string, depth: number) => {
-    if (found.length >= maxFiles || depth > 4) return;
+    if (depth > 4) return;
     let entries: string[];
     try {
       entries = readdirSync(dir).sort();
@@ -283,7 +338,7 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
       return;
     }
     for (const name of entries) {
-      if (found.length >= maxFiles) return;
+      if (found.length >= maxFiles && builds.length >= MAX_BUILD_FILES) return;
       const p = join(dir, name);
       let st;
       try {
@@ -291,12 +346,18 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
       } catch {
         continue;
       }
+      const rel = relative(cloneDir, p);
       if (st.isDirectory()) {
-        if (!SKIP_DIR.test(name)) walk(p, depth + 1);
+        // .github is skipped except for its workflows, which say how CI builds and tests the code.
+        if (!SKIP_DIR.test(name) || (depth === 0 && name === '.github')) walk(p, depth + 1);
         continue;
       }
-      if (st.size === 0 || st.size > MAX_DOC_BYTES) continue;
-      const rel = relative(cloneDir, p);
+      if (st.size === 0) continue;
+      if (BUILD_NAME.test(name) || isWorkflow(rel)) {
+        if (st.size <= MAX_BUILD_BYTES && builds.length < MAX_BUILD_FILES) builds.push(p);
+        continue;
+      }
+      if (rel.split(sep)[0] === '.github' || st.size > MAX_DOC_BYTES || found.length >= maxFiles) continue;
       const top = depth === 0;
       const inDocs = /^docs?\//i.test(rel);
       const isDoc = (DOC_NAME.test(name) && (DOC_EXT.test(name) || !name.includes('.'))) || (DOC_EXT.test(name) && (top || inDocs || /\.proto$/i.test(name))) || SPEC_NAME.test(name);
@@ -304,13 +365,14 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
     }
   };
   walk(cloneDir, 0);
-  return found
-    .map((p) => {
-      const buf = readFileSync(p);
-      if (buf.subarray(0, 4000).includes(0)) return null;
-      return { path: relative(cloneDir, p), text: buf.toString('utf8') };
-    })
-    .filter((d): d is Doc => !!d);
+  const read = (p: string, build: boolean): Doc | null => {
+    const buf = readFileSync(p);
+    if (buf.subarray(0, 4000).includes(0)) return null;
+    const doc: Doc = { path: relative(cloneDir, p).split(sep).join('/'), text: buf.toString('utf8') };
+    return build ? { ...doc, build: true } : doc;
+  };
+  // Documentation first, so the passage cap is spent on prose before manifests.
+  return [...found.map((p) => read(p, false)), ...builds.map((p) => read(p, true))].filter((d): d is Doc => !!d);
 }
 
 /**
@@ -370,7 +432,15 @@ const UPSERT = `
   ON CONFLICT(id) DO UPDATE SET title = excluded.title, subtitle = excluded.subtitle, status = CASE WHEN context_sources.status = 'review' THEN 'review' ELSE excluded.status END,
     content = excluded.content, note = excluded.note, href = excluded.href, location = excluded.location, updated_at = excluded.updated_at, synced_at = excluded.synced_at`;
 
-const describeDocs = (files: number, chunks: number) => (chunks ? `${chunks} passage${chunks === 1 ? '' : 's'} from ${files} documentation file${files === 1 ? '' : 's'}` : 'No documentation found to index');
+/** "26 passages from 1 documentation file and 12 build files": says what was read, so nobody assumes the code was (R19). */
+const describeDocs = (docs: Doc[], chunks: number) => {
+  if (!chunks) return 'No documentation or build files found to index';
+  const builds = docs.filter((d) => d.build).length;
+  const files = docs.length - builds;
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const from = [files ? plural(files, 'documentation file') : '', builds ? plural(builds, 'build file') : ''].filter(Boolean).join(' and ');
+  return `${plural(chunks, 'passage')} from ${from}`;
+};
 
 /**
  * Seeds one Repository source per team repo (its documentation indexed from the clone when there
@@ -397,7 +467,7 @@ export function seedContext(db: HorizonDb, ws: Workspace, at = Date.now()) {
         subtitle: `GitHub · ${repo.github}${parts.length ? ` · ${parts.join(' · ')}` : ''}`,
         trust: 'Code',
         status: cloned ? 'indexed' : 'ready',
-        content: cloned ? describeDocs(docs.length, chunks.length) : 'Not indexed',
+        content: cloned ? describeDocs(docs, chunks.length) : 'Not indexed',
         note: cloned ? (repo.note ?? null) : ['Scanned through GitHub only; there is no local clone to index.', repo.note].filter(Boolean).join(' '),
         href: null,
         location: cloned ? cloneDir : null,
@@ -529,7 +599,7 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
     else {
       const docs = collectDocs(location);
       const r = indexSource(db, id, chunkDocs(docs), at);
-      db.raw.prepare('UPDATE context_sources SET content = ? WHERE id = ?').run(describeDocs(docs.length, r.chunks), id);
+      db.raw.prepare('UPDATE context_sources SET content = ? WHERE id = ?').run(describeDocs(docs, r.chunks), id);
       notice = `${s.title} synced: ${r.chunks} passage${r.chunks === 1 ? '' : 's'}${r.changed ? `, now version ${r.version}` : ', unchanged'}.`;
     }
   } else if (s.type === 'Jira') {
@@ -541,6 +611,28 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
   }
   db.raw.prepare('UPDATE context_sources SET synced_at = ?, updated_at = ? WHERE id = ?').run(iso(at), iso(at), id);
   return { source: getSource(db, app, id)!, notice };
+}
+
+/**
+ * The components among `names` whose repository can deliver no automated test result (R24): it is
+ * scanned through GitHub only (an App Context repository source with no local clone, so no local
+ * CI target can run it) and no pipeline run has ever been recorded for it. A repository Catalyzt has
+ * no source for, or one with any recorded run, is not claimed either way.
+ */
+export function scanOnlyComponents(db: HorizonDb, app: string, names: string[]): { component: string; repo: string }[] {
+  const out: { component: string; repo: string }[] = [];
+  const comp = db.raw.prepare('SELECT name, repo FROM components WHERE application_id = ? AND LOWER(name) = LOWER(?)');
+  const src = db.raw.prepare("SELECT location FROM context_sources WHERE application_id = ? AND type = 'Repository' AND (subtitle = ? OR subtitle LIKE ? ESCAPE '\\') LIMIT 1");
+  const ran = db.raw.prepare('SELECT 1 FROM test_runs WHERE application_id = ? AND repo = ? LIMIT 1');
+  for (const name of new Set(names)) {
+    const c = comp.get(app, name) as { name: string; repo: string | null } | undefined;
+    if (!c?.repo) continue;
+    const head = `GitHub · ${c.repo}`;
+    const s = src.get(app, head, `${head.replace(/[\\%_]/g, (m) => `\\${m}`)} · %`) as { location: string | null } | undefined;
+    if (!s || s.location || ran.get(app, c.repo)) continue;
+    out.push({ component: c.name, repo: c.repo });
+  }
+  return out;
 }
 
 /* ---------- Retrieval ---------- */

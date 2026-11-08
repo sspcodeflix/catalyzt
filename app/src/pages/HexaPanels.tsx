@@ -5,7 +5,7 @@ import { useTickets } from '../lib/ticketStore';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
-import { api, fileToBase64, hexaChanged, ORIGIN, PURPOSE, RESULT, type TestDetail } from '../lib/hexa';
+import { addedLinks, api, fileToBase64, hexaChanged, linkLabel, ORIGIN, PURPOSE, RESULT, type TestDetail, type TestLink } from '../lib/hexa';
 import { withSession } from '../lib/session';
 import { relTime } from './Tickets';
 
@@ -217,10 +217,18 @@ export function HexaTestPanel() {
   const navigate = useNavigate();
   const ref = useScrollIntoViewOnPhone(testId);
   const back = `/hexa?tab=${params.get('tab') ?? 'manual'}`;
+  // R08: a link or unlink can be taken back for a few seconds.
+  const [undo, setUndo] = useState<LinkUndo | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const timer = window.setTimeout(() => setUndo(null), UNDO_MS);
+    return () => window.clearTimeout(timer);
+  }, [undo]);
 
   useEffect(() => {
     setT(null);
     setError(null);
+    setUndo(null);
     const load = () =>
       api<{ test: TestDetail }>(`/api/hexa/tests/${testId}`).then(
         (r) => setT(r.test),
@@ -406,33 +414,84 @@ export function HexaTestPanel() {
                 ) : (
                   l.ref.replace(/^[^/]+\//, '')
                 )}
-                <button type="button" className="chipx" aria-label={`Unlink ${l.ref}`} onClick={() => void unlink(t.id, l)}>
+                <button
+                  type="button"
+                  className="chipx"
+                  aria-label={`Unlink ${linkLabel(l)} from this test`}
+                  title={`Unlink ${linkLabel(l)}`}
+                  onClick={() =>
+                    void changeLinks(t.id, [l], true).then(
+                      () => setUndo({ text: `Unlinked ${linkLabel(l)}`, links: [l], unlinked: true }),
+                      (e: Error) => setUndo({ text: e.message, links: [], unlinked: false }),
+                    )
+                  }
+                >
                   <Icon name="close" small />
                 </button>
               </span>
             ))}
           </span>
-          <LinkForm testId={t.id} linked={t.links} />
+          {undo && (
+            <p className="linkundo muted" role="status">
+              {undo.text}
+              {undo.links.length > 0 && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    className="linkbtn"
+                    onClick={() => {
+                      const u = undo;
+                      setUndo(null);
+                      // Undoing an unlink links again; undoing a link removes what that press added.
+                      void changeLinks(t.id, u.links, !u.unlinked).then(
+                        () => setUndo({ text: u.unlinked ? `Linked ${u.links.map(linkLabel).join(', ')} again` : `Removed ${u.links.map(linkLabel).join(', ')}`, links: [], unlinked: false }),
+                        (e: Error) => setUndo({ text: e.message, links: [], unlinked: false }),
+                      );
+                    }}
+                  >
+                    Undo
+                  </button>
+                </>
+              )}
+            </p>
+          )}
+          <LinkForm testId={t.id} linked={t.links} onLinked={(added) => setUndo(added.length ? { text: `Linked ${added.map(linkLabel).join(', ')}`, links: added, unlinked: false } : null)} />
         </div>
       </div>
     </section>
   );
 }
 
-async function unlink(testId: string, l: { type: string; ref: string }) {
-  try {
-    await api(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type: l.type, ref: l.type === 'component' ? l.ref.replace(/^[^/]+\//, '') : l.ref, remove: true }) });
-    hexaChanged();
-  } catch {
-    /* the panel keeps showing the link; the next load tells the truth */
-  }
+/** What the last link or unlink changed, so it can be undone (R08). */
+interface LinkUndo {
+  text: string;
+  links: TestLink[];
+  /** True when the links were removed (undo links them again). */
+  unlinked: boolean;
 }
+const UNDO_MS = 10_000;
+
+
+/** Links or unlinks, one call per link; a component is sent by its name. */
+async function changeLinks(testId: string, links: TestLink[], remove: boolean): Promise<TestDetail | null> {
+  let last: TestDetail | null = null;
+  try {
+    for (const l of links) {
+      last = (await api<{ test: TestDetail }>(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type: l.type, ref: l.type === 'component' ? linkLabel(l) : l.ref, remove }) })).test;
+    }
+  } finally {
+    hexaChanged();
+  }
+  return last;
+}
+
 
 /**
  * Links a test to a story, one of its acceptance criteria, or a component, so UAT readiness can
  * count it as evidence. Stories and components come from the application; the server validates.
  */
-function LinkForm({ testId, linked }: { testId: string; linked: { type: string; ref: string }[] }) {
+function LinkForm({ testId, linked, onLinked }: { testId: string; linked: TestLink[]; onLinked: (added: TestLink[]) => void }) {
   const tickets = useTickets();
   const components = useSession().me?.app?.components ?? [];
   // R08: nothing is preselected; the Link button stays disabled until a target is chosen, so one press never links the wrong thing.
@@ -455,8 +514,10 @@ function LinkForm({ testId, linked }: { testId: string; linked: { type: string; 
     setBusy(true);
     setError(null);
     try {
-      await api(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type, ref }) });
+      const before = linked;
+      const r = await api<{ test: TestDetail }>(`/api/hexa/tests/${testId}/links`, { method: 'POST', body: JSON.stringify({ type, ref }) });
       hexaChanged();
+      onLinked(addedLinks(before, r.test.links));
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -4,6 +4,8 @@ import type { Ticket } from '../src/lib/types';
 import type { RunRequest, WorkflowEvent } from '../src/lib/workflow';
 import type { HorizonDb } from './db';
 import type { DeepSeekConfig } from './deepseek';
+import { seedContext } from './context';
+import { seedWorkspace } from './db';
 import { fixtureDb, fixtureWithDocs, seedRefundTests } from './fixture';
 import { runWorkflow } from './workflow';
 
@@ -167,6 +169,33 @@ describe('sub-agents', () => {
     expect(db.listTests('ABCD', { kind: 'proposed' }).rows[0].links).toEqual(expect.arrayContaining([{ type: 'criterion', ref: 'ABCD-1001#AC4' }]));
   });
 
+  it('R24: the UAT answer for a story on a scan-only repository says automated evidence cannot arrive', async () => {
+    const { db, ws } = fixtureWithDocs();
+    const ws2 = {
+      ...ws,
+      teams: ws.teams.map((t) =>
+        t.id === 'ABCD'
+          ? {
+              ...t,
+              repos: [...t.repos, { name: 'portal', github: 'acme/portal', clone: false, languages: ['TypeScript'], testFrameworks: ['Mocha'] }],
+              components: [...t.components, { name: 'customer-portal', manager: 'u-sourav', workspace: 'storefront', repo: 'portal', path: '.', language: 'TypeScript', tests: 'Mocha' }],
+            }
+          : t,
+      ),
+    };
+    seedWorkspace(db, ws2);
+    seedContext(db, ws2);
+    const portal = { ...ticketOf(db, 'ABCD-1002'), components: ['customer-portal'] };
+    const { events } = await run(req(db, 'Is ABCD-1002 ready for UAT?', { syncedTickets: [portal] }), null, db, true);
+    const a = events.find((e) => e.type === 'answer') as Extract<WorkflowEvent, { type: 'answer' }>;
+    const prose = a.blocks.find((b) => b.kind === 'prose');
+    expect(prose?.kind === 'prose' && prose.text).toContain('customer-portal (acme/portal) is scanned through GitHub only');
+    // The cloned repository's story carries no such caveat.
+    const other = await run(req(db, 'Is ABCD-1001 ready for UAT?'), null, db, true);
+    const b = other.events.find((e) => e.type === 'answer') as Extract<WorkflowEvent, { type: 'answer' }>;
+    expect(JSON.stringify(b.blocks)).not.toContain('scanned through GitHub only');
+  });
+
   it('Clarifier asks when the router is unsure', async () => {
     const db = fixtureDb();
     stubDeepSeek({ ...ok, confidence: 0.3, needs_clarification: true, question: 'UAT or regression?', options: ['UAT', 'Regression'] });
@@ -269,7 +298,7 @@ describe('Hexa facts in answers (S03)', () => {
     expect(stream).toContain('a Card Refund Needs A Reason [PartialRefundsTest] (automated, latest result none, linked to ABCD-1001#AC3)');
     expect(stream).toContain('Target build for acme/shop: PR #41');
     const cites = (events.find((e) => e.type === 'citations') as Extract<WorkflowEvent, { type: 'citations' }>).citations;
-    expect(cites).toEqual([{ n: 1, title: 'Hexa · checkoutservice', detail: 'checkoutservice · tests and latest results', href: '/hexa?tab=automated&q=checkoutservice' }]);
+    expect(cites).toEqual([{ n: 1, title: 'Hexa · checkoutservice', detail: 'checkoutservice · tests by link, path and package · latest results', href: '/hexa?tab=automated&q=checkoutservice' }]);
     expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.map((s) => s.label)).toEqual(['Reading App Context', 'Reading Hexa', 'Wrote the answer']);
   });
 

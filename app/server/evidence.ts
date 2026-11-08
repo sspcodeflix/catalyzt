@@ -10,6 +10,7 @@
  * test class is named ("why did AccountControllerTest fail?"), its latest results and failure
  * messages are a source too (R02).
  */
+import { HEXA_COMPONENT_FACTS } from '../src/lib/staleAnswer';
 import type { ComponentRecord, HorizonDb } from './db';
 
 export interface EvidenceSource {
@@ -74,7 +75,7 @@ export function hexaEvidence(db: HorizonDb, app: string, req: { components: stri
       build ? `Target build for ${comp?.repo}: ${build.label}, recorded ${build.at}.` : comp?.repo ? `No pipeline run has been recorded for ${comp.repo}.` : '',
       listed.length ? `Tests (first ${listed.length} of ${total}):\n${listed.join('\n')}` : '',
     ].filter(Boolean);
-    out.push({ title: `Hexa · ${name}`, text: lines.join('\n'), detail: `${name} · tests and latest results`, href: `/hexa?tab=automated&q=${encodeURIComponent(name)}` });
+    out.push({ title: `Hexa · ${name}`, text: lines.join('\n'), detail: `${name} · ${HEXA_COMPONENT_FACTS} · latest results`, href: `/hexa?tab=automated&q=${encodeURIComponent(name)}` });
   }
   for (const key of req.tickets.slice(0, 3)) {
     const story = db.getStory(key);

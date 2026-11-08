@@ -3,11 +3,12 @@
  * for what cannot be read or is not connected, retrieval that respects scope and exclusions, and
  * conflicts that stay excluded until an owner decides in Huddle.
  */
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { addConfluence, addUploads, chunkDocs, collectDocs, ensureFts, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, seedContext, syncSource, testQuestion } from './context';
+import { addConfluence, addUploads, chunkDocs, collectDocs, ensureFts, getSource, listChunks, listSources, raiseConflict, resolveConflictForItem, retrieveContext, scanOnlyComponents, seedContext, syncSource, testQuestion } from './context';
+import { seedWorkspace } from './db';
 import { fixtureWithDocs, REFUNDS_DOC, SHOP_README } from './fixture';
 import { decide, getItem, listItems } from './huddle';
 import { embedPending, embeddingCounts, fakeModels, RetrievalService, type RetrievalModels } from './retrieval';
@@ -29,6 +30,65 @@ describe('passages', () => {
     writeFileSync(join(cloneDir, 'main.go'), 'package main');
     writeFileSync(join(cloneDir, 'docs', 'logo.md'), Buffer.from([0x23, 0x00, 0x01, 0x02]));
     expect(collectDocs(cloneDir).map((d) => d.path).sort()).toEqual(['README.md', 'docs/refunds.md']);
+  });
+
+  it('R20: keeps line breaks, so a Markdown table in a passage can be rendered', () => {
+    const table = 'Method\t| Path\t| Description\n------ | ---- |:----:|\nGET\t| /accounts/current\t| Get current account data';
+    const [c] = chunkDocs([{ path: 'README.md', text: `#### Account service\nContains general input logic.\n\n${table}\n` }]);
+    expect(c.text).toBe(`#### Account service\nContains general input logic.\n\nMethod | Path | Description\n------ | ---- |:----:|\nGET | /accounts/current | Get current account data`);
+    const [code] = chunkDocs([{ path: 'README.md', text: '```yml\nspring:\n  application:\n    name: notification-service   \n```\n' }]);
+    expect(code.text).toBe('```yml\nspring:\n  application:\n    name: notification-service\n```');
+  });
+
+  it('R19: indexes build, container and CI files as line passages, within limits, and says so', () => {
+    const { db, cloneDir } = fixtureWithDocs();
+    const pom = `<project>\n  <modelVersion>4.0.0</modelVersion>\n  <artifactId>shop</artifactId>\n  <build>\n    <plugins>\n      <plugin><artifactId>maven-surefire-plugin</artifactId></plugin>\n    </plugins>\n  </build>\n</project>\n`;
+    writeFileSync(join(cloneDir, 'pom.xml'), pom);
+    writeFileSync(join(cloneDir, '.travis.yml'), 'language: java\njdk: oraclejdk8\nscript: mvn -B test --settings settings.xml\n');
+    writeFileSync(join(cloneDir, 'docker-compose.dev.yml'), 'services:\n  mongo:\n    image: mongo:3\n    ports: ["27017:27017"]\n');
+    writeFileSync(join(cloneDir, 'package-lock.json'), '{"lockfileVersion": 3, "packages": {"": {"name": "shop"}}}');
+    writeFileSync(join(cloneDir, '.env'), 'PASSWORD=not-indexed-at-all-ever');
+    mkdirSync(join(cloneDir, 'api'), { recursive: true });
+    writeFileSync(join(cloneDir, 'api', 'Dockerfile'), 'FROM java:8-jre\nADD ./target/api.jar /app/\nCMD ["java", "-jar", "/app/api.jar"]\n');
+    writeFileSync(join(cloneDir, 'api', 'build.gradle'), `plugins { id 'java' }\n${'// padding\n'.repeat(8000)}`); // over 64 KB: skipped
+    mkdirSync(join(cloneDir, '.github', 'workflows'), { recursive: true });
+    writeFileSync(join(cloneDir, '.github', 'workflows', 'ci.yml'), 'on: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: mvn -B test\n');
+    writeFileSync(join(cloneDir, '.github', 'CODEOWNERS.md'), '* @someone who owns everything in this repository');
+    const docs = collectDocs(cloneDir);
+    expect(docs.filter((d) => !d.build).map((d) => d.path).sort()).toEqual(['README.md', 'docs/refunds.md']);
+    expect(docs.filter((d) => d.build).map((d) => d.path).sort()).toEqual(['.github/workflows/ci.yml', '.travis.yml', 'api/Dockerfile', 'docker-compose.dev.yml', 'pom.xml']);
+    const chunks = chunkDocs(docs);
+    const pomChunk = chunks.find((c) => c.locator === 'pom.xml ¶1')!;
+    expect(pomChunk.text).toContain('\n    <plugins>'); // layout kept
+    const id = listSources(db, 'ABCD').find((s) => s.type === 'Repository')!.id;
+    const r = syncSource(db, 'ABCD', id);
+    expect(r.source.content).toBe(`${r.source.chunks} passages from 2 documentation files and 5 build files`);
+    expect(listChunks(db, 'ABCD', id).some((c) => c.locator === '.travis.yml ¶1' && c.text.includes('mvn -B test'))).toBe(true);
+  });
+});
+
+describe('scan-only repositories (R24)', () => {
+  it('names a component whose repository has no clone and no recorded run, and stops once a run arrives', () => {
+    const { db, ws } = fixtureWithDocs();
+    const ws2 = {
+      ...ws,
+      teams: ws.teams.map((t) =>
+        t.id === 'ABCD'
+          ? {
+              ...t,
+              repos: [...t.repos, { name: 'portal', github: 'acme/portal', clone: false, languages: ['TypeScript'], testFrameworks: ['Mocha'], note: 'Scanned through GitHub only; not cloned.' }],
+              components: [...t.components, { name: 'customer-portal', manager: 'u-sourav', workspace: 'storefront', repo: 'portal', path: '.', language: 'TypeScript', tests: 'Mocha' }],
+            }
+          : t,
+      ),
+    };
+    seedWorkspace(db, ws2);
+    seedContext(db, ws2);
+    expect(scanOnlyComponents(db, 'ABCD', ['customer-portal', 'checkoutservice', 'nonexistent'])).toEqual([{ component: 'customer-portal', repo: 'acme/portal' }]);
+    db.raw
+      .prepare("INSERT INTO test_runs (id, application_id, source, repo, status, total, passed, failed, skipped, ingested_at) VALUES ('run-portal', 'ABCD', 'webhook', 'acme/portal', 'passed', 1, 1, 0, 0, '2026-11-08T00:00:00Z')")
+      .run();
+    expect(scanOnlyComponents(db, 'ABCD', ['customer-portal'])).toEqual([]);
   });
 });
 

@@ -20,7 +20,7 @@ import { testTypeLabel } from '../src/lib/testType';
 import type { Capability, Citation } from '../src/lib/types';
 import { uatAnswer } from '../src/lib/uat';
 import type { AgentKind, AgentName, AgentState, RunRequest, WorkflowEvent } from '../src/lib/workflow';
-import { describeRetrieval, retrieveContext, type ContextPassage } from './context';
+import { describeRetrieval, retrieveContext, scanOnlyComponents, type ContextPassage } from './context';
 import type { RetrievalModels } from './retrieval';
 import type { HorizonDb } from './db';
 import { hexaEvidence } from './evidence';
@@ -294,7 +294,9 @@ export async function runWorkflow(
       const uat = root.spawn('UAT analyst', 'tool_agent', `Check whether ${ticket.key} is ready for UAT`);
       // Coverage comes from Hexa: tests linked to each criterion and their latest pipeline results.
       const coverage = db?.coverageFor(ticket.key) ?? ticket.acceptanceCriteria.map(() => ({ status: 'no-test' as const, evidence: 'No test linked to this criterion' }));
-      const { answer, artifact } = uatAnswer(ticket, coverage);
+      // R24: a component whose repository is scan-only can never deliver an automated result; the report says so.
+      const scanOnly = db ? scanOnlyComponents(db, app, ticket.components) : [];
+      const { answer, artifact } = uatAnswer(ticket, coverage, { scanOnly });
       const run = answer.blocks[0];
       const tools = ['jira.get_story', 'hexa.linked_tests', 'hexa.latest_results', 'uat.draft_cases'];
       (run.kind === 'run' ? run.steps : []).forEach((s, i) => {

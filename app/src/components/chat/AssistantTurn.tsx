@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { canRetry, decideApproval, rateAnswer, retryAnswer, type FeedbackPattern } from '../../lib/chatStore';
+import { STALE_TEXT, staleTestFacts } from '../../lib/staleAnswer';
 import type { AssistantMessage, Chat } from '../../lib/types';
 import { BrandMark } from '../BrandMark';
 import { Icon } from '../Icon';
@@ -15,10 +16,12 @@ interface AssistantTurnProps {
   chat: Chat;
   message: AssistantMessage;
   onFollowUp: (text: string) => void;
+  /** Sends the question this answer replied to again (R04); absent when it cannot be resent here. */
+  onAskAgain?: () => void;
 }
 
 /** Prose first, then the card, then the rating, approvals and follow-up suggestions. */
-export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps) {
+export function AssistantTurn({ chat, message, onFollowUp, onAskAgain }: AssistantTurnProps) {
   const [copied, setCopied] = useState(false);
   // A rating below 4 stars waits for the feedback form before it is sent.
   const [pendingStars, setPendingStars] = useState<number | null>(null);
@@ -32,6 +35,7 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
   const live = status === 'working' || status === 'streaming';
   const finished = status === 'done';
   const proseText = message.blocks.flatMap((b) => (b.kind === 'prose' ? [b.text] : [])).join('\n\n');
+  const stale = staleTestFacts(message);
 
   const copy = async () => {
     try {
@@ -140,6 +144,22 @@ export function AssistantTurn({ chat, message, onFollowUp }: AssistantTurnProps)
       </div>
       <div className="content">
         {before.map(renderBlock)}
+        {stale && (
+          <div className="callout stalenote" role="note" aria-label="These test facts may be out of date">
+            <Icon name="warn" small />
+            <span>
+              {STALE_TEXT[stale]}
+              {onAskAgain && (
+                <>
+                  {' '}
+                  <button type="button" className="linkbtn" onClick={onAskAgain}>
+                    Ask again
+                  </button>
+                </>
+              )}
+            </span>
+          </div>
+        )}
         {status === 'error' && (
           <div className="callout bad" role="alert">
             <Icon name="warn" small />
