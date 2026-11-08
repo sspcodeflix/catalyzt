@@ -197,7 +197,14 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
   const files = opts.files ?? new LocalBlobStore('data/attachments');
 
   return async function api(req: IncomingMessage, res: ServerResponse, next: Next) {
-    const full = new URL(req.url ?? '/', 'http://x');
+    let full: URL;
+    try {
+      full = new URL(req.url ?? '/', 'http://x');
+    } catch {
+      // F18: an unparsable request line is answered, never thrown out of the listener.
+      if (!(req.url ?? '').startsWith('/api/')) return next();
+      return send(res, 400, { error: 'Bad request: the URL is not valid.' });
+    }
     const url = full.pathname;
     if (!url.startsWith('/api/')) return next();
     const cfg = getConfig();
@@ -482,10 +489,17 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
           throw new HttpError(409, a.status === 'expired' ? 'This approval was superseded by a newer revision of the answer.' : `This was already ${a.status}.`);
         };
         if (found.status !== 'pending') return settled(found);
-        if (decision === 'approved') {
-          // Server-side rules: the answer is rated first, and only an owner or a component manager approves.
-          if (!db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
-          requireRole(['app_owner', 'component_manager'], 'approve a change');
+        // Server-side rules: an owner or a component manager decides, and approving needs a rating first.
+        requireRole(['app_owner', 'component_manager'], `${decision === 'approved' ? 'approve' : 'decline'} a change`);
+        if (decision === 'approved' && !db.hasRating(found.revisionId, user.id)) throw new HttpError(403, 'Rate the answer before approving.');
+        // F19: a component manager decides only changes to components they manage, taken from the frozen
+        // payload (older approvals: the story's components); an owner decides any. A change that names no
+        // component is the owner's to decide.
+        if (!roles.includes('app_owner')) {
+          const targets = found.payload.components ?? (found.payload.storyKey ? db.getStory(found.payload.storyKey)?.components ?? [] : []);
+          if (targets.length === 0) throw new HttpError(403, 'This change names no component you manage; only an app owner can decide it.');
+          const foreign = targets.filter((name) => member.components.find((c) => c.name === name)?.managerId !== user.id);
+          if (foreign.length) throw new HttpError(403, `Only the manager of ${foreign.join(', ')} or an app owner can decide this change.`);
         }
         // The action runs from the payload frozen with the approval, inside the decision's transaction.
         const execute =

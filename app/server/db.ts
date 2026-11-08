@@ -241,6 +241,8 @@ export interface ApprovalPayload {
   storyKey?: string;
   artifactId?: string;
   cases?: { id: string; title: string; criterion: string; steps: string[] }[];
+  /** The components the change targets, frozen with the approval (F19: who may approve is decided from these). */
+  components?: string[];
 }
 export interface ApprovalOutcome {
   ok: boolean;
@@ -1338,7 +1340,10 @@ export function openDb(path: string) {
           if (b.kind !== 'approval') continue;
           const action = b.approval.action && ['open_pr', 'add_uat_cases', 'gitops_change'].includes(b.approval.action) ? b.approval.action : 'other';
           const uat = a.artifact?.kind === 'uat' && b.approval.artifactId === a.artifact.id ? a.artifact : null;
-          const payload: ApprovalPayload = action === 'add_uat_cases' && uat ? { storyKey: uat.ticketKey, artifactId: uat.id, cases: uat.proposedCases } : {};
+          const payload: ApprovalPayload =
+            action === 'add_uat_cases' && uat
+              ? { storyKey: uat.ticketKey, artifactId: uat.id, cases: uat.proposedCases, components: (q.components.all(uat.ticketKey) as { name: string }[]).map((x) => x.name) }
+              : {};
           ap.run(id, revisionId, action, JSON.stringify({ artifactId: b.approval.artifactId ?? null, storyKey: uat?.ticketKey ?? null }), JSON.stringify(b.approval.facts), JSON.stringify(payload), t);
         }
         if (a.workflowRunId) db.prepare('UPDATE workflow_runs SET revision = ? WHERE id = ?').run(revision, a.workflowRunId);

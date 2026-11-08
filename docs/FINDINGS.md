@@ -38,3 +38,14 @@ external systems (GitHub Actions, a real sign-in proxy, a paid model); those are
 | UI refinements: scope selector in the chrome, home entry points from real work, plain nav labels, inactive Share/notification controls removed, clickable citations with build/version and freshness, phone chat/report tabs, honest not-connected/empty/loading/error states | Done | `src/components/TopBar.tsx`, `src/pages/Home.tsx` (+ `GET /api/home`), `src/components/Sidebar.tsx`, `src/pages/Chat.tsx`, `src/pages/AppContext.tsx` | Browser `e2e/branding.py`, screenshots `docs/brand/ui-home-light.png`, `ui-home-dark.png`, `ui-report-phone.png`, `ui-chat-phone.png` |
 
 Totals: 185 unit and API tests across 14 files (`npm test`); 5 browser scripts, 73 checks (`./e2e/run.sh`), all passing on 8 November 2026 against a fresh database, the repository's workspace and no model key.
+
+## Follow-up review (8 November 2026): F18–F22 and residual defects
+
+The scheduled follow-up review appended to `docs/CLAUDE_DEVELOPMENT_BRIEF.md` re-verified F01–F17 against
+`ceb814e` and recorded five new findings plus residual cases under existing IDs. This section tracks them
+with the same columns; rows are added as each is fixed. Statuses as above.
+
+| # | Finding | Status | Files changed | Regression test | Verification |
+|---|---|---|---|---|---|
+| F18 | A malformed static URL crashes the standalone API process | Fixed and verified | `server/static.ts` (new: `requestListener`, `serveStatic`; a bad request line gets 400, a rejected handler 500, a vanished file 404), `server/main.ts` (uses it), `server/api.ts` (an unparsable URL is answered with 400 instead of thrown) | `server/static.test.ts` (2) | `GET /%` and `GET /%E0%A4%A` → 400; `/api/health`, a hashed asset (immutable cache header) and the SPA fallback still answer afterwards; a handler that throws → 500 twice in a row; no built front end → 404. The listener catches synchronous and asynchronous failures |
+| F19 | Component managers can approve another manager's component changes | Fixed and verified | `server/db.ts` (`ApprovalPayload.components` frozen from the story's components when the approval is created), `server/api.ts` (decision route: owner or component manager for approve **and** decline; a component manager must manage every target component; a change with no component is the owner's) | `server/api.test.ts` › F19 (2) | checkoutservice reassigned to Ram: Sourav's approve and decline → 403 naming the component, no manual test written, approval still pending, no `approval.*` audit row; Ram approves → 200. Mixed ownership (checkoutservice + frontend) → 403 for Sourav; a story with no component → 403 for Sourav, 200 for Ram; Sourav still decides his own component's change. Older approvals without frozen components fall back to the story's current components |

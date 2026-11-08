@@ -605,3 +605,66 @@ describe('F05: a rejected secret is nowhere in the database', () => {
     expect(db.getChat('c1')?.title).toBe('Message removed');
   });
 });
+
+describe('F19: a decision is authorised per component, not just per role', () => {
+  const giveCheckoutToRam = () => db.raw.prepare("UPDATE components SET manager_id = 'u-ram' WHERE application_id = 'ABCD' AND name = 'checkoutservice'").run();
+
+  it('a manager of another component can neither approve nor decline; the owner can; the refusal writes nothing', async () => {
+    giveCheckoutToRam();
+    const sourav = api.as('u-sourav', 'ABCD');
+    const events = await sourav.run(uatRun('ABCD-1001', ids('1'))); // ABCD-1001 targets checkoutservice
+    const approvalId = firstApproval(events)!;
+    const revisionId = saved(events)!.revisionId;
+    expect(db.getApproval(approvalId)?.payload.components).toEqual(['checkoutservice']);
+    expect((await sourav.post(`/api/answers/${revisionId}/rating`, { stars: 5 })).status).toBe(200);
+
+    const refused = await sourav.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: string }).error).toContain('checkoutservice');
+    expect((await sourav.post(`/api/approvals/${approvalId}/decision`, { decision: 'declined' })).status).toBe(403);
+    expect(db.listTests('ABCD', { kind: 'manual' }).total).toBe(0);
+    expect(db.getApproval(approvalId)).toMatchObject({ status: 'pending', outcome: null });
+    expect(db.raw.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action LIKE 'approval.%'").get()).toEqual({ n: 0 });
+
+    const ram = api.as('u-ram', 'ABCD');
+    expect((await ram.post(`/api/answers/${revisionId}/rating`, { stars: 4 })).status).toBe(200);
+    const ok = await ram.post(`/api/approvals/${approvalId}/decision`, { decision: 'approved' });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { approval: { decidedBy: string } }).approval.decidedBy).toBe('Ram Kumar');
+    expect(db.listTests('ABCD', { kind: 'manual' }).total).toBeGreaterThan(0);
+  });
+
+  it('mixed ownership needs an owner; a story without a component needs an owner; a manager still decides their own', async () => {
+    // ABCD-1001 now targets checkoutservice (Ram's) and frontend (Sourav's).
+    giveCheckoutToRam();
+    const frontend = db.raw.prepare("SELECT id FROM components WHERE application_id = 'ABCD' AND name = 'frontend'").get() as { id: string };
+    db.raw.prepare('INSERT INTO story_components (story_key, component_id) VALUES (?, ?)').run('ABCD-1001', frontend.id);
+    const sourav = api.as('u-sourav', 'ABCD');
+    const mixed = await sourav.run(uatRun('ABCD-1001', ids('1')));
+    expect(db.getApproval(firstApproval(mixed)!)?.payload.components).toEqual(['checkoutservice', 'frontend']);
+    await sourav.post(`/api/answers/${saved(mixed)!.revisionId}/rating`, { stars: 5 });
+    const refused = await sourav.post(`/api/approvals/${firstApproval(mixed)}/decision`, { decision: 'approved' });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: string }).error).toContain('checkoutservice');
+
+    // No component at all: only the owner.
+    db.raw.prepare("DELETE FROM story_components WHERE story_key = 'ABCD-1001'").run();
+    const bare = await sourav.run(uatRun('ABCD-1001', ids('2')));
+    expect(db.getApproval(firstApproval(bare)!)?.payload.components).toEqual([]);
+    await sourav.post(`/api/answers/${saved(bare)!.revisionId}/rating`, { stars: 5 });
+    expect((await sourav.post(`/api/approvals/${firstApproval(bare)}/decision`, { decision: 'approved' })).status).toBe(403);
+    const ram = api.as('u-ram', 'ABCD');
+    await ram.post(`/api/answers/${saved(bare)!.revisionId}/rating`, { stars: 5 });
+    expect((await ram.post(`/api/approvals/${firstApproval(bare)}/decision`, { decision: 'approved' })).status).toBe(200);
+
+    // Their own component: the manager decides, as before.
+    db.raw.prepare('INSERT INTO story_components (story_key, component_id) VALUES (?, ?)').run('ABCD-1001', frontend.id);
+    const own = await sourav.run(uatRun('ABCD-1001', ids('3')));
+    const ownId = firstApproval(own);
+    if (ownId) {
+      await sourav.post(`/api/answers/${saved(own)!.revisionId}/rating`, { stars: 5 });
+      expect((await sourav.post(`/api/approvals/${ownId}/decision`, { decision: 'declined' })).status).toBe(200);
+    }
+    expect(db.listTests('ABCD', { kind: 'manual' }).total).toBeGreaterThan(0);
+  });
+});

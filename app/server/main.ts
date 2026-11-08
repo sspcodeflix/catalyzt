@@ -19,14 +19,15 @@
  *
  * One process, one SQLite file: this is a single-host deployment. Run one instance per database.
  */
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import { createApi, ingestTokensFromEnv, type Identity } from './api';
 import { bootstrap, reseed } from './bootstrap';
 import { configFromEnv } from './deepseek';
 import { modelsFromEnv, RetrievalService } from './retrieval';
+import { hasIndex, requestListener } from './static';
 import { LocalBlobStore } from './storage';
 
 /** KEY=VALUE lines from ./.env, for values not already in the environment. */
@@ -41,22 +42,6 @@ function loadDotEnv(env: NodeJS.ProcessEnv) {
     if (env[m[1]] === undefined) env[m[1]] = v;
   }
 }
-
-const TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.ico': 'image/x-icon',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.txt': 'text/plain; charset=utf-8',
-  '.map': 'application/json',
-};
 
 export function startServer(env: NodeJS.ProcessEnv = process.env) {
   loadDotEnv(env);
@@ -95,33 +80,10 @@ export function startServer(env: NodeJS.ProcessEnv = process.env) {
     },
   });
 
-  const index = staticDir && existsSync(join(staticDir, 'index.html')) ? join(staticDir, 'index.html') : null;
-  if (staticDir && !index) console.warn(`No built front end at ${staticDir} (run "npm run build"); serving the API only.`);
+  if (staticDir && !hasIndex(staticDir)) console.warn(`No built front end at ${staticDir} (run "npm run build"); serving the API only.`);
 
-  const server = createServer((req, res) => {
-    void api(req, res, () => {
-      // Not an API route: a built file, or the single-page app for any other GET.
-      if (!index || !staticDir || (req.method !== 'GET' && req.method !== 'HEAD')) {
-        res.statusCode = 404;
-        res.end('Not found');
-        return;
-      }
-      const url = new URL(req.url ?? '/', 'http://x');
-      const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
-      const file = join(staticDir, rel);
-      const inside = file.startsWith(staticDir);
-      const isFile = inside && existsSync(file) && statSync(file).isFile();
-      const target = isFile ? file : index;
-      const type = TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream';
-      res.statusCode = 200;
-      res.setHeader('Content-Type', type);
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      // Hashed assets never change; index.html must always be revalidated.
-      res.setHeader('Cache-Control', isFile && rel.includes('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
-      if (req.method === 'HEAD') return res.end();
-      createReadStream(target).pipe(res);
-    });
-  });
+  // API first, the built front end for the rest; a bad request line or a failed handler is answered, never thrown (F18).
+  const server = createServer(requestListener(api, staticDir));
 
   server.listen(port, host, () => {
     console.log(`Catalyzt API listening on http://${host}:${port} (identity: ${identity.mode}${identity.mode === 'proxy-header' ? ` via ${identity.header}` : ''}; database ${env.HORIZON_DB_PATH || 'data/horizon.db'})`);
