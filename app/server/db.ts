@@ -738,22 +738,29 @@ export function openDb(path: string) {
       return value;
 
       function compute() {
-      const sum = `COUNT(*) AS calls, COALESCE(SUM(m.prompt_tokens), 0) AS prompt, COALESCE(SUM(m.completion_tokens), 0) AS completion,
+      const sum = `COALESCE(SUM(m.calls), 0) AS calls, COALESCE(SUM(m.prompt_tokens), 0) AS prompt, COALESCE(SUM(m.completion_tokens), 0) AS completion,
                    COALESCE(SUM(m.prompt_tokens), 0) + COALESCE(SUM(m.completion_tokens), 0) AS total,
-                   SUM(CASE WHEN m.prompt_tokens IS NULL THEN 1 ELSE 0 END) AS unreported`;
-      const from = `FROM model_calls m LEFT JOIN workflow_runs w ON w.id = m.workflow_run_id WHERE (? IS NULL OR w.application_id = ?)`;
+                   COALESCE(SUM(m.unreported), 0) AS unreported`;
+      // Detail rows plus the daily totals that retention folded older detail into (scripts/retention.ts).
+      const ledger = `(SELECT w.application_id AS app, mc.agent, mc.model, mc.user_id, mc.created_at, 1 AS calls, mc.prompt_tokens, mc.completion_tokens,
+                              CASE WHEN mc.prompt_tokens IS NULL THEN 1 ELSE 0 END AS unreported
+                       FROM model_calls mc LEFT JOIN workflow_runs w ON w.id = mc.workflow_run_id WHERE (? IS NULL OR w.application_id = ?)
+                       UNION ALL
+                       SELECT application_id, agent, model, user_id, day || 'T00:00:00.000Z', calls, prompt_tokens, completion_tokens, unreported
+                       FROM model_call_daily WHERE (? IS NULL OR application_id = ?))`;
+      const from = `FROM ${ledger} m WHERE 1`;
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
       type Tot = { calls: number; prompt: number; completion: number; total: number; unreported: number };
       return {
-        allTime: db.prepare(`SELECT ${sum} ${from}`).get(app, app) as Tot,
-        today: db.prepare(`SELECT ${sum} ${from} AND m.created_at >= ?`).get(app, app, startOfDay.toISOString()) as Tot,
-        byAgent: db.prepare(`SELECT m.agent AS key, ${sum} ${from} GROUP BY m.agent ORDER BY total DESC`).all(app, app) as (Tot & { key: string })[],
-        byModel: db.prepare(`SELECT m.model AS key, ${sum} ${from} GROUP BY m.model ORDER BY total DESC`).all(app, app) as (Tot & { key: string })[],
+        allTime: db.prepare(`SELECT ${sum} ${from}`).get(app, app, app, app) as Tot,
+        today: db.prepare(`SELECT ${sum} ${from} AND m.created_at >= ?`).get(app, app, app, app, startOfDay.toISOString()) as Tot,
+        byAgent: db.prepare(`SELECT m.agent AS key, ${sum} ${from} GROUP BY m.agent ORDER BY total DESC`).all(app, app, app, app) as (Tot & { key: string })[],
+        byModel: db.prepare(`SELECT m.model AS key, ${sum} ${from} GROUP BY m.model ORDER BY total DESC`).all(app, app, app, app) as (Tot & { key: string })[],
         byUser: db
-          .prepare(`SELECT COALESCE(u.name, 'Unknown') AS key, ${sum} FROM model_calls m LEFT JOIN workflow_runs w ON w.id = m.workflow_run_id LEFT JOIN users u ON u.id = m.user_id WHERE (? IS NULL OR w.application_id = ?) GROUP BY u.id ORDER BY total DESC`)
-          .all(app, app) as (Tot & { key: string })[],
-        byDay: db.prepare(`SELECT substr(m.created_at, 1, 10) AS key, ${sum} ${from} GROUP BY key ORDER BY key DESC LIMIT 14`).all(app, app) as (Tot & { key: string })[],
+          .prepare(`SELECT COALESCE(u.name, 'Unknown') AS key, ${sum} FROM ${ledger} m LEFT JOIN users u ON u.id = m.user_id GROUP BY u.id ORDER BY total DESC`)
+          .all(app, app, app, app) as (Tot & { key: string })[],
+        byDay: db.prepare(`SELECT substr(m.created_at, 1, 10) AS key, ${sum} ${from} GROUP BY key ORDER BY key DESC LIMIT 14`).all(app, app, app, app) as (Tot & { key: string })[],
       };
       }
     },
