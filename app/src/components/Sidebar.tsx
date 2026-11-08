@@ -141,7 +141,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
       {/* Sign in as: stands in for SSO in this preview. The server trusts the choice; see server/api.ts. */}
       <Dropdown.Root>
         <Dropdown.Trigger asChild>
-          <button type="button" className="me mebtn" aria-label="Sign in as someone else, or switch application">
+          <button type="button" className="me mebtn">
             <span className="avatar">{me?.user.initials ?? '…'}</span>
             <span style={{ minWidth: 0, textAlign: 'left' }}>
               <span className="mename">{me?.user.name ?? (session.error ? 'Not signed in' : 'Loading…')}</span>
@@ -149,6 +149,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                 {me?.app ? `${me.app.name} · ${roleOf(me.app.roles)}` : session.error ? session.error : ''}
               </span>
             </span>
+            <span className="sr">. Sign in as someone else, or switch application</span>
             <Icon name="down" small />
           </button>
         </Dropdown.Trigger>

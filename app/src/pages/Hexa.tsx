@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import { Link, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 
 import { Icon } from '../components/Icon';
+import { onTabListKey } from '../components/tabKeys';
 import { api, hexaChanged, ORIGIN, PURPOSE, RESULT, runSources, type RunRow, type ScanRow, type TestRow, type TestsResponse } from '../lib/hexa';
 import { StaleScopeError, withSession } from '../lib/session';
 import { relTime } from './Tickets';
@@ -80,7 +81,7 @@ export function Hexa() {
             </div>
           )}
 
-          <div className="tabs" role="tablist" aria-label="Hexa">
+          <div className="tabs" role="tablist" aria-label="Hexa" onKeyDown={onTabListKey}>
             {(
               [
                 ['manual', 'Manual tests'],
@@ -501,7 +502,7 @@ function Runs() {
     <>
       <section className="card scanbox" aria-labelledby={`${id}-h`}>
         <div className="sechead">
-          <h3 id={`${id}-h`}>Collect from GitHub Actions</h3>
+          <h3 id={`${id}-h`} aria-level={2}>Collect from GitHub Actions</h3>
           <span>Merge-commit runs on the default branch</span>
         </div>
         <form className="field-row" onSubmit={sync}>

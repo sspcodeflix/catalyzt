@@ -179,7 +179,7 @@ function TokenUsage() {
   return (
     <section className="card usage" aria-labelledby="ag-usage">
       <div className="sechead">
-        <h3 id="ag-usage">Token usage</h3>
+        <h3 id="ag-usage" aria-level={2}>Token usage</h3>
         <span>Every model call is recorded</span>
       </div>
       <div className="usetiles">

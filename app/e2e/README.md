@@ -13,6 +13,15 @@ database, no model key (rules routing), the repository's `.myworkspace`.
   reported conflict excluded until the owner decides, citations that open the passage.
 - `branding.py`: Catalyzt title, mark and wordmark, scope switcher, real home entry points, phone chat/report tabs;
   writes screenshots to `docs/brand/`.
+- `recovery.py`: recovery and race paths through Playwright routes: a lost `saved` event or a stream cut after
+  `done` is recovered by reading the chat back (ratable, approval ids, one run); a cut before `done` and Stop
+  claim nothing; a missing chat is found after switching to its application; a late rating, a late old-scope
+  recents list and an upload during a switch do not land in the new revision or scope.
+- `a11y.py`: axe-core (from `node_modules`, a devDependency) on Home, a chat with its UAT report, Jira Stories,
+  the three Hexa tabs, App Context and a source panel, Huddle and an item, Agents and an open menu, in light and
+  dark at 1360 and 390 px; fails on any serious or critical violation (`A11Y_REPORT=1` prints all of them). Then a
+  keyboard-only pass: skip link, a visible focus indicator on every Tab stop (Home, chat with report), nav, ask,
+  rate with arrows + Enter/Space, approve, person and scope menus, theme, Hexa tabs with arrow keys.
 
 ```bash
 pip install playwright && playwright install chromium

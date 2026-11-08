@@ -34,6 +34,12 @@ with sync_playwright() as p:
     check('nav labels are plain', 'Hexa · Tests' in page.inner_text('.nav') and 'Huddle · Decisions' in page.inner_text('.nav'))
     entry = page.inner_text('.entry')
     check('home entry points use real counts, not invented metrics', re.search(r'\d+ (story|stories) in the Jira filter', entry) is not None and ('runs failed' in entry or 'No pipeline runs recorded yet' in entry) and ('approval' in entry), entry[:200])
+    chips = page.locator('.tryrow .chip')
+    check('home keeps one example per capability as a compact row, not cards', chips.count() == 5 and page.locator('.caps').count() == 0, str(chips.count()))
+    first = chips.first.inner_text().strip()
+    chips.first.click()
+    check('an example fills the message box', page.input_value('.composer textarea') == first, first)
+    page.fill('.composer textarea', '')
     page.screenshot(path=str(SHOTS / 'ui-home-light.png'))
 
     page.click('header button[aria-label^="Switch to dark"]')

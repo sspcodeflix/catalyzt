@@ -43,11 +43,17 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      {/* Skip link: focus lands on the routed page, after the sidebar and the top bar. */}
+      <a className="skip" href="#content">
+        Skip to content
+      </a>
       <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       {drawerOpen && <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />}
       <main ref={mainRef} className="main">
         <TopBar onOpenSidebar={() => setDrawerOpen(true)} />
-        <Outlet />
+        <div id="content" className="content" tabIndex={-1}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );

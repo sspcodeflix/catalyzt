@@ -158,7 +158,7 @@ export function Tickets() {
                     </td>
                     <td className="hidem muted nowrap">{relTime(t.updated)}</td>
                     <td className="r">
-                      <button type="button" className="btn small" onClick={() => analyse(t)} aria-label={`${t.uat.chatId ? 'Open UAT analysis for' : 'Analyse for UAT:'} ${t.key}`}>
+                      <button type="button" className="btn small" onClick={() => analyse(t)} aria-label={`${t.uat.chatId ? 'Open analysis' : 'Analyse for UAT'}: ${t.key}`}>
                         <Icon name="target" small />
                         <span className="hidem">{t.uat.chatId ? 'Open analysis' : 'Analyse for UAT'}</span>
                       </button>
