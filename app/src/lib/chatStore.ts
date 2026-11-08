@@ -241,7 +241,8 @@ export function startUatChat(ticketKey: string, scope: Scope): string {
   const id = crypto.randomUUID();
   createChat(id, {
     text: `Is ${ticketKey} ready for UAT?`,
-    agent: 'analysis',
+    // Auto, so follow-ups in the chat (write the cases, explain a criterion) reach the right agent.
+    agent: 'auto',
     scope,
     testType: 'uat',
     testTypeSource: 'user',

@@ -426,3 +426,39 @@ describe('secret boundary before the model (F05)', () => {
     expect(agents.find((a) => a.agent === 'Analysis agent')?.steps.some((s) => /^Withheld 1 source that contains/.test(s.label))).toBe(true);
   });
 });
+
+describe('follow-ups in a UAT chat (the readiness report is not the answer to everything)', () => {
+  it('"write the proposed UAT cases" in a chat fixed to Test analysis goes to the Authoring agent with the story evidence', async () => {
+    const db = fixtureDb();
+    seedRefundTests(db);
+    // The router, told nothing is fixed, still says analysis: the words decide.
+    const f = stubDeepSeek({ ...ok, capability: 'analysis', test_type: 'uat', tickets: ['ABCD-1001'] }, ['Here are the cases. ']);
+    const { agents } = await run(req(db, 'can you write the proposed UAT cases ?', { agent: 'analysis', testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1001'] }), cfg, db, true);
+    expect(agents.map((a) => a.agent)).toContain('Authoring agent');
+    expect(agents.map((a) => a.agent)).not.toContain('UAT analyst');
+    const router = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('Reply with json'))!;
+    expect(router).not.toContain('The user chose the capability');
+    const stream = f.mock.calls.map((c) => String((c[1] as RequestInit).body)).find((b) => b.includes('"stream":true'))!;
+    expect(stream).toContain('Hexa · ABCD-1001');
+  });
+
+  it('a readiness question still gets the report; another question about the story gets the Analysis agent', async () => {
+    const db = fixtureDb();
+    stubDeepSeek({ ...ok, capability: 'analysis', test_type: 'uat', tickets: ['ABCD-1003'] }, ['Because it is In Progress. ']);
+    const again = await run(req(db, 'Is ABCD-1003 ready for UAT now?', { agent: 'analysis', testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1003'] }), cfg, db);
+    expect(again.agents.map((a) => a.agent)).toContain('UAT analyst');
+    const why = await run(req(db, 'Explain why it is not a UAT candidate', { agent: 'analysis', testType: 'uat', testTypeSource: 'user', tickets: ['ABCD-1003'] }), cfg, db);
+    expect(why.agents.map((a) => a.agent)).toContain('Analysis agent');
+    expect(why.agents.map((a) => a.agent)).not.toContain('UAT analyst');
+  });
+
+  it('classifies requests', async () => {
+    const { AUTHORING_REQUEST, isReadinessRequest } = await import('./workflow');
+    expect(AUTHORING_REQUEST.test('can you write the proposed UAT cases ?')).toBe(true);
+    expect(AUTHORING_REQUEST.test('Draft test steps for AC2')).toBe(true);
+    expect(AUTHORING_REQUEST.test('Is ABCD-1004 ready for UAT?')).toBe(false);
+    expect(isReadinessRequest('Is ABCD-1004 ready for UAT?', ['ABCD-1004'])).toBe(true);
+    expect(isReadinessRequest('ABCD-1004', ['ABCD-1004'])).toBe(true);
+    expect(isReadinessRequest('Explain why it is not a UAT candidate', ['ABCD-1004'])).toBe(false);
+  });
+});

@@ -81,10 +81,16 @@ export function hexaEvidence(db: HorizonDb, app: string, req: { components: stri
     const story = db.getStory(key);
     if (!story || story.applicationId !== app) continue;
     const cov = db.coverageFor(key);
-    const lines = cov.map((c, i) => `AC${i + 1} (${story.acceptanceCriteria[i]}): ${c.status} — ${c.evidence}${c.tests.length ? ` [${c.tests.map((t) => `${t.title} · ${t.kind} · ${t.result}`).join('; ')}]` : ''}`);
+    const lines = cov.map((c, i) => `AC${i + 1} (${story.acceptanceCriteria[i]}): ${c.status} — ${c.evidence}${c.tests.length ? ` [${c.tests.map((t) => `${t.id} ${t.title} · ${t.kind} · ${t.result}`).join('; ')}]` : ''}`);
+    // The steps of the manual tests already linked, so a request to write cases refines them rather than duplicating them.
+    const manual = [...new Map(cov.flatMap((c) => c.tests.filter((t) => t.kind !== 'automated')).map((t) => [t.id, t])).values()].slice(0, 6);
+    const stepLines = manual.flatMap((t) => {
+      const steps = db.getTest(t.id)?.steps ?? [];
+      return steps.length ? [`${t.id} "${t.title}" steps: ${steps.slice(0, 8).map((s, i) => `${i + 1}. ${s.description.replace(/\s+/g, ' ').slice(0, 160)}`).join(' ')}`] : [];
+    });
     out.push({
       title: `Hexa · ${key}`,
-      text: `${key} "${story.summary}" (${story.status}${story.fixVersion ? `, ${story.fixVersion}` : ''}), components ${story.components.join(', ') || 'none'}. Readiness per acceptance criterion, against the target build of each linked test's repository:\n${lines.join('\n')}`,
+      text: `${key} "${story.summary}" (${story.status}${story.fixVersion ? `, ${story.fixVersion}` : ''}), components ${story.components.join(', ') || 'none'}. Readiness per acceptance criterion, against the target build of each linked test's repository:\n${lines.join('\n')}${stepLines.length ? `\nExisting manual tests linked to this story:\n${stepLines.join('\n')}` : ''}`,
       detail: `${key} · readiness per criterion`,
       href: `/tickets/${key}`,
     });

@@ -45,6 +45,22 @@ const CAP_LABEL: Record<Capability, string> = {
   security: 'Security',
 };
 
+/** "Write the proposed UAT cases", "draft test steps for AC2", "generate automation": authoring, whatever the chat started as. */
+export const AUTHORING_REQUEST = /\b(write|draft|generate|create|author|prepare|propose|produce|add)\b[^.?!]{0,40}?\b(test ?cases?|tests?|uat cases?|cases|scenarios?|test steps|steps|scripts?|automation|gherkin|feature files?)\b/i;
+const READINESS_WORDS = /\b(ready|readiness|sign[- ]?off|uat (status|check|analysis|report)|analy[sz]e|re-?analy[sz]e|check (again|it)|coverage|covered|status)\b/i;
+const KEY = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+
+/**
+ * Whether a request asks for the readiness report itself: it uses readiness words, or it is little more
+ * than the story key ("ABCD-1004", "check ABCD-1004"). Anything else about the story is a question for
+ * the Analysis agent.
+ */
+export function isReadinessRequest(text: string, tickets: string[]): boolean {
+  if (READINESS_WORDS.test(text)) return true;
+  const rest = text.replace(KEY, ' ').replace(/[^A-Za-z]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  return (tickets.length > 0 || KEY.test(text)) && rest.length <= 3;
+}
+
 function describe(i: Intent) {
   return [CAP_LABEL[i.capability], i.testType && testTypeLabel(i.testType), ...i.tickets, ...i.components].filter(Boolean).join(' · ');
 }
@@ -220,12 +236,16 @@ export async function runWorkflow(
     // any turn, whoever wrote it, that holds what looks like a secret (F05).
     req = { ...req, history: req.history.filter((h) => (h.role === 'user' ? checkInput(h.text).allowed : !containsSecret(h.text))) };
 
+    // A request to write test cases is authoring, even in a chat that started as a UAT analysis (whose
+    // capability stays "Test analysis"): the words of this message decide, not the chat's first request.
+    const wantsAuthoring = AUTHORING_REQUEST.test(req.text);
+
     // 2. Router: intent, plus the model's own policy check.
     const intentReq: IntentRequest = {
       text: req.text,
       tickets: req.tickets,
       components: req.components,
-      fixedCapability: req.agent === 'auto' ? null : req.agent,
+      fixedCapability: req.agent === 'auto' || (req.agent === 'analysis' && wantsAuthoring) ? null : req.agent,
       fixedTestType: req.testTypeSource === 'user' ? req.testType : null,
       rulesTestType: req.testTypeSource === 'user' ? null : req.testType,
       history: req.history,
@@ -267,6 +287,7 @@ export async function runWorkflow(
       intent = rulesIntent(req);
       rules({ label: 'Read the request with rules', detail: `${describe(intent)} · DeepSeek not configured` });
     }
+    if (wantsAuthoring && intent.capability === 'analysis') intent = { ...intent, capability: 'authoring' };
     emit({ type: 'intent', intent });
 
     // 3a. Clarifier: the router was unsure, so ask rather than guess.
@@ -287,7 +308,10 @@ export async function runWorkflow(
     // 3b. UAT analyst: tools over Jira and test evidence, no model needed for the facts. When the
     //     person chose another capability themselves (say, authoring tests for the story), or Auto
     //     resolved the request to one (F21), that stands and the specialist gets the ticket as evidence.
-    const analysisWanted = req.agent === 'analysis' || (req.agent === 'auto' && intent.capability === 'analysis');
+    //     The UAT analyst's report answers a readiness question; any other analysis request about the
+    //     story (explain this criterion, why is it not a candidate) goes to the Analysis agent with the
+    //     report's evidence, so a follow-up is answered instead of repeating the report.
+    const analysisWanted = intent.capability === 'analysis' && (req.agent === 'analysis' || req.agent === 'auto') && !wantsAuthoring && isReadinessRequest(req.text, req.tickets);
     const ticket = intent.testType === 'uat' && analysisWanted ? intent.tickets.map((k) => req.syncedTickets.find((t) => t.key === k)).find(Boolean) : undefined;
     if (ticket) {
       router.finish('done', { result: `Assigned to the UAT analyst: ${ticket.key}`, ...routerUsage });
