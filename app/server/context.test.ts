@@ -20,8 +20,9 @@ const user = (db: ReturnType<typeof fixtureWithDocs>['db'], id: string) => db.ge
 describe('passages', () => {
   it('splits documents into paragraphs with locators and merges short ones', () => {
     const chunks = chunkDocs([{ path: 'README.md', text: SHOP_README }, { path: 'docs/refunds.md', text: REFUNDS_DOC }]);
-    expect(chunks.map((c) => c.locator)).toEqual(['README.md ¶1', 'docs/refunds.md ¶1']);
-    expect(chunks[0].text).toContain('Partial refunds are allowed for 45 days');
+    // By section now: the README's opening is an overview passage; its short Refunds and Running sections are joined, each with its heading path.
+    expect(chunks.map((c) => [c.locator, c.kind])).toEqual([['README.md ¶1', 'overview'], ['README.md ¶2', 'guide'], ['docs/refunds.md ¶1', 'guide']]);
+    expect(chunks[1].text).toBe('## Shop › Refunds\nPartial refunds are allowed for 45 days from settlement. A refund above the original amount is rejected.\n\n## Shop › Running the tests\nRun go test ./... from the repository root.');
     expect(chunkDocs([{ path: 'a.md', text: 'tiny' }])).toEqual([]);
   });
 
@@ -98,14 +99,15 @@ describe('seeding from the workspace', () => {
     const sources = listSources(db, 'ABCD');
     expect(sources.map((s) => [s.type, s.status, s.chunks])).toEqual([
       ['Jira', 'ready', 0],
-      ['Repository', 'indexed', 2],
+      ['Repository', 'indexed', 4],
     ]);
     const repo = sources.find((s) => s.type === 'Repository')!;
-    expect(repo).toMatchObject({ title: 'shop', trust: 'Code', version: 1, content: '2 passages from 2 documentation files' });
-    expect(listChunks(db, 'ABCD', repo.id).map((c) => c.locator)).toEqual(['README.md ¶1', 'docs/refunds.md ¶1']);
+    expect(repo).toMatchObject({ title: 'shop', trust: 'Code', version: 1, content: '4 passages from 2 documentation files' });
+    // The repository card leads, then the README by section, then the docs.
+    expect(listChunks(db, 'ABCD', repo.id).map((c) => [c.locator, c.kind])).toEqual([['Overview', 'overview'], ['README.md ¶1', 'overview'], ['README.md ¶2', 'guide'], ['docs/refunds.md ¶1', 'guide']]);
     // IBGM has no repositories: only its Jira feed.
     expect(listSources(db, 'IBGM').map((s) => s.type)).toEqual(['Jira']);
-    expect(seedContext(db, ws)).toMatchObject({ repos: 1, indexed: 1, chunks: 2, jira: 2 });
+    expect(seedContext(db, ws)).toMatchObject({ repos: 1, indexed: 1, chunks: 4, jira: 2 });
     expect(listSources(db, 'ABCD')).toHaveLength(2);
   });
 
@@ -177,7 +179,7 @@ describe('retrieval', () => {
   it('"test a question" shows what would and would not be used, and why', async () => {
     const { db } = fixtureWithDocs();
     const { results, considered } = await testQuestion(db, app(db, 'ABCD'), 'partial refunds 45 days');
-    expect(considered).toMatchObject({ passages: 2, stories: 3 });
+    expect(considered).toMatchObject({ passages: 4, stories: 3 });
     expect(results[0]).toMatchObject({ used: true, reason: null });
     expect(results.some((r) => r.where.startsWith('Jira · ABCD-1001'))).toBe(true);
   });
@@ -416,7 +418,7 @@ describe('passages are immutable history (F20)', () => {
     expect(syncSource(db, 'ABCD', repo.id).source.version).toBe(2);
     // The cited version is still there, unchanged, at the same place.
     const v1 = listChunks(db, 'ABCD', repo.id, 1);
-    expect(v1.find((c) => c.seq === 1)).toMatchObject({ text: expect.stringContaining('45 days'), version: 1, retiredAt: expect.any(String) });
+    expect(v1.find((c) => c.locator === 'docs/refunds.md ¶1')).toMatchObject({ text: expect.stringContaining('45 days'), version: 1, retiredAt: expect.any(String) });
     expect(v1.find((c) => c.id === first.chunkId)).toBeDefined();
     // The current passages are version 2, and only they are retrieved or counted.
     const current = listChunks(db, 'ABCD', repo.id);

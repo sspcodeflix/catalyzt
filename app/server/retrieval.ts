@@ -249,6 +249,12 @@ export interface Candidate {
    * candidate is never embedded (a Jira story or Hexa test row) and only keywords and the reranker see it.
    */
   vector?: Float32Array | null;
+  /**
+   * How much this candidate counts for the question, as a multiplier on its relevance (1 when absent):
+   * build, CI and history passages give way to documentation unless the question is about them, and
+   * overview passages are preferred for overview questions (see extract.ts kindPrior).
+   */
+  prior?: number;
 }
 
 const embeddable = (c: Candidate) => c.vector !== undefined;
@@ -300,6 +306,8 @@ export const RERANK_CANDIDATES = 20;
  * cannot rescue what it never reads. Measured with scripts/retrieval-eval.ts (F24 follow-up).
  */
 export const RERANK_VECTOR_SLOTS = 5;
+/** The relevance a preferred passage (see Candidate.prior) is given at least. */
+const PREFERRED_FLOOR = 0.5;
 /** Cosine below this says nothing about relevance for MiniLM-class models. */
 const VECTOR_FLOOR = 0.15;
 /**
@@ -447,6 +455,8 @@ async function finish<T extends Candidate>(models: RetrievalModels, query: strin
   const reranker = opts.rerank === false ? null : models.reranker;
   const top = order.slice(0, RERANK_CANDIDATES);
   if (reranker) for (const i of byVec.slice(0, RERANK_VECTOR_SLOTS)) if (!top.includes(i)) top.push(i);
+  // Preferred passages (an overview for an overview question) always reach the reranker, a few at most.
+  for (const i of idx.filter((i) => (cands[i].prior ?? 1) > 1).sort((a, b) => (cands[b].prior ?? 1) - (cands[a].prior ?? 1)).slice(0, 6)) if (!top.includes(i)) top.push(i);
   let rerankScores: number[] | null = null;
   if (reranker && top.length > 0) {
     try {
@@ -464,10 +474,17 @@ async function finish<T extends Candidate>(models: RetrievalModels, query: strin
     // the question's subject (strong keyword and vector agreement) is still worth giving the model
     // when nothing answers it outright, so it can say what the sources do and do not state.
     const lexSem = vs[i] == null ? kw[i] : (kw[i] + vs[i]) / 2;
-    const relevance = rr != null ? Math.max(rerankRelevance(rr), TOPICAL_WEIGHT * lexSem) : Math.max(kw[i], vs[i] ?? 0);
+    const base = rr != null ? Math.max(rerankRelevance(rr), TOPICAL_WEIGHT * lexSem) : Math.max(kw[i], vs[i] ?? 0);
+    const prior = cands[i].prior ?? 1;
+    // A preferred passage (an overview for an overview question) is relevant by construction: it is
+    // what the question asks for, even when it shares no word with it.
+    const relevance = Math.min(1, prior > 1 ? Math.max(base * prior, PREFERRED_FLOOR) : base * prior);
     return { item: cands[i], relevance: Math.round(relevance * 1000) / 1000, keyword: kw[i], vector: vs[i], rerank: rr };
   });
-  if (rerankScores) ranked.sort((a, b) => b.relevance - a.relevance || a.item.where.localeCompare(b.item.where));
+  // Preferred passages lead (they are what an overview question asks for); the rest by relevance.
+  // A repository card (prior above 1.5) leads an ordinary overview passage, so every repository of the application is introduced first.
+  const preferred = (r: Ranked<T>) => ((r.item.prior ?? 1) > 1.5 ? 2 : (r.item.prior ?? 1) > 1 ? 1 : 0);
+  if (rerankScores || cands.some((c) => (c.prior ?? 1) !== 1)) ranked.sort((a, b) => preferred(b) - preferred(a) || b.relevance - a.relevance || a.item.where.localeCompare(b.item.where));
   return { ranked: ranked.filter((r) => r.relevance >= opts.minRelevance).slice(0, opts.limit), mode, reranked: !!rerankScores, embedded, total };
 }
 

@@ -39,7 +39,9 @@ with sync_playwright() as p:
     page.click('.panel [role=tab]:has-text("Passages")')
     page.wait_for_selector('.panel .chunk')
     n_chunks = page.locator('.panel .chunk').count()
-    check('repository passages come from README/docs', n_chunks > 0 and 'README' in page.inner_text('.panel .chunk header'), str(n_chunks))
+    headers = page.locator('.panel .chunk header').all_inner_texts()
+    # The repository card leads (content extraction), then the README by section.
+    check('repository passages come from README/docs', n_chunks > 0 and 'Overview' in headers[0] and any('README' in h for h in headers), str(headers[:3]))
 
     # 3. Test a question against the context.
     page.click('.panel [role=tab]:has-text("Test a question")')

@@ -17,6 +17,7 @@ import { join, relative, sep } from 'node:path';
 
 import { containsSecret } from '../src/lib/guardrails';
 import { extractText, MAX_ATTACHMENT_BYTES } from './attachments';
+import { extractPassages, kindPrior, OVERVIEW_QUESTION, repositoryCard, type Passage, type PassageKind } from './extract';
 import type { AppRecord, HorizonDb, PersonRecord } from './db';
 import { createItem } from './huddle';
 import { embeddingCounts, embedQuery, forgetCounts, fromBlob, NO_MODELS, rank, textSha, vectorCandidates, words, type Candidate, type RetrievalMode, type RetrievalModels } from './retrieval';
@@ -40,10 +41,7 @@ const MAX_DOC_BYTES = 512 * 1024;
 /** Build and CI files read from a clone (R19): how many, how large, and how many passages each. */
 const MAX_BUILD_FILES = 40;
 const MAX_BUILD_BYTES = 64 * 1024;
-const MAX_CHUNKS_PER_BUILD_FILE = 12;
 const MAX_CHUNKS_PER_SOURCE = 400;
-const MIN_CHUNK_CHARS = 40;
-const TARGET_CHUNK_CHARS = 900;
 /** The exclusion reason of a passage that holds what looks like a secret; a decision never lifts it (F05). */
 export const SECRET_REASON = 'Contains what looks like a password, key or token';
 
@@ -93,6 +91,8 @@ export interface ChunkView {
   version: number;
   /** Set when the passage was replaced by a later version (kept for citations). */
   retiredAt: string | null;
+  /** overview, guide, api, build, ci, history or requirement; null for passages from before extraction. */
+  kind: string | null;
 }
 
 export interface CompareRow {
@@ -222,6 +222,7 @@ export function listChunks(db: HorizonDb, app: string, sourceId: string, version
     excludedReason: nullable(c.excluded_reason),
     version: Number(c.source_version ?? 1),
     retiredAt: nullable(c.retired_at),
+    kind: nullable(c.kind),
   }));
 }
 
@@ -242,74 +243,12 @@ export interface Doc {
 }
 
 /**
- * Splits documents into passages: paragraphs (blank-line separated, line breaks kept), short ones merged with the
- * next up to about 900 characters, anything under 40 characters dropped. Locators are
- * "<path> ¶<n>" so a citation can be opened at the passage.
+ * The passages of a source's documents, through content extraction (server/extract.ts): cleaned,
+ * split by section with their headings, build and CI files summarised, history capped, duplicates
+ * dropped, ordered by kind. Locators stay "<path> ¶<n>" so a citation opens the passage.
  */
-export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE): { locator: string; text: string }[] {
-  const out: { locator: string; text: string }[] = [];
-  for (const d of docs) {
-    if (d.build) {
-      for (const c of chunkLines(d)) {
-        out.push(c);
-        if (out.length >= max) return out;
-      }
-      continue;
-    }
-    let n = 0;
-    let buf = '';
-    const flush = () => {
-      // Line breaks are kept (R20): a Markdown table or list stays readable on the passage page.
-      const t = buf
-        .split('\n')
-        // Leading indentation is kept (code blocks, nested lists); runs of spaces inside a line are not.
-        .map((l) => l.replace(/\s+$/, '').replace(/(\S)[^\S\n]+/g, '$1 '))
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      buf = '';
-      if (t.length < MIN_CHUNK_CHARS) return;
-      n++;
-      out.push({ locator: `${d.path} ¶${n}`, text: t.length > 2000 ? `${t.slice(0, 1997)}…` : t });
-    };
-    for (const para of d.text.split(/\r?\n\s*\r?\n/)) {
-      const p = para.trim();
-      if (!p) continue;
-      if (buf && buf.length + p.length > TARGET_CHUNK_CHARS) flush();
-      buf = buf ? `${buf}\n\n${p}` : p;
-      if (buf.length >= TARGET_CHUNK_CHARS) flush();
-      if (out.length >= max) return out;
-    }
-    flush();
-    if (out.length >= max) return out;
-  }
-  return out;
-}
-
-/**
- * A build or CI file as passages: consecutive lines up to about 900 characters, indentation kept
- * (a pom.xml or a workflow reads by its layout), blank runs squeezed, at most a dozen per file so a
- * large manifest cannot crowd out the documentation.
- */
-function chunkLines(d: Doc): { locator: string; text: string }[] {
-  const out: { locator: string; text: string }[] = [];
-  let buf: string[] = [];
-  let len = 0;
-  const flush = () => {
-    const t = buf.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-    buf = [];
-    len = 0;
-    if (t.length < MIN_CHUNK_CHARS || out.length >= MAX_CHUNKS_PER_BUILD_FILE) return;
-    out.push({ locator: `${d.path} ¶${out.length + 1}`, text: t.length > 2000 ? `${t.slice(0, 1997)}…` : t });
-  };
-  for (const raw of d.text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+$/, '');
-    if (len && len + line.length > TARGET_CHUNK_CHARS) flush();
-    buf.push(line);
-    len += line.length + 1;
-  }
-  flush();
-  return out;
+export function chunkDocs(docs: Doc[], max = MAX_CHUNKS_PER_SOURCE, extra: Passage[] = []): Passage[] {
+  return extractPassages(docs, max, extra);
 }
 
 const DOC_NAME = /^(readme|changelog|changes|contributing|architecture|design|security|testing|api)(\.|$)/i;
@@ -383,8 +322,8 @@ export function collectDocs(cloneDir: string, maxFiles = MAX_DOC_FILES): Doc[] {
  * retrieval only sees current passages. Vectors of passages whose text is unchanged are carried
  * over, so only new text waits for the embedding job. Returns the chunk count.
  */
-function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string; text: string }[], at: number): { chunks: number; version: number; changed: boolean } {
-  const digest = sha(chunks.map((c) => `${c.locator}\n${c.text}`).join('\n\u0000'));
+function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string; text: string; kind?: PassageKind }[], at: number): { chunks: number; version: number; changed: boolean } {
+  const digest = sha(chunks.map((c) => `${c.kind ?? ''}\n${c.locator}\n${c.text}`).join('\n\u0000'));
   const cur = db.raw.prepare('SELECT version, sha256, (SELECT COUNT(*) FROM source_chunks c WHERE c.source_id = context_sources.id AND c.retired_at IS NULL) AS n FROM context_sources WHERE id = ?').get(sourceId) as { version: number; sha256: string | null; n: number };
   const changed = cur.sha256 !== digest;
   if (!changed && cur.n >= chunks.length) return { chunks: cur.n, version: cur.version, changed: false };
@@ -402,13 +341,13 @@ function indexSource(db: HorizonDb, sourceId: string, chunks: { locator: string;
     // The previous version stays, retired; a version written twice (first index of a source whose rows exist) is replaced.
     db.raw.prepare('UPDATE source_chunks SET retired_at = ? WHERE source_id = ? AND retired_at IS NULL AND source_version != ?').run(iso(at), sourceId, version);
     db.raw.prepare('DELETE FROM source_chunks WHERE source_id = ? AND source_version = ? AND retired_at IS NULL').run(sourceId, version);
-    const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const ins = db.raw.prepare('INSERT INTO source_chunks (id, source_id, locator, text, excluded_reason, seq, source_version, chars, text_sha, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insVec = db.raw.prepare('INSERT OR IGNORE INTO chunk_embeddings (chunk_id, model, dims, vector, text_sha, created_at) VALUES (?, ?, ?, ?, ?, ?)');
     chunks.forEach((c, i) => {
       const id = chunkId(sourceId, version, i + 1);
       const h = textSha(c.text);
       // F05: a passage that holds what looks like a secret is kept out of retrieval, whatever else is decided about it.
-      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? (containsSecret(c.text) ? SECRET_REASON : null), i + 1, version, c.text.length, h);
+      ins.run(id, sourceId, c.locator, c.text, kept.get(c.locator) ?? (containsSecret(c.text) ? SECRET_REASON : null), i + 1, version, c.text.length, h, c.kind ?? null);
       for (const v of byText.get(h) ?? []) insVec.run(id, v.model, v.dims, v.vector, h, iso(at));
     });
     db.raw.prepare('UPDATE context_sources SET sha256 = ?, version = ?, updated_at = ? WHERE id = ?').run(digest, version, iso(at), sourceId);
@@ -458,7 +397,20 @@ export function seedContext(db: HorizonDb, ws: Workspace, at = Date.now()) {
       const id = repoSourceId(team.id, repo.name);
       const parts = [repo.languages.length ? `Languages: ${repo.languages.join(', ')}` : '', repo.testFrameworks.length ? `Tests: ${repo.testFrameworks.join(', ')}` : ''].filter(Boolean);
       const docs = cloned ? collectDocs(cloneDir) : [];
-      const chunks = chunkDocs(docs);
+      // The repository card (what it is, what it is built with, which components live in it) leads the passages.
+      const card = repositoryCard(
+        {
+          name: repo.name,
+          github: repo.github,
+          description: (repo as { description?: string }).description ?? null,
+          note: repo.note ?? null,
+          languages: repo.languages,
+          testFrameworks: repo.testFrameworks,
+          components: team.components.filter((c) => c.repo === repo.name).map((c) => ({ name: c.name, path: c.path ?? null, manager: ws.people.find((p) => p.id === c.manager)?.name ?? null })),
+        },
+        docs,
+      );
+      const chunks = chunkDocs(docs, MAX_CHUNKS_PER_SOURCE, [card]);
       upsert.run({
         id,
         app: team.id,
@@ -474,10 +426,9 @@ export function seedContext(db: HorizonDb, ws: Workspace, at = Date.now()) {
         at: iso(at),
       });
       counts.repos++;
-      if (cloned) {
-        counts.indexed++;
-        counts.chunks += indexSource(db, id, chunks, at).chunks;
-      }
+      if (cloned) counts.indexed++;
+      // A scan-only repository still gets its card, so "what is juice-shop" has an answer.
+      counts.chunks += indexSource(db, id, chunks, at).chunks;
     }
     upsert.run({
       id: jiraSourceId(team.id),
@@ -598,7 +549,9 @@ export function syncSource(db: HorizonDb, app: string, id: string, at = Date.now
     if (!location || !existsSync(location)) notice = `${s.title} is scanned through GitHub only; there is nothing local to re-index.`;
     else {
       const docs = collectDocs(location);
-      const r = indexSource(db, id, chunkDocs(docs), at);
+      // The repository card is built at seed time from the team file; a sync keeps the current one.
+      const card = db.raw.prepare("SELECT locator, text, kind FROM source_chunks WHERE source_id = ? AND retired_at IS NULL AND kind = 'overview' AND locator = 'Overview'").get(id) as Passage | undefined;
+      const r = indexSource(db, id, chunkDocs(docs, MAX_CHUNKS_PER_SOURCE, card ? [card] : []), at);
       db.raw.prepare('UPDATE context_sources SET content = ? WHERE id = ?').run(describeDocs(docs, r.chunks), id);
       notice = `${s.title} synced: ${r.chunks} passage${r.chunks === 1 ? '' : 's'}${r.changed ? `, now version ${r.version}` : ', unchanged'}.`;
     }
@@ -688,6 +641,13 @@ function candidateRowids(db: HorizonDb, app: string, models: RetrievalModels, qu
     }
   }
   for (const rid of vectorCandidates(db, app, models.embedder, queryVector, VECTOR_CANDIDATES)) ids.add(rid);
+  // An overview question always considers the application's overview passages, whatever words it uses.
+  if (OVERVIEW_QUESTION.test(query)) {
+    const rows = db.raw
+      .prepare("SELECT c.rowid AS rid FROM source_chunks c JOIN context_sources s ON s.id = c.source_id WHERE s.application_id = ? AND c.retired_at IS NULL AND c.kind = 'overview' LIMIT 40")
+      .all(app) as { rid: number }[];
+    for (const r of rows) ids.add(r.rid);
+  }
   return [...ids];
 }
 
@@ -721,7 +681,7 @@ function candidates(db: HorizonDb, app: string, models: RetrievalModels, dims = 
   const model = models.embedder?.id ?? null;
   const rowids = question ? candidateRowids(db, app, models, question.query, question.queryVector) : null;
   if (rowids !== null && rowids.length === 0) return [];
-  const select = `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
+  const select = `SELECT c.id, c.seq, c.locator, c.text, c.excluded_reason, c.kind, s.id AS sid, s.title, s.type, s.status, s.version, s.scope_type, s.scope_ref,
          (SELECT 1 FROM conflicts k WHERE k.source_id = s.id AND k.status = 'open' LIMIT 1) AS conflicted,
          e.vector AS vector
        FROM source_chunks c JOIN context_sources s ON s.id = c.source_id
@@ -741,6 +701,8 @@ function candidates(db: HorizonDb, app: string, models: RetrievalModels, dims = 
     text: str(r.text),
     vector: usable(r.vector) ? fromBlob(r.vector) : null,
     reason: exclusionReason(r),
+    // The repository card is the strongest answer to an overview question.
+    prior: question ? kindPrior(nullable(r.kind), question.query) * (str(r.locator) === 'Overview' && OVERVIEW_QUESTION.test(question.query) ? 1.25 : 1) : 1,
     href: chunkHref(str(r.sid), Number(r.seq), Number(r.version ?? 1)),
     scope: r.scope_type === 'workspace' ? str(r.scope_ref) : 'App',
   }));

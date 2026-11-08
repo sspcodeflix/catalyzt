@@ -892,5 +892,10 @@ export const MIGRATIONS: string[] = [
     latency_ms INTEGER NOT NULL DEFAULT 0
   );
   CREATE UNIQUE INDEX model_call_daily_key ON model_call_daily (COALESCE(application_id, ''), day, agent, model, COALESCE(user_id, ''), purpose, status);
+  `,  // 21: content extraction. Every passage records its kind (overview, guide, api, build, ci, history,
+  //     requirement), so retrieval can prefer documentation over manifests and the overview card for
+  //     "what is this about" questions. Passages written before this have no kind and count as guide.
+  `
+  ALTER TABLE source_chunks ADD COLUMN kind TEXT;
   `,
 ];
