@@ -95,6 +95,7 @@ function manualCases(db: HorizonDb, key: string): ManualCase[] {
 }
 
 interface Approval {
+  id: string;
   status: string;
   createdAt: string;
   decidedAt: string | null;
@@ -105,13 +106,14 @@ interface Approval {
 function latestCaseApproval(db: HorizonDb, key: string): Approval | null {
   const r = db.raw
     .prepare(
-      `SELECT a.status, a.created_at, a.decided_at, a.payload, u.name AS decided_by, m.chat_id FROM approvals a
+      `SELECT a.id, a.status, a.created_at, a.decided_at, a.payload, u.name AS decided_by, m.chat_id FROM approvals a
        JOIN answer_revisions ar ON ar.id = a.revision_id JOIN messages m ON m.id = ar.message_id LEFT JOIN users u ON u.id = a.decided_by
        WHERE a.action = 'add_uat_cases' AND a.status != 'expired' AND json_extract(a.target, '$.storyKey') = ? ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1`,
     )
     .get(key) as Row | undefined;
   if (!r) return null;
   return {
+    id: String(r.id),
     status: String(r.status),
     createdAt: String(r.created_at),
     decidedAt: (r.decided_at as string) ?? null,
@@ -156,7 +158,7 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
   if (!analysed) steps.push({ key: 'review', state: 'todo', detail: 'Waits for the analysis.', waitingOn: [] });
   else if (approval?.status === 'pending') {
     const who = approversOf(app, approval.components.length ? approval.components : story.components, db);
-    steps.push({ key: 'review', state: 'waiting', detail: 'Drafted UAT cases wait for approval.', waitingOn: who, since: approval.createdAt, action: { kind: 'review', label: 'Review cases', href: chatHref(approval.chatId) } });
+    steps.push({ key: 'review', state: 'waiting', detail: 'Drafted UAT cases wait for approval: rate the analysis, then approve or decline the cases.', waitingOn: who, since: approval.createdAt, action: { kind: 'review', label: 'Review cases', href: `${chatHref(approval.chatId)}#approval-${approval.id}` } });
   } else if (approval?.status === 'declined') {
     steps.push({ key: 'review', state: 'blocked', detail: `${approval.decidedBy ?? 'A reviewer'} declined the drafted cases. Analyse again or ask for changes in the chat.`, waitingOn: [flow.owner], since: approval.decidedAt ?? undefined, action: { kind: 'review', label: 'Open the chat', href: chatHref(approval.chatId) } });
   } else if (toLink) {

@@ -333,3 +333,8 @@ legend { padding: 0; }
 .storyflowbar .sfrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 10px; border: 1px solid var(--hz-border); border-radius: var(--hz-radius-md); background: var(--hz-surface); font-size: 13px; }
 .storyflowbar .sftitle { font-weight: 600; color: inherit; }
 .storyflowbar .sfwait { flex: 1; min-width: 160px; color: var(--hz-text-secondary); }
+
+/* An approval card reached from a flow's "Review cases": briefly highlighted. */
+.card.approve.flash { box-shadow: 0 0 0 2px var(--hz-ink); transition: box-shadow .3s; }
+.jumpanchor { position: relative; height: 0; }
+.jumpanchor .jumplatest { bottom: 10px; }

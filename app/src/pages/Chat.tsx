@@ -139,6 +139,28 @@ function ChatView({ chatId }: { chatId: string }) {
     return () => io.disconnect();
   });
 
+  // A link to an approval (#approval-<id>, from a test flow's "Review cases") scrolls to the card and highlights it.
+  const goToApproval = (id: string) => {
+    const el = document.getElementById(`approval-${id}`);
+    if (!el) return false;
+    stick.current = false;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.add('flash');
+    window.setTimeout(() => el.classList.remove('flash'), 2400);
+    el.focus({ preventScroll: true });
+    return true;
+  };
+  const wanted = location.hash.startsWith('#approval-') ? location.hash.slice('#approval-'.length) : null;
+  const went = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wanted || went.current === wanted || !chat) return;
+    // After the messages have laid out (and the follow-the-bottom scroll has run).
+    const t = window.setTimeout(() => {
+      if (goToApproval(wanted)) went.current = wanted;
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [wanted, chat?.messages.length]);
+
   const renderMessage = (m: Message) =>
             m.role === 'user' ? (
               <Fragment key={m.id}>
@@ -287,13 +309,16 @@ function ChatView({ chatId }: { chatId: string }) {
           })()}
         </div>
         </div>
-        {!atBottom && chat && (
-          <button type="button" className="btn jumplatest" onClick={() => ((stick.current = true), setAtBottom(true), toBottom(true))}>
-            <Icon name="down" small />
-            Jump to latest
-          </button>
-        )}
-        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} />}
+        {/* Anchored to the top of whatever sits under the conversation (flow bar, reply box), never on top of it. */}
+        <div className="jumpanchor">
+          {!atBottom && chat && (
+            <button type="button" className="btn jumplatest" onClick={() => ((stick.current = true), setAtBottom(true), toBottom(true))}>
+              <Icon name="down" small />
+              Jump to latest
+            </button>
+          )}
+        </div>
+        {chat && !thread && <StoryFlowBar stories={chatStories(chat)} pendingReview={pendingReview(chat)} onReview={(id) => goToApproval(id)} />}
         {chat && !readOnly && (
           <div className="composerwrap">
             <Composer
@@ -418,4 +443,14 @@ function chatStories(chat: NonNullable<ReturnType<typeof useChat>>): string[] {
   const keys = chat.messages.flatMap((m) => (m.role === 'user' ? (m.tickets ?? []) : []));
   for (const a of Object.values(chat.artifacts)) if (a.kind === 'uat') keys.push(a.ticketKey);
   return [...new Set(keys)].slice(0, 10);
+}
+
+/** The pending approval in this chat that drafted cases wait on, if any: the review a flow is waiting for. */
+function pendingReview(chat: NonNullable<ReturnType<typeof useChat>>): { id: string; locked: boolean } | null {
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const m = chat.messages[i];
+    if (m.role !== 'assistant') continue;
+    for (const b of m.blocks) if (b.kind === 'approval' && b.approval.id && b.approval.status === 'pending') return { id: b.approval.id, locked: m.rating === null };
+  }
+  return null;
 }

@@ -90,6 +90,21 @@ with sync_playwright() as p:
     check('team: same steps and counts for Ram and Sourav', st == 200 and st2 == 200 and body['flow']['steps'] == body2['flow']['steps'])
     check('team: Sourav cannot cancel Ram\'s flow', page.locator('button:has-text("Cancel flow")').count() == 0 and api(ctx, 'u-sourav', 'POST', f'/api/flows/{flow_id}/status', {'status': 'cancelled'})[0] == 403)
 
+    # "Review cases" lands on the approval card itself, in view, not at the bottom of the chat.
+    rev = page.locator('.flownext a:has-text("Review cases")').first
+    if rev.count():
+        href = rev.get_attribute('href') or ''
+        rev.click()
+        page.wait_for_selector('.card.approve', timeout=15000)
+        page.wait_for_timeout(1200)
+        box = page.locator(f'#{href.split("#")[1]}').bounding_box() if '#' in href else None
+        check('review: the link points at the approval card and shows it', '#approval-' in href and box is not None and 0 <= box['y'] < 900, f'{href} {box}')
+        bar = page.inner_text('.storyflowbar') if page.locator('.storyflowbar').count() else ''
+        check('review: the bar in that chat names the flow', 'UAT · e2e release' in bar, bar)
+        page.go_back()
+    else:
+        check('review: a story waits on its case review', False, 'no Review cases link')
+
     # Home shows the flow in progress.
     page.goto(BASE + '/')
     page.wait_for_selector('.homeflows .flowcard', timeout=15000)

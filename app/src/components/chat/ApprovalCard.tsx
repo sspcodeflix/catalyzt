@@ -28,7 +28,7 @@ export function ApprovalCard({ approval, revision, lockReason, busy = false, err
   const gateId = useId();
   const by = approval.decidedBy ? `by ${approval.decidedBy}` : 'by you';
   return (
-    <section className="card approve" aria-label="Approval needed">
+    <section className="card approve" aria-label="Approval needed" id={approval.id ? `approval-${approval.id}` : undefined} tabIndex={-1}>
       <div className="head">
         <Icon name="hand" />
         {approval.title}

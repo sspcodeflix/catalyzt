@@ -200,7 +200,7 @@ export function FlowsWaitingCard() {
  * Above the reply box of a chat about stories that are in a test flow: where the flow stands and who it
  * waits on, so approving a case or recording a result here visibly moves the flow on.
  */
-export function StoryFlowBar({ stories }: { stories: string[] }) {
+export function StoryFlowBar({ stories, pendingReview, onReview }: { stories: string[]; pendingReview?: { id: string; locked: boolean } | null; onReview?: (approvalId: string) => void }) {
   const [flows, setFlows] = useState<FlowSummary[]>([]);
   const { me, loaded } = useSession();
   const key = [...new Set(stories)].sort().join(',');
@@ -227,6 +227,8 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
       {flows.slice(0, 2).map((f) => {
         const mine = f.waiting.filter((w) => w.you);
         const other = f.waiting.find((w) => !w.you);
+        // The review this flow waits on you for is the approval card in this very chat: go to it, don't leave.
+        const reviewHere = !!pendingReview && mine.some((w) => w.action === 'Review cases');
         return (
           <div key={f.id} className="sfrow">
             <span className="flowkind">{KIND[f.kind]}</span>
@@ -235,15 +237,25 @@ export function StoryFlowBar({ stories }: { stories: string[] }) {
             </Link>
             <span className="pill info">{f.current ? `Step: ${f.current.label}` : f.status}</span>
             <span className="sfwait">
-              {mine.length
+              {reviewHere
+                ? pendingReview!.locked
+                  ? 'Waiting on you: rate the analysis, then approve the drafted cases in this chat'
+                  : 'Waiting on you: approve or decline the drafted cases in this chat'
+                : mine.length
                 ? `Waiting on you: ${mine.map((w) => w.action.toLowerCase()).join(', ')}`
                 : other
                   ? `Waiting on ${other.person?.name ?? (other.action.startsWith('The UAT analyst') ? 'the agent' : 'the pipeline')}: ${other.action.toLowerCase()}`
                   : 'Nothing waiting'}
             </span>
-            <Link to={`/flows/${f.id}`} className="btn small plain">
-              Open flow
-            </Link>
+            {reviewHere ? (
+              <button type="button" className="btn small" onClick={() => onReview?.(pendingReview!.id)}>
+                Review here
+              </button>
+            ) : (
+              <Link to={`/flows/${f.id}`} className="btn small plain">
+                Open flow
+              </Link>
+            )}
           </div>
         );
       })}
