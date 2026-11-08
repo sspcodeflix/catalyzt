@@ -10,11 +10,26 @@ import { Icon } from '../components/Icon';
 import { approvalBlockReason } from '../lib/approvalRights';
 import type { DecidedApproval } from '../lib/chatStore';
 import { api } from '../lib/hexa';
-import { flowsChanged, STEPS, type FlowKind, type FlowStory, type FlowSummary, type FlowView, type StoryStep } from '../lib/flows';
+import { flowsChanged, STEPS, type FlowKind, type FlowStory, type FlowSummary, type FlowView, type StepKey, type StoryStep } from '../lib/flows';
 import { sessionEpoch, useSession } from '../lib/session';
 import { useTickets } from '../lib/ticketStore';
 
 const KIND_LABEL: Record<FlowKind, string> = { uat: 'UAT', regression: 'Regression' };
+/** What happens at each step, in one sentence, shown on a story at its current step so nobody has to guess. */
+const STEP_HELP: Record<FlowKind, Partial<Record<StepKey, string>>> = {
+  uat: {
+    analyse: 'Catalyzt checks the story\'s acceptance criteria against the tests it knows and drafts manual cases for the gaps. Nothing to do until it finishes.',
+    review: 'A component manager checks the drafted cases against the requirements and approves them, or sends them back saying what to change.',
+    run: 'A person runs each manual case below in the UAT environment and records Passed, Failed or Blocked here; automated tests report through CI. The story moves on when every criterion is verified.',
+    signoff: 'A product owner (or the app owner) signs the story off on the evidence shown, or declines with a note.',
+  },
+  regression: {
+    analyse: 'Catalyzt checks the story\'s acceptance criteria against the automated tests it knows and drafts cases for the gaps. Nothing to do until it finishes.',
+    review: 'A component manager checks the drafted cases against the requirements and approves them, or sends them back saying what to change.',
+    automate: 'An automation engineer writes the automated test, gets the pull request reviewed and merged, and links the test to the story.',
+    verify: 'The pipeline runs the new test in the target build. The step completes when it passes; nobody records anything by hand.',
+  },
+};
 const STATUS_TONE: Record<string, string> = { active: 'info', paused: 'warn', done: 'pass', cancelled: '' };
 const STATE_TONE: Record<string, string> = { done: 'pass', skipped: '', working: 'info', waiting: 'warn', blocked: 'crit', todo: '' };
 const STATE_LABEL: Record<string, string> = { done: 'Done', skipped: 'Not needed', working: 'Agent working', waiting: 'Waiting', blocked: 'Blocked', todo: 'Not started' };
@@ -654,6 +669,11 @@ function StoryDetail({ flow, story, post }: { flow: FlowView; story: FlowStory; 
           </li>
         ))}
       </ol>
+      {story.current && flow.status === 'active' && STEP_HELP[flow.kind][story.current] && (
+        <p className="stephelp">
+          <b>What happens now:</b> {STEP_HELP[flow.kind][story.current]}
+        </p>
+      )}
       <h3>Acceptance criteria</h3>
       <ul className="flowcriteria" id={`run-${story.key}`}>
         {story.criteria.map((c) => {
@@ -836,6 +856,18 @@ function ManualRow({ m, canExecute }: { m: FlowStory['manual'][number]; canExecu
         <span className="pill">no result yet</span>
       )}
       {m.last?.note && <small className="muted">"{m.last.note}"</small>}
+      {m.steps.length > 0 && (
+        <details className="casesteps" open={canExecute && !m.last}>
+          <summary>
+            Steps ({m.steps.length}){canExecute && !m.last ? ' · run these in the UAT environment, then record what happened' : ''}
+          </summary>
+          <ol>
+            {m.steps.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ol>
+        </details>
+      )}
       {canExecute && (
         <span className="flowexec">
           <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What you saw (needed for fail or blocked)" aria-label={`Result note for ${m.title}`} />

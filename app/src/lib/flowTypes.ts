@@ -41,6 +41,8 @@ export interface ManualCase {
   id: string;
   title: string;
   criterion: string;
+  /** What a person does when running the case, in order. */
+  steps: string[];
   last: { status: string; by: string; at: string; note: string | null } | null;
 }
 export interface FlowStory {

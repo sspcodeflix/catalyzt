@@ -61,7 +61,9 @@ describe('a UAT flow', () => {
     f = await view('u-sourav', id);
     expect(step(f, 'review').state).toBe('done');
     expect(step(f, 'run')).toMatchObject({ state: 'waiting', action: { kind: 'execute' } });
+    expect(step(f, 'run').detail).toMatch(/^AC4 needs a person to run the manual case in the UAT environment and record Passed, Failed or Blocked here\./);
     const ac4 = f.items[0].manual.find((m) => m.criterion === 'AC4')!;
+    expect(ac4.steps.length).toBeGreaterThan(0);
     // A plain member cannot record a result; a failure needs a reason.
     expect((await api.as('u-devi', 'ABCD').post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'passed' })).status).toBe(403);
     expect((await sourav.post(`/api/hexa/tests/${ac4.id}/executions`, { status: 'failed' })).status).toBe(400);

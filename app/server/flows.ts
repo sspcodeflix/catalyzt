@@ -83,12 +83,15 @@ function manualCases(db: HorizonDb, key: string): ManualCase[] {
     )
     .all(`${key}#%`) as Row[];
   const last = db.raw.prepare('SELECT e.status, e.note, e.executed_at AS at, u.name AS by FROM manual_executions e JOIN users u ON u.id = e.executed_by WHERE e.test_case_id = ? ORDER BY e.executed_at DESC, e.rowid DESC LIMIT 1');
+  const steps = db.raw.prepare('SELECT description FROM test_steps WHERE test_case_id = ? ORDER BY seq');
   return rows.map((r) => {
     const l = last.get(r.id) as Row | undefined;
     return {
       id: String(r.id),
       title: String(r.title),
       criterion: String(r.ref).split('#')[1] ?? '',
+      // The steps a person follows when running the case, so the flow shows what to do, not just a title.
+      steps: (steps.all(r.id) as { description: string }[]).map((x) => x.description),
       last: l ? { status: String(l.status), by: String(l.by), at: String(l.at), note: (l.note as string) ?? null } : null,
     };
   });
@@ -184,12 +187,22 @@ function storyProgress(db: HorizonDb, app: AppRecord, flow: FlowRow, story: Stor
     const needRun = open.filter((i) => !failing.includes(i) && manual.some((m) => m.criterion === `AC${i + 1}`) && !manualFailed(i));
     const noCase = open.filter((i) => !failing.includes(i) && !manual.some((m) => m.criterion === `AC${i + 1}`) && !hasAutomated(cov[i]));
     const manualFail = open.filter((i) => manualFailed(i));
-    const testers = orOwners(db, app.id, peopleWithRole(db, app.id, 'uat_tester'));
+    const testerRole = peopleWithRole(db, app.id, 'uat_tester');
+    const testers = orOwners(db, app.id, testerRole);
+    // Say what the step needs in plain words: a person runs the manual case and records what happened here.
+    const noTester = testerRole.length ? '' : ' No one in the team has the UAT tester role, so this waits on the app owner.';
     if (!reviewed) steps.push({ key: 'run', state: 'todo', detail: 'Waits for the case review.', waitingOn: [] });
     else if (open.length === 0) steps.push({ key: 'run', state: 'done', detail: `All ${plural(cov.length, 'criterion', 'criteria')} verified.`, waitingOn: [] });
     else if (failing.length || manualFail.length)
       steps.push({ key: 'run', state: 'blocked', detail: `${plural(failing.length + manualFail.length, 'criterion has', 'criteria have')} a failing test.`, waitingOn: fixPeople, action: { kind: 'fix', label: 'See failures', href: `/tickets/${story.key}` } });
-    else if (needRun.length) steps.push({ key: 'run', state: 'waiting', detail: `${plural(needRun.length, 'criterion needs', 'criteria need')} a tester's result.`, waitingOn: testers, action: { kind: 'execute', label: 'Record results' } });
+    else if (needRun.length)
+      steps.push({
+        key: 'run',
+        state: 'waiting',
+        detail: `${needRun.map((i) => `AC${i + 1}`).join(', ')} ${needRun.length === 1 ? 'needs' : 'need'} a person to run the manual case in the UAT environment and record Passed, Failed or Blocked here.${noTester}`,
+        waitingOn: testers,
+        action: { kind: 'execute', label: 'Record results' },
+      });
     else if (noCase.length) steps.push({ key: 'run', state: 'blocked', detail: `${plural(noCase.length, 'criterion has', 'criteria have')} no test. Analyse again to draft cases.`, waitingOn: [flow.owner], action: { kind: 'analyse', label: 'Analyse again' } });
     else steps.push({ key: 'run', state: 'waiting', detail: 'Automated tests have no result in the target build yet.', waitingOn: [], action: { kind: 'wait', label: 'Waiting for the pipeline' } });
 

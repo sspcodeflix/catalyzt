@@ -353,3 +353,9 @@ legend { padding: 0; }
 .flowhandoff .flowreview { margin-bottom: 0; }
 .flowhandoff .flowreview h3 { font-family: inherit; font-size: 15px; font-weight: 600; }
 .flowpick li.taken label { opacity: .75; } .flowpick li.taken .pill a { color: inherit; }
+
+/* A story at its step: what happens now, and the steps of a manual case to run. */
+.stephelp { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--hz-surface-2, rgba(127,127,127,.08)); font-size: 13.5px; color: var(--hz-text-secondary); }
+.casesteps { flex-basis: 100%; font-size: 13px; }
+.casesteps > summary { cursor: pointer; color: var(--hz-text-secondary); }
+.casesteps ol { margin: 6px 0 0; padding-left: 22px; color: var(--hz-text-secondary); }

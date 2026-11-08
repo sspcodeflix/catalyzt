@@ -123,6 +123,10 @@ with sync_playwright() as p:
         page.wait_for_selector(f'#story-{key}', timeout=15000)
         row = page.locator(f'#story-{key}').inner_text()
         check('review: approving moves the story to Run tests', 'Run tests' in row, row[:200])
+        # At Run tests the story says what happens now and shows the steps of the case to run.
+        page.click(f'#story-{key} .flowstoryhead')
+        page.wait_for_selector(f'#story-{key} .stephelp', timeout=15000)
+        check('run: the story explains the step and shows the case steps', 'runs each manual case' in page.inner_text(f'#story-{key} .stephelp') and page.locator(f'#story-{key} .casesteps li').count() >= 1)
     else:
         check('review: a story waits on its case review', False, 'no Review cases button')
 
