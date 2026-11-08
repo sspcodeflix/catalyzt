@@ -18,6 +18,9 @@
  * delivery; HORIZON_DB_PATH for --direct. Results and logs: .myworkspace/<APP>/results/<repo>/<run>/
  * (git-ignored) and .myworkspace/<APP>/log/ci-runs.md. Caches: .myworkspace/.ci-cache/ (git-ignored).
  *
+ * A target may list sidecar services (e.g. a database) that run as their own containers on the host
+ * network for the duration of its tests; their logs are kept next to the results.
+ *
  * Containers run as the current user with the clone mounted read-write (build output lands in the
  * clone, which is git-ignored) and the results directory mounted at /out. Nothing here runs on the
  * host except git and docker.
@@ -41,7 +44,18 @@ interface Target {
   timeoutMinutes?: number;
   heavy?: boolean;
   env?: Record<string, string>;
+  /** Sidecar containers (host network) started before the tests and removed after, e.g. a database. */
+  services?: Service[];
   note?: string;
+}
+interface Service {
+  name: string;
+  image: string;
+  /** Arguments after the image (the container's command). */
+  args?: string[];
+  /** Command run with `docker exec` until it succeeds, before the tests start. */
+  ready?: string;
+  readyTimeoutSeconds?: number;
 }
 interface CiConfig {
   [repo: string]: { targets: Target[] };
@@ -160,6 +174,30 @@ async function runTarget(app: string, repo: string, github: string, cloneDir: st
   }
   mkdirSync(outDir, { recursive: true });
   const timeoutMs = (t.timeoutMinutes ?? 20) * 60_000;
+  // Sidecars: named per app/repo/target so a leftover from an interrupted run is replaced, logs kept in the results.
+  const sidecars = (t.services ?? []).map((s) => ({ ...s, container: `horizon-ci-${app}-${repo}-${t.name}-${s.name}`.toLowerCase().replace(/[^a-z0-9_.-]/g, '-') }));
+  const stopSidecars = () => {
+    for (const s of sidecars) {
+      try {
+        writeFileSync(join(outDir, `service-${s.name}.log`), execFileSync('docker', ['logs', s.container], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+      } catch { /* not started */ }
+      try { execFileSync('docker', ['rm', '-f', s.container], { stdio: 'ignore' }); } catch { /* already gone */ }
+    }
+  };
+  stopSidecars();
+  for (const s of sidecars) {
+    execFileSync('docker', ['run', '-d', '--name', s.container, '--network', 'host', s.image, ...(s.args ?? [])], { stdio: 'ignore' });
+    const deadline = Date.now() + (s.readyTimeoutSeconds ?? 60) * 1000;
+    let ok = !s.ready;
+    while (!ok && Date.now() < deadline) {
+      try { execFileSync('docker', ['exec', s.container, 'sh', '-c', s.ready!], { stdio: 'ignore' }); ok = true; } catch { await new Promise((r) => setTimeout(r, 1000)); }
+    }
+    console.log(`   service ${s.name} (${s.image}) ${ok ? 'ready' : 'NOT ready'}`);
+    if (!ok) {
+      stopSidecars();
+      return { app, repo, target: t.name, status: 'failed', seconds: Math.round((Date.now() - started) / 1000), files: 0, detail: `service ${s.name} did not become ready (see ${outDir})` };
+    }
+  }
   const exit = await new Promise<number | null>((resolveExit) => {
     const child = spawn('docker', dockerArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     const log = (chunk: Buffer) => process.stdout.write(chunk.toString().split('\n').filter(Boolean).slice(-3).map((l) => `   | ${l.slice(0, 160)}\n`).join(''));
@@ -174,6 +212,7 @@ async function runTarget(app: string, repo: string, github: string, cloneDir: st
       resolveExit(code);
     });
   });
+  stopSidecars();
   const seconds = Math.round((Date.now() - started) / 1000);
   // Every JUnit file under the results directory, by its path relative to it (the Maven recipe keeps module directories).
   const walk = (dir: string, rel = ''): string[] =>

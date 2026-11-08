@@ -1,7 +1,8 @@
 {
   "_notes": [
     "Local CI targets for Nabih's Portfolio (app/scripts/ci-runner.ts).",
-    "piggymetrics is Spring Boot 2.0.3 (Java 8 era), so it runs on a Maven image with Java 11. Only the service modules with tests are built; their Spring tests start an embedded MongoDB, which downloads a mongod binary on first run.",
+    "piggymetrics is Spring Boot 2.0.3 / Spring Cloud Finchley with java.version 1.8, so it runs on a Java 8 Maven image (maven:3-eclipse-temurin-8); on Java 11 JaCoCo 0.7.6 crashed the test JVM and Mockito 2.15 could not define classes (sun.misc.Unsafe.defineClass). JaCoCo now runs as the pom configures it.",
+    "The tests' embedded MongoDB (flapdoodle 1.50.3) only ships x86 mongod 3.2.2 binaries and cannot run on this aarch64 host, so flapdoodle is kept off the test classpath (-Dmaven.test.dependency.excludes) and a real MongoDB 4.4 runs as a sidecar on 127.0.0.1:27117 (SPRING_DATA_MONGODB_HOST/PORT). The Spring Cloud config server is not part of a unit-test run: SPRING_CLOUD_CONFIG_ENABLED=false.",
     "juice-shop is scanned through GitHub only (no clone), so it has no local CI target."
   ],
   "piggymetrics": {
@@ -10,10 +11,29 @@
         "name": "maven",
         "kind": "maven",
         "path": ".",
-        "image": "maven:3-eclipse-temurin-11",
-        "timeoutMinutes": 30,
-        "run": "(mvn -B -ntp -fae test -Djacoco.skip=true -pl account-service,auth-service,statistics-service,notification-service,gateway -am 2>&1 | tee /out/mvn.log; echo \"mvn exit $?\") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;",
-        "note": "account, auth, statistics, notification and gateway modules; JaCoCo 0.7.6 is skipped because it crashes the Java 11 test JVM"
+        "image": "maven:3-eclipse-temurin-8",
+        "timeoutMinutes": 40,
+        "env": {
+          "SPRING_DATA_MONGODB_HOST": "127.0.0.1",
+          "SPRING_DATA_MONGODB_PORT": "27117",
+          "SPRING_CLOUD_CONFIG_ENABLED": "false"
+        },
+        "services": [
+          {
+            "name": "mongo",
+            "image": "mongo:4.4",
+            "args": [
+              "--port",
+              "27117",
+              "--bind_ip",
+              "127.0.0.1"
+            ],
+            "ready": "mongo --port 27117 --quiet --eval 'db.runCommand({ping:1}).ok'",
+            "readyTimeoutSeconds": 60
+          }
+        ],
+        "run": "(mvn -B -ntp -fae test -Dmaven.test.dependency.excludes=de.flapdoodle.embed:de.flapdoodle.embed.mongo -pl account-service,auth-service,statistics-service,notification-service,gateway -am 2>&1 | tee /out/mvn.log; echo \"mvn exit $?\") && find . -path '*/surefire-reports/TEST-*.xml' -exec cp {} /out/ \\;",
+        "note": "account, auth, statistics, notification and gateway modules on Java 8 with JaCoCo on; MongoDB 4.4 sidecar instead of the embedded mongod"
       }
     ]
   }
