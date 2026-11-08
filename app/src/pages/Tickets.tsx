@@ -63,7 +63,7 @@ export function Tickets() {
   };
 
   return (
-    <div className={`body${panelOpen ? ' split' : ''}`}>
+    <div className={`body panelpage${panelOpen ? ' split' : ''}`}>
       <div className="chatcol listcol">
         <div className="page">
           <div className="pagehead withaction">

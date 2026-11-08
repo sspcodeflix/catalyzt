@@ -211,7 +211,9 @@ with sync_playwright() as p:
     pg.keyboard.press('Escape')
     check('keyboard: scope menu items take arrow-key focus', focused_item == 'menuitemradio', str(focused_item))
 
-    # Theme toggle.
+    # Theme toggle. The scope menu returns focus to its button a moment after Escape; wait for that first,
+    # or it lands after we focus the theme switch and Enter reopens the menu (the cause of the earlier flake).
+    pg.wait_for_function("() => !document.querySelector('[role=menuitemradio]') && document.activeElement?.matches('header .scope.pick')", timeout=5000)
     pg.focus('header button[aria-label^="Switch to dark"]')
     pg.keyboard.press('Enter')
     # The theme applies on the next render; wait for it instead of reading it in the same tick (was flaky under load).

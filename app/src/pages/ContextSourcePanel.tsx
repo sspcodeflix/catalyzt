@@ -36,9 +36,27 @@ function SourcePanel({ sourceId }: { sourceId: string | undefined }) {
     );
   }, [sourceId, general, sources, pinned]);
 
-  // A citation link lands on its passage.
+  // A citation link lands on its passage, just below the panel's sticky title bar when the panel scrolls on its own.
   useEffect(() => {
-    if (detail && hashChunk) document.getElementById(hashChunk)?.scrollIntoView({ block: 'center' });
+    if (!detail || !hashChunk) return;
+    const el = document.getElementById(hashChunk);
+    const panel = ref.current;
+    if (!el) return;
+    const go = () => {
+      const scrolls = !!panel && /auto|scroll/.test(getComputedStyle(panel).overflowY);
+      if (panel && scrolls) {
+        const head = panel.querySelector<HTMLElement>('.phead')?.offsetHeight ?? 0;
+        const top = el.getBoundingClientRect().top - panel.getBoundingClientRect().top + panel.scrollTop - head - 12;
+        panel.scrollTo({ top: Math.max(0, top) });
+      } else el.scrollIntoView({ block: 'start' });
+    };
+    // After layout (passages render, Markdown tables size themselves), and once more when fonts settle.
+    const f1 = requestAnimationFrame(go);
+    const t = setTimeout(go, 250);
+    return () => {
+      cancelAnimationFrame(f1);
+      clearTimeout(t);
+    };
   }, [detail, hashChunk]);
 
   // Below 900px the panel stacks under the list, so bring it into view when it opens.

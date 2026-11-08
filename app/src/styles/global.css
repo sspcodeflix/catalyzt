@@ -58,6 +58,18 @@ svg.sm { width: 15px; height: 15px; }
 .body.chatpage > .chatcol { min-height: 0; }
 .threadscroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scroll-padding-bottom: 24px; }
 .body.chatpage > .panel { min-height: 0; overflow-y: auto; }
+/* List pages with a side panel (Jira Stories, App Context, Hexa, Huddle): on a wide screen the page fills
+   the window and the list and the panel scroll on their own, so a long list never pushes the panel away. */
+@media (min-width: 900px) {
+  .shell:has(.body.panelpage) { height: 100vh; height: 100dvh; overflow: hidden; }
+  .main:has(.body.panelpage) { min-height: 0; height: 100%; }
+  .main:has(.body.panelpage) > .content { overflow: hidden; }
+  .body.panelpage { min-height: 0; overflow: hidden; }
+  .body.panelpage > .listcol { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .body.panelpage > .panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+}
+/* A panel's title bar (with its close button) stays at the top while the panel scrolls. */
+.body.panelpage > .panel > .phead, .body.chatpage > .panel > .phead { position: sticky; top: 0; z-index: 3; background: var(--hz-surface); }
 .jumplatest { position: absolute; left: 50%; transform: translateX(-50%); bottom: 132px; z-index: 5; border-radius: var(--hz-radius-pill); box-shadow: 0 4px 14px rgb(0 0 0 / 0.14); background: var(--hz-surface); }
 .thread { width: 100%; max-width: var(--hz-thread-max); margin: 0 auto; padding: 28px 24px 8px; display: flex; flex-direction: column; gap: 26px; flex: 1; }
 .olderbar { display: flex; align-items: center; justify-content: center; gap: 10px; }
