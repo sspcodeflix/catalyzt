@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { AssistantTurn } from '../components/chat/AssistantTurn';
@@ -55,18 +55,85 @@ function ChatView({ chatId }: { chatId: string }) {
     if (panelOpen) setView('report');
   }, [panelOpen, location.pathname]);
 
-  const send = (msg: ComposerSubmit) => sendMessage(chatId, msg);
+  const send = (msg: ComposerSubmit) => {
+    // Sending always brings the newest message into view.
+    stick.current = true;
+    sendMessage(chatId, msg);
+  };
+
+  /* ---------- The conversation scrolls on its own; the reply box stays put ---------- */
+  const scroller = useRef<HTMLDivElement>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+  const topSentinel = useRef<HTMLDivElement>(null);
+  // Follow new content while the reader is at the bottom; stop following when they scroll up to read.
+  const stick = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
+  const restore = useRef<{ height: number; top: number } | null>(null);
+  const toBottom = (smooth = false) => {
+    const el = scroller.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  };
+  const lastTop = useRef(0);
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    // Only the reader scrolling up stops following; content growing under a followed view does not.
+    if (near) stick.current = true;
+    else if (el.scrollTop < lastTop.current - 2) stick.current = false;
+    lastTop.current = el.scrollTop;
+    setAtBottom(near || stick.current);
+  };
+  // Content grows while an answer streams, a report card opens, images load: keep the bottom in view if following.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (restore.current) return;
+      if (stick.current) toBottom();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [chat !== undefined]);
+  // Older messages are put above without moving what the reader is looking at.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const r = restore.current;
+    if (el && r) {
+      el.scrollTop = el.scrollHeight - r.height + r.top;
+      restore.current = null;
+    }
+  }, [chat?.messages.length]);
+
   const [older, setOlder] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const showOlder = () => {
+    if (older.busy) return;
+    const el = scroller.current;
+    if (el) restore.current = { height: el.scrollHeight, top: el.scrollTop };
     setOlder({ busy: true, error: null });
     loadOlderMessages(chatId).then(
       () => setOlder({ busy: false, error: null }),
-      (e: Error) => setOlder({ busy: false, error: e.message }),
+      (e: Error) => {
+        restore.current = null;
+        setOlder({ busy: false, error: e.message });
+      },
     );
   };
+  // Scrolling up to the top loads the previous page by itself; the button stays for keyboard users.
+  const hasOlder = chat?.olderCursor != null;
+  useEffect(() => {
+    const target = topSentinel.current;
+    const root = scroller.current;
+    if (!target || !root || !hasOlder) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting) && !stick.current) showOlder();
+    }, { root, rootMargin: '200px 0px 0px 0px' });
+    io.observe(target);
+    return () => io.disconnect();
+  });
 
   return (
-    <div className={`body${panelOpen ? ` split view-${view}` : ''}`}>
+    <div className={`body chatpage${panelOpen ? ` split view-${view}` : ''}`}>
       {/* The page heading for assistive technology; the top bar shows the same title visually. */}
       <h1 className="sr">{chat?.title ?? 'Chat'}</h1>
       {panelOpen && (
@@ -80,10 +147,11 @@ function ChatView({ chatId }: { chatId: string }) {
         </div>
       )}
       <div className="chatcol">
-        <div className="thread">
+        <div className="threadscroll" ref={scroller} onScroll={onScroll}>
+        <div className="thread" ref={threadRef}>
           {!chat && !first && <ChatState load={load} onRetry={() => void loadChat(chatId, true)} />}
           {chat?.olderCursor != null && (
-            <div className="olderbar">
+            <div className="olderbar" ref={topSentinel}>
               <button type="button" className="btn plain" onClick={showOlder} disabled={older.busy} aria-busy={older.busy}>
                 {older.busy ? 'Loading older messages…' : 'Show older messages'}
               </button>
@@ -159,6 +227,13 @@ function ChatView({ chatId }: { chatId: string }) {
             ),
           )}
         </div>
+        </div>
+        {!atBottom && chat && (
+          <button type="button" className="btn jumplatest" onClick={() => ((stick.current = true), setAtBottom(true), toBottom(true))}>
+            <Icon name="down" small />
+            Jump to latest
+          </button>
+        )}
         {chat && !readOnly && (
           <div className="composerwrap">
             <Composer

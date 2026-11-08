@@ -48,7 +48,17 @@ svg.sm { width: 15px; height: 15px; }
 
 /* Chat */
 .body { flex: 1; display: flex; min-height: 0; }
-.chatcol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chatcol { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* The chat page fills the window: the conversation scrolls on its own, the reply box stays at the bottom,
+   and the report panel scrolls separately. Other pages keep scrolling as a whole. */
+.shell:has(.body.chatpage) { height: 100vh; height: 100dvh; overflow: hidden; }
+.main:has(.body.chatpage) { min-height: 0; height: 100%; }
+.main:has(.body.chatpage) > .content { overflow: hidden; }
+.body.chatpage { min-height: 0; overflow: hidden; }
+.body.chatpage > .chatcol { min-height: 0; }
+.threadscroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scroll-padding-bottom: 24px; }
+.body.chatpage > .panel { min-height: 0; overflow-y: auto; }
+.jumplatest { position: absolute; left: 50%; transform: translateX(-50%); bottom: 132px; z-index: 5; border-radius: var(--hz-radius-pill); box-shadow: 0 4px 14px rgb(0 0 0 / 0.14); background: var(--hz-surface); }
 .thread { width: 100%; max-width: var(--hz-thread-max); margin: 0 auto; padding: 28px 24px 8px; display: flex; flex-direction: column; gap: 26px; flex: 1; }
 .olderbar { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .user { align-self: flex-end; max-width: 80%; background: var(--hz-surface-muted); padding: 10px 16px; border-radius: 18px 18px 6px 18px; white-space: pre-wrap; }
@@ -521,6 +531,9 @@ details.scanbox[open] > summary { margin-bottom: 4px; }
   .mobiletabs { display: flex; margin: 8px 12px 0; }
   .body.split.view-report > .chatcol { display: none; }
   .body.split.view-chat > .panel { display: none; }
+  /* Phone: the visible tab (chat or report) fills the window and scrolls on its own. */
+  .body.chatpage.split > .chatcol, .body.chatpage.split > .panel { flex: 1 1 auto; min-height: 0; }
+  .jumplatest { bottom: 118px; }
   .entry { grid-template-columns: 1fr; }
 }
 .scope { height: auto; min-height: 38px; padding: 3px 10px; }
