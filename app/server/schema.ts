@@ -1078,4 +1078,47 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (approval_id, user_id)
   );
   `,
+  // 29: the capability map a regression starts from (docs/FLOWS.md): what the application does, drawn by the
+  // agent from App Context and edited by people, each capability with the checks a test can verify. Tests
+  // are linked to checks through test_case_links (entity_type 'check', entity_ref the check id).
+  `
+  CREATE TABLE capabilities (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    component TEXT,
+    position INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL CHECK (origin IN ('agent', 'person')),
+    sources TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    removed_at TEXT,
+    confirmed_by TEXT REFERENCES users(id),
+    confirmed_at TEXT
+  );
+  CREATE INDEX capabilities_app ON capabilities(application_id, removed_at);
+  CREATE TABLE capability_checks (
+    id TEXT PRIMARY KEY,
+    capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL CHECK (origin IN ('agent', 'person')),
+    created_at TEXT NOT NULL,
+    removed_at TEXT
+  );
+  CREATE INDEX capability_checks_cap ON capability_checks(capability_id, removed_at);
+  `,
+  // 30: the tests a person linked to a check as its evidence. Its own table: test_case_links is for stories,
+  // criteria, requirements and components, and its constraints say so.
+  `
+  CREATE TABLE capability_check_tests (
+    check_id TEXT NOT NULL REFERENCES capability_checks(id) ON DELETE CASCADE,
+    test_case_id TEXT NOT NULL REFERENCES test_cases(id) ON DELETE CASCADE,
+    linked_by TEXT REFERENCES users(id),
+    linked_at TEXT NOT NULL,
+    PRIMARY KEY (check_id, test_case_id)
+  );
+  `,
 ];

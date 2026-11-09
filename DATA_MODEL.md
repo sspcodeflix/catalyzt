@@ -1,7 +1,7 @@
 # Catalyzt data model
 
 The persistent model behind Catalyzt. It lives in SQLite (`app/data/horizon.db` by default, see
-`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (28 so far). The
+`docs/DEPLOYMENT.md`), created by versioned migrations in `app/server/schema.ts` (30 so far). The
 model is plain relational SQL with text ids; `docs/MIGRATION_NOTE.md` says what keeps a later move
 to another database mechanical.
 
@@ -137,6 +137,9 @@ erDiagram
 | `flow_signoffs` | `id`, `flow_id`, `story_key`, `decision`, `note`, `evidence` (JSON), `decided_by`, `created_at` | `decision`: `signed_off`, `rejected` (needs a note). `evidence` freezes the criterion statuses at sign-off. |
 | `flow_events` | `id`, `flow_id`, `at`, `actor_id`, `story_key`, `kind`, `text` | The timeline: start, analyses, results, sign-offs, owner changes. |
 | `flow_story_approvers` (migration 28) | `flow_id`, `story_key`, `user_id`, `added_by`, `added_at`, `removed_at` | People a manager added to a story's case review; their approval is needed along with the managers of the story's components. |
+| `capabilities` (migration 29, `docs/FLOWS.md` › Regression) | `id`, `application_id`, `name`, `summary`, `component`, `position`, `origin`, `sources` (JSON), `created_by`, `created_at`, `updated_at`, `removed_at`, `confirmed_by`, `confirmed_at` | The capability map a regression starts from: what the application does, per application. `origin` `agent` (drawn from App Context; `sources` are the passage locators) or `person`. `component`: the component whose test folder holds its tests. Confirmed by a person; the agent's later additions arrive unconfirmed. |
+| `capability_checks` (migration 29) | `id`, `capability_id`, `text`, `position`, `origin`, `created_at`, `removed_at` | One observable behaviour a UI test can verify. Status is derived on read: covered, failing, not run, or no test. |
+| `capability_check_tests` (migration 30) | `check_id`, `test_case_id`, `linked_by`, `linked_at` | The automated tests a person linked to a check as its evidence; a passing result in the target build makes the check covered. Suggestions by shared words are computed, never stored. |
 | `flow_reviews` (migration 28) | `approval_id`, `user_id`, `decision`, `note`, `at` | One decision per required approver and proposal; the proposal (an `approvals` row) is decided when the last approval is in, or when anyone asks for changes. |
 | `chats.flow_id` (migration 25) | | A flow's team thread (`thread-<flow id>`): every member of the application may add to it; kept out of personal recents. |
 | `manual_executions` | `id`, `test_case_id`, `status`, `note`, `executed_by`, `executed_at` | A tester's result for a manual case: `passed`, `failed`, `blocked` (the last two need a note). |

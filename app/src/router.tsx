@@ -5,6 +5,7 @@ import { Agents } from './pages/Agents';
 import { AppContext } from './pages/AppContext';
 import { ArtifactPanel } from './pages/ArtifactPanel';
 import { FlowPanel } from './pages/FlowPanel';
+import { Regression } from './pages/Regression';
 import { ContextSourcePanel } from './pages/ContextSourcePanel';
 import { Huddle } from './pages/Huddle';
 import { HuddleItemPanel } from './pages/HuddleItemPanel';
@@ -37,6 +38,7 @@ export const router = createBrowserRouter([
       { path: 'flows', element: <Flows /> },
       { path: 'flows/new', element: <FlowStart /> },
       { path: 'flows/:flowId', element: <FlowDetail /> },
+      { path: 'regression', element: <Regression /> },
       {
         path: 'hexa',
         element: <Hexa />,

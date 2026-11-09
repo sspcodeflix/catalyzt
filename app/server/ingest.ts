@@ -18,7 +18,7 @@ import { ciSuite, ciTestId, ciTitle, indexCandidates, matchCase, rawName } from 
 export class IngestError extends Error {}
 
 /** Runs `work` as an agent with steps, recorded like the chat workflow's agents. */
-async function asAgent<T>(db: HorizonDb, app: string, userId: string, agent: string, task: string, work: (step: (label: string, tool: string) => (status: 'done' | 'failed', detail?: string) => void) => Promise<T>): Promise<T> {
+export async function asAgent<T>(db: HorizonDb, app: string, userId: string, agent: string, task: string, work: (step: (label: string, tool: string) => (status: 'done' | 'failed', detail?: string) => void) => Promise<T>): Promise<T> {
   const wf = randomUUID();
   const id = randomUUID();
   db.startWorkflow({ id: wf, app, chatId: null, messageId: null, revision: 1, userId });

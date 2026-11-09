@@ -186,6 +186,7 @@ describe('repair of a database that applied an early migration 23', () => {
     // Columns added after 25 did not exist then either.
     first.raw.exec('ALTER TABLE approvals DROP COLUMN note');
     first.raw.exec('DROP TABLE flow_story_approvers; DROP TABLE flow_reviews');
+    first.raw.exec('DROP TABLE capability_check_tests; DROP TABLE capability_checks; DROP TABLE capabilities');
     first.raw.pragma('user_version = 25');
     first.raw.close();
     const db = openDb(path);

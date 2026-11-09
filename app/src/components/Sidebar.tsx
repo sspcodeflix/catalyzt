@@ -88,12 +88,16 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         <div role="group" aria-labelledby="nav-testing">
           <NavLink to="/flows" className={navClass}>
             <Icon name="branch" />
-            Test flows
+            Validation Flows
             {flowWait > 0 && (
               <span className="navcount" aria-label={`${flowWait} waiting on you`} title={`${flowWait} waiting on you`}>
                 {flowWait}
               </span>
             )}
+          </NavLink>
+          <NavLink to="/regression" className={navClass}>
+            <Icon name="target" />
+            Regression
           </NavLink>
           <NavLink to="/tickets" className={navClass}>
             <Icon name="doc" />

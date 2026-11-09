@@ -56,6 +56,7 @@ import type { Workspace } from './workspace';
 import type { RetrievalService } from './retrieval';
 import { runWorkflow } from './workflow';
 import { analyseAgain, appCoverage, appPeople, approveReviews, changeStories, createFlow, decideFlowReview, FlowError, flowByOrigin, flowsForStory, flowView, flowWorker, isFlowReview, listFlows, noteStory, recordExecution, type ReviewOutcome, setApprovers, setStatus, signOff, storiesInFlows } from './flows';
+import { addCapability, addCheck, CapabilityError, capabilityMap, confirmMap, linkCheck, mapCapabilities, removeCheck, updateCapability } from './capabilities';
 
 const MAX_BODY = 64 * 1024;
 /** Uploads (base64 files, CI results) may be larger than ordinary requests. */
@@ -401,6 +402,46 @@ export function createApi(getConfig: () => DeepSeekConfig | null, getDb: () => H
         const r = opts.reload();
         db.audit('user', user.id, 'workspace.reload', 'workspace', 'all', {});
         return send(res, 200, { ok: true, summary: r.summary });
+      }
+
+      /* ---------- Capability map (docs/FLOWS.md › Regression) ---------- */
+      if (url.startsWith('/api/capabilities')) {
+        try {
+          if (url === '/api/capabilities' && req.method === 'GET') return send(res, 200, capabilityMap(db, member));
+          if (url === '/api/capabilities/map' && req.method === 'POST') {
+            // The agent reads App Context and proposes; the request waits for it (one model call).
+            const abort = new AbortController();
+            res.on('close', () => abort.abort());
+            const r = await mapCapabilities(db, cfg, member, user, abort.signal);
+            return send(res, 200, { ...r, map: capabilityMap(db, member) });
+          }
+          if (url === '/api/capabilities/confirm' && req.method === 'POST') {
+            confirmMap(db, member, user);
+            return send(res, 200, capabilityMap(db, member));
+          }
+          if (url === '/api/capabilities' && req.method === 'POST') {
+            addCapability(db, member, user, (await readJson(req)) as Record<string, unknown>);
+            return send(res, 201, capabilityMap(db, member));
+          }
+          const ct = /^\/api\/capabilities\/checks\/([A-Za-z0-9-]{1,64})(\/tests)?$/.exec(url);
+          if (ct && req.method === 'POST') {
+            const b = (await readJson(req)) as Record<string, unknown>;
+            if (ct[2]) linkCheck(db, member, user, ct[1], b.testId, b.remove === true);
+            else if (b.remove === true) removeCheck(db, member, ct[1]);
+            else throw new HttpError(400, 'Say what to do with the check.');
+            return send(res, 200, capabilityMap(db, member));
+          }
+          const cm = /^\/api\/capabilities\/([A-Za-z0-9-]{1,64})(\/checks)?$/.exec(url);
+          if (cm && req.method === 'POST') {
+            const b = (await readJson(req)) as Record<string, unknown>;
+            if (cm[2]) addCheck(db, member, cm[1], b.add);
+            else updateCapability(db, member, cm[1], b);
+            return send(res, 200, capabilityMap(db, member));
+          }
+        } catch (e) {
+          if (e instanceof CapabilityError) throw new HttpError(e.status, e.message);
+          throw e;
+        }
       }
 
       /* ---------- Test flows (docs/FLOWS.md) ---------- */

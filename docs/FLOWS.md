@@ -1,6 +1,6 @@
-# Test flows: one shared view of where UAT and regression stand
+# Validation Flows: from testing to sign-off, together
 
-A **test flow** takes a set of stories through UAT or regression. It belongs to the application, not
+A **validation flow** takes a set of stories through UAT or regression. It belongs to the application, not
 to a chat or a person. Anyone on the team who opens the application sees the same flow, at the same
 step, waiting on the same people. Chat stays the way people ask and act. The flow shows where the
 work stands, so nobody has to rebuild the picture after a day away.
@@ -89,7 +89,7 @@ shows today's progress, and acting in a card acts on the flow itself.
 
 ## What people see
 
-- **Test flows** in the nav, under Testing, with a count of stories waiting on you.
+- **Validation Flows** in the nav, under Testing, with a count of stories waiting on you.
 - **Home** shows the flows in progress, with what waits on you.
 - **The flow page** shows the four steps with "n of m stories" each, coverage at the start and now,
   a "Waiting on" list with you first, one row per story with its current step and the button that moves
@@ -101,7 +101,7 @@ shows today's progress, and acting in a card acts on the flow itself.
 - **After a sign-off** the story reads "Signed off · when · by whom" on the Tickets, Search and Start
   pages (and in its panel) instead of the gaps its analysis found, as long as nothing analysed it again
   since. Such a story is left out of "Select all" when starting a UAT flow; it can still be picked to
-  retest it. Finished and cancelled flows stay on the Test flows page under "Finished and cancelled".
+  retest it. Finished and cancelled flows stay on the Validation Flows page under "Finished and cancelled".
 
 ## Rules
 
@@ -121,6 +121,28 @@ shows today's progress, and acting in a card acts on the flow itself.
 - **Stale sign-off:** if the evidence changes after a sign-off and a criterion is no longer verified,
   the story goes back to waiting for sign-off.
 
+## Regression: the capability map
+
+Regression is application-wide and starts from the knowledge base, not from Jira. The page **Regression**
+(`/regression`) holds the application's **capability map**: what the application does, as capabilities
+(a user-facing area, in the application's own words) each with the **checks** a UI test can verify.
+
+- **Mapping:** "Map from App Context" runs the capability mapper, an agent that reads the repositories'
+  documentation passages in App Context (overview, README, docs; not plans, findings or data models) and
+  proposes capabilities with checks and the passages they came from. Mapping again adds new capabilities
+  and new checks to known ones; it never changes or removes what a person wrote. Without a model it
+  proposes one capability per component. Recorded on the Agents page.
+- **People own the map:** add a capability, add or remove a check, set the tests folder (component) a
+  capability's tests live in, remove a capability, and **confirm** the map. Later additions by the agent
+  arrive unconfirmed.
+- **Coverage:** a check is **covered** when an automated test a person linked to it passed in the target
+  build of its repository (the automation repository's newest merged build); **failing** or **not run**
+  when linked tests exist without a pass there; **no test** otherwise. Automated tests of the capability's
+  component that share the check's words are suggested under it with their result; "Use this test" links
+  one, and only then does it count. Links live in `capability_check_tests`.
+- **Gaps** are the checks with no test: the work of the regression flow is to close them with new
+  automated tests in the automation repository, which CI then proves.
+
 ## Not built yet
 
 - Opening the automation pull request from Catalyzt. Today "Draft automation" puts the request in the
@@ -134,5 +156,5 @@ shows today's progress, and acting in a card acts on the flow itself.
 
 ## Data
 
-Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads); 27 adds `approvals.note` (what a reviewer asked to change); 28 adds `flow_story_approvers` (people added to a story's review) and `flow_reviews` (one decision per required approver and proposal). Step
+Migration 23 adds `flows`, `flow_items`, `flow_signoffs`, `flow_events` and `manual_executions`; 24 adds `flows.origin` (the chat answer a flow was started from); 25 adds `chats.flow_id` (team threads); 27 adds `approvals.note` (what a reviewer asked to change); 28 adds `flow_story_approvers` (people added to a story's review) and `flow_reviews` (one decision per required approver and proposal); 29 adds `capabilities` and `capability_checks` (the capability map); 30 adds `capability_check_tests` (the tests a person linked to a check). Step
 states are derived on each read from reports, approvals, test links and results.

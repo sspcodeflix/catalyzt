@@ -86,7 +86,7 @@ export interface Usage {
  * One JSON-mode completion with thinking off. Returns the parsed object, or null if the model
  * gave no valid JSON. `onUsage` receives the token counts, for the usage ledger.
  */
-export async function completeJson(cfg: DeepSeekConfig, messages: ChatMessage[], signal?: AbortSignal, onUsage?: (u: Usage) => void): Promise<unknown> {
+export async function completeJson(cfg: DeepSeekConfig, messages: ChatMessage[], signal?: AbortSignal, onUsage?: (u: Usage) => void, maxTokens = 600): Promise<unknown> {
   const res = await post(
     cfg,
     {
@@ -95,7 +95,8 @@ export async function completeJson(cfg: DeepSeekConfig, messages: ChatMessage[],
       response_format: { type: 'json_object' },
       thinking: { type: 'disabled' },
       temperature: 0,
-      max_tokens: 600,
+      // Short answers by default (intent, refinement); a caller that expects a long document says so.
+      max_tokens: maxTokens,
     },
     signal,
   );
